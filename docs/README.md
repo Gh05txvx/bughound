@@ -45,20 +45,6 @@ docs/
 - **Chip tanggal/mention** dipertahankan sebagai teks biasa (mis. `Oct 21, 2026 · @Gh05t`).
 - Berkas ini adalah salinan statis. Bila dokumen sumber di Claude Docs diperbarui, ekspor ulang untuk menyinkronkan.
 
-## Sumber online (Claude Docs)
+## Sumber diagram
 
-Versi lengkap dengan diagram ada di Claude Docs (butuh login akun pemilik):
-
-| ID | URL |
-| --- | --- |
-| `BH-DOC-PRD` | https://claude.ai/code/artifact/85c9efcf-a6b7-4621-9293-bbd40471d677 |
-| `BH-P02-DESIGN` | https://claude.ai/code/artifact/93062ca6-e94f-4082-bd5b-60a9d89368b5 |
-| `BH-P03-APPSEC` | https://claude.ai/code/artifact/b1a48a13-6acb-44ef-9cd9-7c149173c713 |
-| `BH-P04-DEBUG` | https://claude.ai/code/artifact/2d9df6d1-821a-4f80-9724-90d303706b69 |
-| `BH-P05-E2E` | https://claude.ai/code/artifact/e012c950-d78c-4444-bac2-5f3755418f93 |
-| `BH-P06-CLEANUP` | https://claude.ai/code/artifact/f893fe88-a264-4f9a-8210-97d60fd50e13 |
-| `BH-P07-COMMIT` | https://claude.ai/code/artifact/714f80bf-dae0-48c9-9867-fdb69197c08f |
-| `BH-P08-ARCH` | https://claude.ai/code/artifact/55c65a9e-29b5-44d7-9995-846ad138093d |
-| `BH-SPEC-FINDING` | https://claude.ai/code/artifact/ce078458-98e1-4746-a409-2b8038647ca5 |
-| `BH-SPEC-SCOPE` | https://claude.ai/code/artifact/ec1c45cf-90cc-4199-9a8e-d45ae5ec810f |
-| `BH-SPEC-PAYLOAD` | https://claude.ai/code/artifact/2fa0711a-a5b1-4fe6-82ee-681eaaee63c5 |
+Berkas Markdown di repo ini adalah salinan statis dan menjadi sumber kebenaran. Diagram tidak ikut terekspor dan ditandai dengan baris `> _Diagram: … — tersedia di versi Claude Docs_` pada posisi aslinya. Versi sumber berdiagram disimpan privat oleh pemilik repo.
