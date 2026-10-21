@@ -1,0 +1,68 @@
+# bughound
+
+**Bug Bounty DAST Orchestrator** — bukan scanner, melainkan *orchestrator* yang menyatukan engine recon & DAST yang sudah matang (nuclei, httpx, subfinder, ZAP, dll), menormalkan hasilnya ke satu skema temuan seragam, lalu membantu triase dan menghasilkan draft report yang siap diverifikasi manual sebelum disubmit.
+
+> ⚠️ **Hanya untuk pengujian yang sah.** bughound adalah tool offensive (DAST). Gunakan hanya terhadap aset yang berada dalam scope program bounty, lab milik sendiri, atau sistem dengan izin eksplisit. **Scope guard default-deny** menolak target yang tidak terbukti in-scope, dan **tidak ada auto-submit** — report selalu berakhir sebagai draft.
+
+## Status
+
+**M0 — Fondasi: selesai.** Pipeline inti berjalan ujung-ke-ujung dengan engine mock (tanpa koneksi jaringan). Roadmap M1–M3 (recon penuh, rate limiter, multi-engine, report) ada di PRD.
+
+Gate M0 terpenuhi: satu temuan mengalir *scan → normalisasi → tersimpan*; scope guard menolak target di luar scope (lapis input **dan** egress); nol koneksi ke aset nyata.
+
+## Prinsip yang mengikat
+
+Keamanan adalah batas struktural, bukan tambahan:
+
+- **Scope guard** sebagai satu titik penegakan wajib (default-deny, out-of-scope menang, fail-closed), ditegakkan dua lapis (input + egress).
+- **Tidak ada auto-submit** — report selalu draft, dikirim manual oleh pengguna.
+- **Secret disensor** dari evidence dan raw sebelum disimpan; tidak pernah bocor ke store/log/report.
+- **Satu skema temuan seragam** sebagai fondasi; semua engine menulis ke sana.
+
+## Fitur M0
+
+- Skema Temuan Seragam (`BH-SPEC-FINDING`): format JSON berversi, `dedup_key` deterministik.
+- Scope Guard (`BH-SPEC-SCOPE`): domain/wildcard/URL/IP/CIDR, normalisasi punycode & IP, kebijakan port, penegakan dua lapis.
+- Findings store: in-memory & SQLite (persisten), dedup per-program, triase, query terurut severity.
+- Adapter nuclei (JSONL → skema) + engine mock (tanpa jaringan).
+- Orchestrator in-process: scope guard → scan → normalisasi → store + audit trail.
+- UI web (Go + HTMX): input scope, jalankan scan, triase temuan. Binary tunggal.
+
+## Build & jalankan
+
+Butuh Go 1.26+.
+
+```bash
+go test ./...                 # jalankan seluruh test
+go run ./cmd/bughound         # jalankan (simpan ke ./bughound.db)
+go run ./cmd/bughound -db ""  # mode in-memory (ephemeral)
+```
+
+Buka http://127.0.0.1:8787 — isi scope & target, jalankan scan, lalu triase di halaman **Findings**. Form sudah terisi contoh (`demo.test` in-scope, `evil.test` di luar scope) untuk mendemokan scope guard.
+
+Flag:
+
+- `-addr` — alamat bind (default `127.0.0.1:8787`, localhost saja).
+- `-db` — path file SQLite (default `bughound.db`; kosongkan untuk in-memory).
+
+## Struktur
+
+```
+cmd/bughound/        entry point (web server)
+internal/
+  finding/           skema temuan seragam
+  scope/             scope guard
+  store/             persistensi (interface + Mem + SQLite)
+  engine/            kontrak engine + adapter nuclei (+ mock)
+  orchestrator/      alur scan dengan penegakan scope dua lapis
+  web/               UI (Go + HTMX + template, aset di-embed)
+docs/                spesifikasi, PRD, design spec, persona (lihat docs/README.md)
+```
+
+## Dokumentasi
+
+Spesifikasi fondasi dan dokumen produk ada di [`docs/`](docs/README.md): skema temuan, scope guard, bank payload, PRD, design spec, dan persona kerja.
+
+## Lisensi
+
+[MIT](LICENSE) © 2026 Gh05t

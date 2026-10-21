@@ -1,0 +1,21 @@
+// Package engine mendefinisikan kontrak engine scan. Implementasi nyata
+// mengeksekusi binary engine (nuclei, ZAP, dll) sebagai subprocess; implementasi
+// mock mengembalikan hasil rekaman tanpa jaringan (dipakai di M0 & E2E).
+//
+// Hanya engine (worker) yang boleh menjangkau target, dan hanya target in-scope
+// (BH-SPEC-SCOPE). Orchestrator menegakkan scope guard sebelum memanggil Scan
+// dan memeriksa ulang setiap temuan yang keluar.
+package engine
+
+import (
+	"context"
+
+	"bughound/internal/finding"
+)
+
+// Engine menjalankan satu engine terhadap satu target dan mengembalikan temuan
+// yang sudah dinormalkan ke Skema Temuan Seragam (BH-SPEC-FINDING).
+type Engine interface {
+	Name() string
+	Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error)
+}

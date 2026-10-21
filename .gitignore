@@ -1,0 +1,17 @@
+# Binary & build output
+/bughound
+/bughound.exe
+*.exe
+*.test
+*.out
+
+# Database lokal (SQLite + WAL)
+*.db
+*.db-shm
+*.db-wal
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

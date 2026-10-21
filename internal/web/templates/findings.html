@@ -1,0 +1,47 @@
+{{define "content"}}
+<div class="findings-head">
+  {{if .Programs}}
+  <div class="prog-tabs">
+    {{range .Programs}}
+      <a href="/findings?program={{.}}" class="tab {{if eq . $.Program}}active{{end}}">{{.}}</a>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+
+{{if not .Program}}
+  <div class="empty">
+    <p>Belum ada program. <a href="/scan">Jalankan scan pertama →</a></p>
+  </div>
+{{else}}
+<div class="master-detail">
+  <div class="master">
+    {{if .Findings}}
+    <table class="tbl findings">
+      <thead><tr><th>Sev</th><th>Type</th><th>Target</th><th>Status</th><th>Judul</th></tr></thead>
+      <tbody>
+      {{range .Findings}}
+        <tr class="row {{if $.Selected}}{{if eq .ID $.Selected.ID}}selected{{end}}{{end}}"
+            hx-get="/findings/{{.ID}}?program={{$.Program}}" hx-target="#detail" hx-swap="innerHTML" style="cursor:pointer">
+          <td><span class="badge {{sevClass .Severity}}">{{.Severity}}</span></td>
+          <td class="mono">{{.Type}}</td>
+          <td class="mono truncate">{{.Target}}</td>
+          <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
+          <td class="truncate">{{.Title}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+      <div class="empty"><p class="muted">Belum ada temuan untuk program ini. Jalankan scan, atau scan selesai tanpa temuan.</p></div>
+    {{end}}
+  </div>
+
+  <aside class="detail" id="detail">
+    {{if .Selected}}{{template "finding_detail" .Selected}}{{else}}
+    <p class="muted">Pilih satu baris untuk melihat bukti &amp; aksi triase.</p>
+    {{end}}
+  </aside>
+</div>
+{{end}}
+{{end}}

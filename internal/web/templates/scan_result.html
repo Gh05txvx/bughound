@@ -1,0 +1,44 @@
+{{define "scan_result"}}
+{{with .Result}}
+<div class="result-summary">
+  <span class="chip ok">run {{.RunID}}</span>
+  <span class="chip">{{len .Scanned}} discan</span>
+  <span class="chip good">{{.Saved}} temuan baru</span>
+  <span class="chip">{{.Duplicates}} duplikat</span>
+  <span class="chip warn">{{len .Denials}} ditolak</span>
+</div>
+
+{{if .Scanned}}
+<h3>Discan (in-scope)</h3>
+<ul class="list">{{range .Scanned}}<li class="mono">{{.}}</li>{{end}}</ul>
+{{end}}
+
+{{if .Denials}}
+<h3>Ditolak scope guard</h3>
+<table class="tbl compact">
+  <thead><tr><th>Target</th><th>Alasan</th><th>Lapis</th><th>Entri</th></tr></thead>
+  <tbody>
+  {{range .Denials}}
+    <tr>
+      <td class="mono">{{.Target}}</td>
+      <td><span class="pill st-false_positive">{{.Reason}}</span></td>
+      <td>{{.Layer}}</td>
+      <td class="mono muted">{{.Entry}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
+<p class="muted small">{{.AuditCount}} keputusan tercatat di audit trail.</p>
+<a class="btn" href="/findings?program={{$.Program}}">Lihat findings →</a>
+{{end}}
+{{end}}
+
+{{define "scan_result_errors"}}
+<div class="errors">
+  <h3>Tidak dijalankan</h3>
+  <ul>{{range .Errors}}<li>{{.}}</li>{{end}}</ul>
+  <p class="muted small">Scope guard fail-closed: perbaiki dulu sebelum scan berjalan.</p>
+</div>
+{{end}}

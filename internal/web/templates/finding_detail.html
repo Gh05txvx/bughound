@@ -1,0 +1,50 @@
+{{define "finding_detail"}}
+<div class="detail-head">
+  <span class="badge {{sevClass .Severity}}">{{.Severity}}</span>
+  <span class="pill {{statusClass .Status}}">{{.Status}}</span>
+  <h3>{{.Title}}</h3>
+</div>
+
+<dl class="meta">
+  <dt>Type</dt><dd class="mono">{{.Type}}</dd>
+  <dt>Target</dt><dd class="mono">{{.Target}}</dd>
+  <dt>Lokasi</dt><dd class="mono">{{.Location.URL}}{{if .Location.Parameter}} · param <b>{{.Location.Parameter}}</b>{{if .Location.ParamLocation}} ({{.Location.ParamLocation}}){{end}}{{end}}</dd>
+  <dt>Engine</dt><dd>{{.SourceEngine}}{{if .SourceTemplate}} · <span class="mono">{{.SourceTemplate}}</span>{{end}}</dd>
+  <dt>Confidence</dt><dd>{{.Confidence}}</dd>
+  {{if .CVSS}}<dt>CVSS</dt><dd class="mono">{{.CVSS.Score}} · {{.CVSS.Vector}}</dd>{{end}}
+  {{if .CWE}}<dt>CWE</dt><dd class="mono">{{join .CWE ", "}}</dd>{{end}}
+  {{if .Tags}}<dt>Tags</dt><dd>{{join .Tags ", "}}</dd>{{end}}
+  <dt>Dibuat</dt><dd class="mono">{{.CreatedAt.Time.Format "2006-01-02 15:04:05Z"}}</dd>
+  {{if .VerifiedBy}}<dt>Diverifikasi</dt><dd>{{.VerifiedBy}}</dd>{{end}}
+</dl>
+
+{{if .Description}}<p>{{.Description}}</p>{{end}}
+
+{{with .Evidence}}
+<h4>Bukti <span class="muted small">(secret tersensor)</span></h4>
+{{if .Request}}<div class="ev-label">Request</div><pre class="ev mono">{{.Request}}</pre>{{end}}
+{{if .ResponseExcerpt}}<div class="ev-label">Response</div><pre class="ev mono">{{.ResponseExcerpt}}</pre>{{end}}
+{{if .Payload}}<div class="ev-label">Payload</div><pre class="ev mono">{{.Payload}}</pre>{{end}}
+{{if .Matched}}<div class="ev-label">Matched</div><pre class="ev mono">{{.Matched}}</pre>{{end}}
+{{end}}
+
+{{if .References}}
+<h4>Referensi</h4>
+<ul class="list">{{range .References}}<li class="mono truncate">{{.}}</li>{{end}}</ul>
+{{end}}
+
+<h4>Triase</h4>
+<form class="triage" hx-post="/findings/{{.ID}}/status" hx-target="#detail" hx-swap="innerHTML">
+  <input type="text" name="verified_by" placeholder="nama (opsional)" value="{{.VerifiedBy}}" autocomplete="off">
+  <div class="actions">
+    <button class="btn good" name="status" value="confirmed">Konfirmasi</button>
+    <button class="btn" name="status" value="false_positive">False positive</button>
+    <button class="btn" name="status" value="ignored">Abaikan</button>
+    <button class="btn ghost" name="status" value="new">Reset</button>
+  </div>
+</form>
+
+<button class="btn primary" disabled title="Report module: M1 (belum ada auto-submit; report selalu draft)">
+  Tambah ke report{{if ne .Status "confirmed"}} (perlu konfirmasi){{end}}
+</button>
+{{end}}

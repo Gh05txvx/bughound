@@ -1,0 +1,269 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"bughound/internal/finding"
+
+	_ "modernc.org/sqlite" // driver "sqlite" (pure-Go, tanpa cgo => tetap binary tunggal)
+)
+
+// SQLite adalah Store berbasis SQLite. Temuan disimpan utuh sebagai dokumen JSON
+// (skema berversi di JSON), dengan kolom terindeks untuk query triase. Dedup
+// ditegakkan sama seperti Mem: per (program, dedup_key).
+type SQLite struct {
+	db  *sql.DB
+	now func() time.Time
+	mu  sync.Mutex // menjaga atomisitas keputusan dedup (cek + tulis)
+}
+
+// OpenSQLite membuka/membuat database pada path (atau ":memory:").
+func OpenSQLite(path string) (*SQLite, error) {
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, fmt.Errorf("store: buka sqlite: %w", err)
+	}
+	db.SetMaxOpenConns(1) // hindari "database is locked"
+	s := &SQLite{db: db, now: time.Now}
+	if err := s.init(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *SQLite) init() error {
+	stmts := []string{
+		`PRAGMA journal_mode=WAL;`,
+		`PRAGMA busy_timeout=5000;`,
+		`CREATE TABLE IF NOT EXISTS findings (
+			id            TEXT PRIMARY KEY,
+			program       TEXT NOT NULL,
+			run_id        TEXT NOT NULL,
+			dedup_key     TEXT NOT NULL,
+			type          TEXT NOT NULL,
+			target        TEXT NOT NULL,
+			severity      TEXT NOT NULL,
+			status        TEXT NOT NULL,
+			duplicate_of  TEXT,
+			created_at    TEXT NOT NULL,
+			doc           TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_findings_program ON findings(program);`,
+		`CREATE INDEX IF NOT EXISTS idx_findings_dedup   ON findings(program, dedup_key);`,
+	}
+	for _, q := range stmts {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("store: init skema: %w", err)
+		}
+	}
+	return nil
+}
+
+// Save: lihat Store.Save.
+func (s *SQLite) Save(ctx context.Context, f *finding.Finding) (SaveResult, error) {
+	if err := prepare(f, s.now()); err != nil {
+		return SaveResult{}, err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	res := SaveResult{ID: f.ID}
+
+	var primaryID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM findings WHERE program=? AND dedup_key=? AND status!=? ORDER BY created_at LIMIT 1`,
+		f.Program, f.DedupKey, string(finding.StatusDuplicate),
+	).Scan(&primaryID)
+	switch {
+	case err == sql.ErrNoRows:
+		// tak ada primary => f menjadi primary
+	case err != nil:
+		return SaveResult{}, fmt.Errorf("store: cek dedup: %w", err)
+	default:
+		if primaryID != f.ID {
+			f.Status = finding.StatusDuplicate
+			f.DuplicateOf = primaryID
+			res.Deduplicated = true
+			res.PrimaryID = primaryID
+		}
+	}
+
+	doc, err := json.Marshal(f)
+	if err != nil {
+		return SaveResult{}, fmt.Errorf("store: marshal temuan: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO findings (id,program,run_id,dedup_key,type,target,severity,status,duplicate_of,created_at,doc)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   program=excluded.program, run_id=excluded.run_id, dedup_key=excluded.dedup_key,
+		   type=excluded.type, target=excluded.target, severity=excluded.severity,
+		   status=excluded.status, duplicate_of=excluded.duplicate_of,
+		   created_at=excluded.created_at, doc=excluded.doc`,
+		f.ID, f.Program, f.RunID, f.DedupKey, f.Type, f.Target,
+		string(f.Severity), string(f.Status), f.DuplicateOf,
+		f.CreatedAt.Time.UTC().Format(time.RFC3339), string(doc),
+	)
+	if err != nil {
+		return SaveResult{}, fmt.Errorf("store: simpan temuan: %w", err)
+	}
+	return res, nil
+}
+
+// Get: lihat Store.Get.
+func (s *SQLite) Get(ctx context.Context, id string) (*finding.Finding, error) {
+	var doc string
+	err := s.db.QueryRowContext(ctx, `SELECT doc FROM findings WHERE id=?`, id).Scan(&doc)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: ambil temuan: %w", err)
+	}
+	return decodeDoc(doc)
+}
+
+// List: lihat Store.List.
+func (s *SQLite) List(ctx context.Context, q Query) ([]*finding.Finding, error) {
+	var where []string
+	var args []any
+
+	if q.Program != "" {
+		where = append(where, "program=?")
+		args = append(args, q.Program)
+	}
+	if q.RunID != "" {
+		where = append(where, "run_id=?")
+		args = append(args, q.RunID)
+	}
+	if !q.IncludeDuplicates && !containsStatus(q.Statuses, finding.StatusDuplicate) {
+		where = append(where, "status!=?")
+		args = append(args, string(finding.StatusDuplicate))
+	}
+	if len(q.Statuses) > 0 {
+		where = append(where, "status IN ("+placeholders(len(q.Statuses))+")")
+		for _, st := range q.Statuses {
+			args = append(args, string(st))
+		}
+	}
+	if len(q.Severities) > 0 {
+		where = append(where, "severity IN ("+placeholders(len(q.Severities))+")")
+		for _, sv := range q.Severities {
+			args = append(args, string(sv))
+		}
+	}
+	if len(q.Types) > 0 {
+		where = append(where, "type IN ("+placeholders(len(q.Types))+")")
+		for _, ty := range q.Types {
+			args = append(args, ty)
+		}
+	}
+
+	query := `SELECT doc FROM findings`
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += ` ORDER BY CASE severity
+		WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3
+		WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END DESC,
+		created_at DESC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: query temuan: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*finding.Finding
+	for rows.Next() {
+		var doc string
+		if err := rows.Scan(&doc); err != nil {
+			return nil, err
+		}
+		f, err := decodeDoc(doc)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// Programs: lihat Store.Programs.
+func (s *SQLite) Programs(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT program FROM findings ORDER BY program`)
+	if err != nil {
+		return nil, fmt.Errorf("store: daftar program: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SetStatus: lihat Store.SetStatus.
+func (s *SQLite) SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error {
+	if !status.Valid() {
+		return fmt.Errorf("store: status tidak sah: %q", status)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if status == finding.StatusDuplicate && strings.TrimSpace(f.DuplicateOf) == "" {
+		return fmt.Errorf("store: status duplicate hanya lewat jalur dedup (duplicate_of kosong)")
+	}
+	f.Status = status
+	if verifiedBy != "" {
+		f.VerifiedBy = verifiedBy
+	}
+	now := finding.NewTime(s.now())
+	f.UpdatedAt = &now
+
+	doc, err := json.Marshal(f)
+	if err != nil {
+		return fmt.Errorf("store: marshal temuan: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE findings SET status=?, doc=? WHERE id=?`,
+		string(status), string(doc), id)
+	if err != nil {
+		return fmt.Errorf("store: update status: %w", err)
+	}
+	return nil
+}
+
+// Close menutup database.
+func (s *SQLite) Close() error { return s.db.Close() }
+
+func decodeDoc(doc string) (*finding.Finding, error) {
+	var f finding.Finding
+	if err := json.Unmarshal([]byte(doc), &f); err != nil {
+		return nil, fmt.Errorf("store: dokumen temuan rusak: %w", err)
+	}
+	return &f, nil
+}
+
+func placeholders(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strings.Repeat("?,", n-1) + "?"
+}

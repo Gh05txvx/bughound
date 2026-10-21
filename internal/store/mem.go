@@ -1,0 +1,155 @@
+package store
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"bughound/internal/finding"
+)
+
+// Mem adalah Store in-memory yang aman dipakai konkuren. Dipakai untuk unit
+// test dan untuk alur mock (E2E) sehingga tidak pernah menyentuh disk/jaringan.
+type Mem struct {
+	mu   sync.RWMutex
+	now  func() time.Time
+	byID map[string]*finding.Finding
+	// primary: program -> dedup_key -> id temuan utama.
+	primary map[string]map[string]string
+}
+
+// NewMem membuat store in-memory kosong.
+func NewMem() *Mem {
+	return &Mem{
+		now:     time.Now,
+		byID:    map[string]*finding.Finding{},
+		primary: map[string]map[string]string{},
+	}
+}
+
+// Save: lihat Store.Save. Dedup ditegakkan di sini.
+func (m *Mem) Save(ctx context.Context, f *finding.Finding) (SaveResult, error) {
+	if err := prepare(f, m.now()); err != nil {
+		return SaveResult{}, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	prog := m.primary[f.Program]
+	if prog == nil {
+		prog = map[string]string{}
+		m.primary[f.Program] = prog
+	}
+
+	res := SaveResult{ID: f.ID}
+	if primaryID, ok := prog[f.DedupKey]; ok {
+		if primaryID != f.ID {
+			f.Status = finding.StatusDuplicate
+			f.DuplicateOf = primaryID
+			res.Deduplicated = true
+			res.PrimaryID = primaryID
+		}
+	} else {
+		prog[f.DedupKey] = f.ID // temuan utama pertama untuk dedup_key ini
+	}
+
+	m.byID[f.ID] = clone(f)
+	return res, nil
+}
+
+// Get: lihat Store.Get.
+func (m *Mem) Get(ctx context.Context, id string) (*finding.Finding, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	f, ok := m.byID[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return clone(f), nil
+}
+
+// List: lihat Store.List.
+func (m *Mem) List(ctx context.Context, q Query) ([]*finding.Finding, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	includeDup := q.IncludeDuplicates || containsStatus(q.Statuses, finding.StatusDuplicate)
+
+	var out []*finding.Finding
+	for _, f := range m.byID {
+		if q.Program != "" && f.Program != q.Program {
+			continue
+		}
+		if q.RunID != "" && f.RunID != q.RunID {
+			continue
+		}
+		if f.Status == finding.StatusDuplicate && !includeDup {
+			continue
+		}
+		if len(q.Statuses) > 0 && !containsStatus(q.Statuses, f.Status) {
+			continue
+		}
+		if len(q.Severities) > 0 && !containsSeverity(q.Severities, f.Severity) {
+			continue
+		}
+		if len(q.Types) > 0 && !containsString(q.Types, f.Type) {
+			continue
+		}
+		out = append(out, clone(f))
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		ri, rj := severityRank(out[i].Severity), severityRank(out[j].Severity)
+		if ri != rj {
+			return ri > rj
+		}
+		return out[i].CreatedAt.Time.After(out[j].CreatedAt.Time)
+	})
+	return out, nil
+}
+
+// Programs: lihat Store.Programs.
+func (m *Mem) Programs(ctx context.Context) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	set := map[string]bool{}
+	for _, f := range m.byID {
+		set[f.Program] = true
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// SetStatus: lihat Store.SetStatus.
+func (m *Mem) SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error {
+	if !status.Valid() {
+		return fmt.Errorf("store: status tidak sah: %q", status)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	f, ok := m.byID[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if status == finding.StatusDuplicate && strings.TrimSpace(f.DuplicateOf) == "" {
+		return fmt.Errorf("store: status duplicate hanya lewat jalur dedup (duplicate_of kosong)")
+	}
+	f.Status = status
+	if verifiedBy != "" {
+		f.VerifiedBy = verifiedBy
+	}
+	now := finding.NewTime(m.now())
+	f.UpdatedAt = &now
+	return nil
+}
+
+// Close no-op.
+func (m *Mem) Close() error { return nil }
