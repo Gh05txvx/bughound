@@ -44,21 +44,24 @@ func LoadKeyring(keyPath string) (*Keyring, KeySource, error) {
 
 	if keyPath != "" {
 		if data, err := os.ReadFile(keyPath); err == nil {
-			b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
-			if err != nil {
-				return nil, "", fmt.Errorf("secret: file kunci %q rusak: %w", keyPath, err)
+			keys, perr := parseKeyLines(string(data))
+			if perr != nil {
+				return nil, "", fmt.Errorf("secret: file kunci %q rusak: %w", keyPath, perr)
 			}
-			k, err := KeyFromBytes(b)
-			if err != nil {
-				return nil, "", err
+			if len(keys) == 0 {
+				return nil, "", fmt.Errorf("secret: file kunci %q kosong", keyPath)
 			}
-			return NewKeyring(k), SourceFile, nil
+			kr := NewKeyring(keys[0]) // baris pertama = kunci aktif
+			for _, k := range keys[1:] {
+				kr.AddRetired(k) // sisanya: kunci lama untuk dekripsi (transisi rotasi)
+			}
+			return kr, SourceFile, nil
 		}
 		k, err := NewRandomKey()
 		if err != nil {
 			return nil, "", err
 		}
-		if err := os.WriteFile(keyPath, []byte(k.Base64()), 0o600); err != nil {
+		if err := WriteKeyFile(keyPath, k); err != nil {
 			return nil, "", fmt.Errorf("secret: gagal menulis file kunci %q: %w", keyPath, err)
 		}
 		return NewKeyring(k), SourceGenerated, nil
@@ -69,4 +72,37 @@ func LoadKeyring(keyPath string) (*Keyring, KeySource, error) {
 		return nil, "", err
 	}
 	return NewKeyring(k), SourceEphemeral, nil
+}
+
+func parseKeyLines(data string) ([]Key, error) {
+	var keys []Key
+	for _, ln := range strings.Split(data, "\n") {
+		if ln = strings.TrimSpace(ln); ln == "" {
+			continue
+		}
+		b, err := base64.StdEncoding.DecodeString(ln)
+		if err != nil {
+			return nil, err
+		}
+		k, err := KeyFromBytes(b)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, k)
+	}
+	return keys, nil
+}
+
+// WriteKeyFile menulis kunci (aktif lebih dulu) ke path, satu base64 per baris,
+// mode 0600. Kunci master tidak pernah di-commit (lihat .gitignore *.key).
+func WriteKeyFile(path string, keys ...Key) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("secret: tak ada kunci untuk ditulis")
+	}
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k.Base64())
+		b.WriteByte('\n')
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o600)
 }

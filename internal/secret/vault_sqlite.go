@@ -14,10 +14,14 @@ import (
 // dari temuan). Hanya ciphertext yang disimpan — plaintext tak pernah menyentuh
 // disk.
 type SQLiteVault struct {
-	db  *sql.DB
-	kr  *Keyring
-	now func() time.Time
+	db       *sql.DB
+	kr       *Keyring
+	now      func() time.Time
+	onReveal func(scope, name string)
 }
+
+// SetRevealHook: lihat Vault.SetRevealHook.
+func (v *SQLiteVault) SetRevealHook(fn func(scope, name string)) { v.onReveal = fn }
 
 // OpenSQLiteVault membuka/membuat vault pada path.
 func OpenSQLiteVault(path string, kr *Keyring) (*SQLiteVault, error) {
@@ -87,7 +91,11 @@ func (v *SQLiteVault) Reveal(ctx context.Context, scope, name string) ([]byte, e
 	if err != nil {
 		return nil, fmt.Errorf("secret: ambil: %w", err)
 	}
-	return v.kr.Decrypt(token)
+	pt, derr := v.kr.Decrypt(token)
+	if derr == nil && v.onReveal != nil {
+		v.onReveal(normScope(scope), name)
+	}
+	return pt, derr
 }
 
 func (v *SQLiteVault) List(ctx context.Context, scope string) ([]Meta, error) {

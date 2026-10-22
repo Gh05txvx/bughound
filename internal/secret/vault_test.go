@@ -69,6 +69,36 @@ func TestVaultPutRevealListDelete(t *testing.T) {
 	}
 }
 
+func TestVaultRevealHookAudited(t *testing.T) {
+	for _, f := range factories() {
+		t.Run(f.name, func(t *testing.T) {
+			kr := mustKeyring(t)
+			v := f.open(t, kr)
+			ctx := context.Background()
+			v.Put(ctx, "progA", "token", []byte("rahasia"))
+
+			var calls int
+			var gotScope, gotName string
+			v.SetRevealHook(func(scope, name string) {
+				calls++
+				gotScope, gotName = scope, name
+			})
+
+			if _, err := v.Reveal(ctx, "progA", "token"); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 || gotScope != "progA" || gotName != "token" {
+				t.Errorf("hook reveal: calls=%d scope=%q name=%q", calls, gotScope, gotName)
+			}
+			// Reveal gagal (tak ada) tidak boleh memicu hook.
+			v.Reveal(ctx, "progA", "tidak-ada")
+			if calls != 1 {
+				t.Errorf("hook tak boleh dipanggil saat secret tak ada; calls=%d", calls)
+			}
+		})
+	}
+}
+
 func TestVaultRotate(t *testing.T) {
 	for _, f := range factories() {
 		t.Run(f.name, func(t *testing.T) {

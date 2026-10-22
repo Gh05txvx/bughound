@@ -72,6 +72,21 @@ func NewKeyring(active Key) *Keyring {
 // ActiveID mengembalikan id kunci aktif.
 func (r *Keyring) ActiveID() string { return r.active.ID() }
 
+// Active mengembalikan kunci aktif.
+func (r *Keyring) Active() Key { return r.active }
+
+// AllKeys mengembalikan semua kunci (aktif lebih dulu) — untuk persistensi saat
+// rotasi agar kunci lama tetap tersimpan sampai re-enkripsi selesai.
+func (r *Keyring) AllKeys() []Key {
+	out := []Key{r.active}
+	for id, k := range r.all {
+		if id != r.active.ID() {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // AddRetired menambah kunci lama agar token lama tetap bisa didekripsi.
 func (r *Keyring) AddRetired(k Key) { r.all[k.ID()] = k }
 

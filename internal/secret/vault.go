@@ -29,6 +29,9 @@ type Vault interface {
 	List(ctx context.Context, scope string) ([]Meta, error)
 	Delete(ctx context.Context, scope, name string) error
 	Rotate(ctx context.Context) (int, error) // re-enkripsi semua ke kunci aktif
+	// SetRevealHook memasang callback yang dipanggil tiap Reveal BERHASIL,
+	// dengan scope+nama (TANPA nilai) — untuk mencatat akses secret ke audit.
+	SetRevealHook(func(scope, name string))
 	Close() error
 }
 
@@ -48,11 +51,15 @@ type record struct {
 
 // MemVault adalah Vault in-memory (test / ephemeral).
 type MemVault struct {
-	kr  *Keyring
-	now func() time.Time
-	mu  sync.RWMutex
-	m   map[string]map[string]*record
+	kr       *Keyring
+	now      func() time.Time
+	onReveal func(scope, name string)
+	mu       sync.RWMutex
+	m        map[string]map[string]*record
 }
+
+// SetRevealHook: lihat Vault.SetRevealHook.
+func (v *MemVault) SetRevealHook(fn func(scope, name string)) { v.onReveal = fn }
 
 // NewMemVault membuat vault in-memory dengan keyring kr.
 func NewMemVault(kr *Keyring) *MemVault {
@@ -91,7 +98,11 @@ func (v *MemVault) Reveal(ctx context.Context, scope, name string) ([]byte, erro
 	if r == nil {
 		return nil, ErrSecretNotFound
 	}
-	return v.kr.Decrypt(r.token)
+	pt, err := v.kr.Decrypt(r.token)
+	if err == nil && v.onReveal != nil {
+		v.onReveal(scope, name)
+	}
+	return pt, err
 }
 
 func (v *MemVault) List(ctx context.Context, scope string) ([]Meta, error) {

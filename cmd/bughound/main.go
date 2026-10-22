@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net"
@@ -28,6 +29,7 @@ func main() {
 	engineMode := flag.String("engine", "mock", "set engine: mock (nuclei+ffuf mock, tanpa jaringan) | real (nuclei + subfinder/httpx/katana nyata lewat proxy egress)")
 	keyPath := flag.String("key", "bughound.key", "path file kunci master untuk enkripsi secret (atau set env BUGHOUND_MASTER_KEY)")
 	authFlag := flag.String("auth", "", "password HTTP Basic auth (atau env BUGHOUND_AUTH); kosong = tanpa auth (hanya aman untuk localhost)")
+	rotateKey := flag.Bool("rotate-key", false, "rotasi kunci master: re-enkripsi semua secret ke kunci baru lalu keluar")
 	flag.Parse()
 
 	authSecret := *authFlag
@@ -80,12 +82,57 @@ func main() {
 		log.Printf("secret: vault %s (terpisah dari temuan)", vpath)
 	}
 
+	if *rotateKey {
+		if src == secret.SourceEnv {
+			log.Fatalf("bughound: rotasi butuh kunci berbasis file (bukan env %s)", secret.EnvKey)
+		}
+		if *keyPath == "" {
+			log.Fatalf("bughound: rotasi butuh -key")
+		}
+		oldID := kr.ActiveID()
+		newKey, nerr := secret.NewRandomKey()
+		if nerr != nil {
+			log.Fatalf("bughound: %v", nerr)
+		}
+		// 1) simpan kunci baru + SEMUA kunci lama (transisi aman: bila proses
+		//    mati, semua secret tetap bisa didekripsi dan rotasi bisa diulang).
+		if werr := secret.WriteKeyFile(*keyPath, append([]secret.Key{newKey}, kr.AllKeys()...)...); werr != nil {
+			log.Fatalf("bughound: tulis kunci: %v", werr)
+		}
+		kr.Rotate(newKey)
+		n, rerr := vault.Rotate(context.Background())
+		if rerr != nil {
+			log.Fatalf("bughound: rotasi vault gagal (kunci lama masih tersimpan, aman diulang): %v", rerr)
+		}
+		// 2) re-enkripsi selesai: simpan hanya kunci baru.
+		if werr := secret.WriteKeyFile(*keyPath, newKey); werr != nil {
+			log.Fatalf("bughound: finalisasi kunci: %v", werr)
+		}
+		log.Printf("rotasi selesai: %d secret di-re-enkripsi; key-id %s -> %s (%s)", n, oldID, newKey.ID(), *keyPath)
+		return
+	}
+
+	// Kunci audit (HMAC) TERPISAH dari master, agar rotasi master tak memutus
+	// rantai audit yang sudah ada.
+	var auditKey []byte
+	if *dbPath == "" {
+		ak, _ := secret.NewRandomKey()
+		auditKey = secret.NewKeyring(ak).Subkey("hmac")
+	} else {
+		akPath := strings.TrimSuffix(*keyPath, ".key") + ".audit.key"
+		akr, _, aerr := secret.LoadKeyring(akPath)
+		if aerr != nil {
+			log.Fatalf("bughound: kunci audit: %v", aerr)
+		}
+		auditKey = akr.Subkey("hmac")
+	}
+
 	var auditLog audit.Log
 	if *dbPath == "" {
-		auditLog = audit.NewMemLog(kr.Subkey("audit"))
+		auditLog = audit.NewMemLog(auditKey)
 	} else {
 		apath := strings.TrimSuffix(*dbPath, ".db") + "-audit.db"
-		al, aerr := audit.OpenSQLiteLog(apath, kr.Subkey("audit"))
+		al, aerr := audit.OpenSQLiteLog(apath, auditKey)
 		if aerr != nil {
 			log.Fatalf("bughound: audit log: %v", aerr)
 		}
@@ -93,6 +140,11 @@ func main() {
 		auditLog = al
 		log.Printf("audit: trail %s (append-only, rantai HMAC)", apath)
 	}
+
+	// Catat akses secret (Reveal) ke audit trail (tanpa nilai).
+	vault.SetRevealHook(func(scope, name string) {
+		_, _ = auditLog.Append(context.Background(), audit.Event{Kind: "secret.reveal", Program: scope, Message: "secret: " + name})
+	})
 
 	var engines []engine.Engine
 	var rec recon.Engine
