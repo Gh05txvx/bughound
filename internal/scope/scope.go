@@ -134,6 +134,9 @@ func normalizeTarget(target string) (normTarget, error) {
 	if s == "" {
 		return normTarget{}, errors.New("target kosong")
 	}
+	if hasSuspiciousChars(s) {
+		return normTarget{}, fmt.Errorf("target mengandung karakter terlarang (backslash/spasi/kontrol): %q", target)
+	}
 	if strings.Contains(s, "://") {
 		u, err := url.Parse(s)
 		if err != nil || u.Host == "" {
@@ -191,6 +194,18 @@ func normalizePath(p string) string {
 		return "/"
 	}
 	return path.Clean("/" + strings.TrimLeft(p, "/"))
+}
+
+// hasSuspiciousChars melaporkan apakah s memuat karakter yang rawan membuat
+// parser berbeda menafsirkan authority berbeda (backslash, spasi, kontrol, DEL).
+// Hostname/URL scope yang sah tidak pernah memuat karakter ini (BH-F04).
+func hasSuspiciousChars(s string) bool {
+	for _, r := range s {
+		if r == '\\' || r <= 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
 }
 
 // splitHostPort memisahkan host dan port secara IPv6-aware. IP tanpa port

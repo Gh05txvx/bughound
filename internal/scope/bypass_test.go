@@ -60,6 +60,32 @@ func TestAudit_LegitimateTargetsAllowed(t *testing.T) {
 	}
 }
 
+// BH-F04: target dengan karakter authority berbahaya ditolak (tutup celah
+// parser-differential, mis. backslash).
+func TestAudit_SuspiciousCharsRejected(t *testing.T) {
+	g := mustGuard(t, []string{"app.acme.io"}, nil)
+	for _, tgt := range []string{
+		"http://evil.com\\@app.acme.io/", // backslash: parser lain bisa anggap host=evil.com
+		"ap p.acme.io",                   // spasi internal
+		"ap\tp.acme.io",                  // tab internal
+		"http://app.acme.io\r\nevil",     // injeksi CRLF
+		"app.acme.io\x00",                // null byte
+	} {
+		if g.Evaluate(tgt).Allowed {
+			t.Errorf("target dengan karakter mencurigakan harus ditolak: %q", tgt)
+		}
+	}
+}
+
+func TestAudit_SurroundingWhitespaceTrimmed(t *testing.T) {
+	g := mustGuard(t, []string{"app.acme.io"}, nil)
+	for _, tgt := range []string{" app.acme.io", "app.acme.io ", "\tapp.acme.io\n"} {
+		if !g.Evaluate(tgt).Allowed {
+			t.Errorf("spasi di tepi harus di-trim & diizinkan: %q", tgt)
+		}
+	}
+}
+
 // Metadata/IP privat hanya boleh bila eksplisit di-scope lewat IP/CIDR.
 func TestAudit_PrivateMetadataOnlyWhenExplicit(t *testing.T) {
 	deny := mustGuard(t, []string{"*.acme.io"}, nil)

@@ -40,6 +40,9 @@ func parseEntry(raw string) (entry, error) {
 	if s == "" {
 		return entry{}, errors.New("entri kosong")
 	}
+	if hasSuspiciousChars(s) {
+		return entry{}, fmt.Errorf("entri scope mengandung karakter terlarang (backslash/spasi/kontrol): %q", raw)
+	}
 
 	// 1. Wildcard subdomain: hanya di posisi paling kiri.
 	if strings.HasPrefix(s, "*.") {
