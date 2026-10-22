@@ -43,13 +43,13 @@ type AuditEvent struct {
 
 // Orchestrator menjalankan scan untuk satu program.
 type Orchestrator struct {
-	guard  *scope.Guard
-	engine engine.Engine
-	store  store.Store
-	lim    *ratelimit.Limiter
-	recon  recon.Engine // opsional
-	audit  func(AuditEvent)
-	now    func() time.Time
+	guard   *scope.Guard
+	engines []engine.Engine
+	store   store.Store
+	lim     *ratelimit.Limiter
+	recon   recon.Engine // opsional
+	audit   func(AuditEvent)
+	now     func() time.Time
 }
 
 // New membuat Orchestrator. audit boleh nil (jadi no-op). lim boleh nil, tetapi
@@ -62,11 +62,15 @@ func New(guard *scope.Guard, eng engine.Engine, st store.Store, lim *ratelimit.L
 	if lim == nil {
 		lim = ratelimit.New(ratelimit.Config{})
 	}
-	return &Orchestrator{guard: guard, engine: eng, store: st, lim: lim, audit: audit, now: time.Now}
+	return &Orchestrator{guard: guard, engines: []engine.Engine{eng}, store: st, lim: lim, audit: audit, now: time.Now}
 }
 
 // UseRecon mengaktifkan tahap recon (opsional).
 func (o *Orchestrator) UseRecon(r recon.Engine) { o.recon = r }
+
+// AddEngine menambah engine DAST tambahan. Semua engine dijalankan per target
+// dan menulis ke skema temuan yang sama.
+func (o *Orchestrator) AddEngine(e engine.Engine) { o.engines = append(o.engines, e) }
 
 // ScanRequest meminta scan satu program.
 type ScanRequest struct {
@@ -134,32 +138,34 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		}
 		res.Scanned = append(res.Scanned, d.Target)
 
-		// Rate limiter di jalur eksekusi: tunggu token sebelum menjalankan engine.
-		if err := o.lim.Wait(ctx); err != nil {
-			return res, fmt.Errorf("orchestrator: rate limit (scan): %w", err)
-		}
-		findings, err := o.engine.Scan(ctx, target, req.Program, runID)
-		if err != nil {
-			return res, fmt.Errorf("orchestrator: engine %s gagal scan %q: %w", o.engine.Name(), target, err)
-		}
-
-		for _, f := range findings {
-			// Lapis 2 — penegakan egress.
-			dd := o.guard.Evaluate(f.Location.URL)
-			if !dd.Allowed {
-				eev := o.auditEvent(req.Program, runID, dd, LayerEgress)
-				o.audit(eev)
-				res.Denied = append(res.Denied, eev)
-				continue
+		// Jalankan setiap engine terhadap target ini. Rate limiter di jalur
+		// eksekusi: tunggu token sebelum tiap pemanggilan engine.
+		for _, eng := range o.engines {
+			if err := o.lim.Wait(ctx); err != nil {
+				return res, fmt.Errorf("orchestrator: rate limit (scan): %w", err)
 			}
-			sr, err := o.store.Save(ctx, f)
+			findings, err := eng.Scan(ctx, target, req.Program, runID)
 			if err != nil {
-				return res, fmt.Errorf("orchestrator: gagal simpan temuan: %w", err)
+				return res, fmt.Errorf("orchestrator: engine %s gagal scan %q: %w", eng.Name(), target, err)
 			}
-			if sr.Deduplicated {
-				res.Duplicates++
-			} else {
-				res.FindingsSaved++
+			for _, f := range findings {
+				// Lapis 2 — penegakan egress.
+				dd := o.guard.Evaluate(f.Location.URL)
+				if !dd.Allowed {
+					eev := o.auditEvent(req.Program, runID, dd, LayerEgress)
+					o.audit(eev)
+					res.Denied = append(res.Denied, eev)
+					continue
+				}
+				sr, err := o.store.Save(ctx, f)
+				if err != nil {
+					return res, fmt.Errorf("orchestrator: gagal simpan temuan: %w", err)
+				}
+				if sr.Deduplicated {
+					res.Duplicates++
+				} else {
+					res.FindingsSaved++
+				}
 			}
 		}
 	}

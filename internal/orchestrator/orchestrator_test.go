@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/finding"
 	"bughound/internal/ratelimit"
@@ -181,5 +182,35 @@ func TestRunScanWithRecon(t *testing.T) {
 		if strings.Contains(f.Target, "evil.test") {
 			t.Error("temuan di luar scope tak boleh tersimpan")
 		}
+	}
+}
+
+// TestRunScanMultiEngine membuktikan >1 engine menulis ke skema yang sama.
+func TestRunScanMultiEngine(t *testing.T) {
+	g := newGuard(t, []string{"demo.test"}, nil)
+	st := store.NewMem()
+	o := New(g, nuclei.Mock{}, st, testLimiter(), nil)
+	o.AddEngine(ffuf.Mock{})
+
+	res, err := o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r", Targets: []string{"demo.test"}})
+	if err != nil {
+		t.Fatalf("RunScan: %v", err)
+	}
+	// 2 nuclei + 4 ffuf, semua dedup_key berbeda.
+	if res.FindingsSaved != 6 {
+		t.Errorf("ingin 6 temuan (2 nuclei + 4 ffuf), dapat %d", res.FindingsSaved)
+	}
+	all, _ := st.List(context.Background(), store.Query{Program: "demo"})
+	var hasNuclei, hasFfuf bool
+	for _, f := range all {
+		switch f.SourceEngine {
+		case "nuclei":
+			hasNuclei = true
+		case "ffuf":
+			hasFfuf = true
+		}
+	}
+	if !hasNuclei || !hasFfuf {
+		t.Error("nuclei dan ffuf harus sama-sama menyumbang ke skema yang sama")
 	}
 }

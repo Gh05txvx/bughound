@@ -105,8 +105,17 @@ func TestScanRunThenFindings(t *testing.T) {
 	}
 
 	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
-	if len(fs) != 2 {
-		t.Fatalf("ingin 2 temuan tersimpan, dapat %d", len(fs))
+	var hasNuclei, hasFfuf bool
+	for _, f := range fs {
+		switch f.SourceEngine {
+		case "nuclei":
+			hasNuclei = true
+		case "ffuf":
+			hasFfuf = true
+		}
+	}
+	if !hasNuclei || !hasFfuf {
+		t.Fatalf("kedua engine (nuclei+ffuf) harus menyumbang; dapat %d temuan", len(fs))
 	}
 
 	rec = do(t, srv, "GET", "/findings?program=demo", nil)

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"bughound/internal/engine"
+	"bughound/internal/engine/ffuf"
 	"bughound/internal/finding"
 	"bughound/internal/jobs"
 	"bughound/internal/orchestrator"
@@ -206,6 +207,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		}
 		o := orchestrator.New(guard, engineRef, storeRef,
 			ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), audit)
+		o.AddEngine(ffuf.Mock{}) // M1: >1 engine ke skema yang sama (nuclei + ffuf)
 		if len(seeds) > 0 {
 			o.UseRecon(recon.MockPipeline{})
 		}
