@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"bughound/internal/recon"
 	"bughound/internal/report"
 	"bughound/internal/scope"
+	"bughound/internal/secret"
 	"bughound/internal/store"
 )
 
@@ -41,6 +43,7 @@ type Server struct {
 	store   store.Store
 	engines []engine.Engine
 	recon   recon.Engine
+	vault   secret.Vault
 	queue   *jobs.Queue
 
 	mu       sync.Mutex
@@ -49,11 +52,12 @@ type Server struct {
 	pages map[string]*template.Template
 }
 
-// Config mengonfigurasi server: store, engine DAST (minimal 1), recon opsional.
+// Config mengonfigurasi server: store, engine DAST (minimal 1), recon & vault opsional.
 type Config struct {
 	Store   store.Store
 	Engines []engine.Engine
 	Recon   recon.Engine
+	Vault   secret.Vault
 }
 
 // programState menyimpan scope terakhir dan audit trail per program (in-memory
@@ -79,6 +83,7 @@ func NewServer(cfg Config) (*Server, error) {
 		store:    cfg.Store,
 		engines:  cfg.Engines,
 		recon:    cfg.Recon,
+		vault:    cfg.Vault,
 		queue:    jobs.New(4),
 		programs: map[string]*programState{},
 		pages:    pages,
@@ -115,6 +120,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /report", s.handleReport)
 	s.mux.HandleFunc("GET /report/download", s.handleReportDownload)
 	s.mux.HandleFunc("GET /report/print", s.handleReportPrint)
+	s.mux.HandleFunc("GET /settings", s.handleSettings)
+	s.mux.HandleFunc("POST /settings/secrets", s.handleAddSecret)
+	s.mux.HandleFunc("POST /settings/secrets/delete", s.handleDeleteSecret)
 }
 
 // ---- Scan ----
@@ -413,6 +421,76 @@ func (s *Server) handleReportPrint(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "report_print", "report_print", rep)
 }
 
+// ---- Settings / secrets ----
+
+type settingsPage struct {
+	Nav     string
+	Title   string
+	Program string
+	Scope   string
+	Scopes  []string
+	Secrets []secret.Meta
+	VaultOn bool
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	scope := normScope(r.URL.Query().Get("scope"))
+	page := settingsPage{
+		Nav: "settings", Title: "Settings", Scope: scope,
+		VaultOn: s.vault != nil,
+		Scopes:  append([]string{"global"}, s.programNames(r.Context())...),
+	}
+	if s.vault != nil {
+		page.Secrets, _ = s.vault.List(r.Context(), scope)
+	}
+	s.render(w, "settings", "base", page)
+}
+
+func (s *Server) handleAddSecret(w http.ResponseWriter, r *http.Request) {
+	if s.vault == nil {
+		http.Error(w, "vault tidak dikonfigurasi", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	scope := normScope(r.FormValue("scope"))
+	name := strings.TrimSpace(r.FormValue("name"))
+	value := r.FormValue("value")
+	if name == "" || value == "" {
+		http.Error(w, "nama & nilai wajib", http.StatusBadRequest)
+		return
+	}
+	if err := s.vault.Put(r.Context(), scope, name, []byte(value)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/settings?scope="+url.QueryEscape(scope), http.StatusSeeOther)
+}
+
+func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
+	if s.vault == nil {
+		http.Error(w, "vault tidak dikonfigurasi", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	scope := normScope(r.FormValue("scope"))
+	name := strings.TrimSpace(r.FormValue("name"))
+	_ = s.vault.Delete(r.Context(), scope, name)
+	http.Redirect(w, r, "/settings?scope="+url.QueryEscape(scope), http.StatusSeeOther)
+}
+
+func normScope(s string) string {
+	if s = strings.TrimSpace(s); s != "" {
+		return s
+	}
+	return "global"
+}
+
 // ---- helpers ----
 
 func (s *Server) programStateFor(name string) *programState {
@@ -519,6 +597,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
 		"report":       {"templates/base.html", "templates/report.html"},
 		"report_print": {"templates/report_print.html"},
+		"settings":     {"templates/base.html", "templates/settings.html"},
 	}
 	out := map[string]*template.Template{}
 	for name, files := range sets {

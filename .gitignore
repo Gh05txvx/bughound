@@ -10,6 +10,10 @@
 *.db-shm
 *.db-wal
 
+# Kunci master enkripsi secret — JANGAN PERNAH commit
+*.key
+bughound.key
+
 # OS / editor
 .DS_Store
 Thumbs.db

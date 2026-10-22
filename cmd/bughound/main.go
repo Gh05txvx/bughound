@@ -14,6 +14,7 @@ import (
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/recon"
+	"bughound/internal/secret"
 	"bughound/internal/store"
 	"bughound/internal/web"
 )
@@ -22,6 +23,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "alamat bind (default localhost saja)")
 	dbPath := flag.String("db", "bughound.db", "path file SQLite (kosongkan untuk in-memory/ephemeral)")
 	engineMode := flag.String("engine", "mock", "set engine: mock (nuclei+ffuf mock, tanpa jaringan) | real (nuclei + subfinder/httpx/katana nyata lewat proxy egress)")
+	keyPath := flag.String("key", "bughound.key", "path file kunci master untuk enkripsi secret (atau set env BUGHOUND_MASTER_KEY)")
 	flag.Parse()
 
 	var st store.Store
@@ -38,6 +40,34 @@ func main() {
 		log.Printf("store: sqlite (%s)", *dbPath)
 	}
 
+	// Kunci master + vault secret (enkripsi saat disimpan, terisolasi dari temuan).
+	kr, src, err := secret.LoadKeyring(*keyPath)
+	if err != nil {
+		log.Fatalf("bughound: kunci master: %v", err)
+	}
+	switch src {
+	case secret.SourceGenerated:
+		log.Printf("secret: kunci master BARU dibuat di %s (0600) — amankan & JANGAN commit", *keyPath)
+	case secret.SourceEphemeral:
+		log.Printf("secret: kunci master ephemeral (tak dipersist); set env %s atau -key agar secret bertahan", secret.EnvKey)
+	default:
+		log.Printf("secret: kunci master dari %s (key-id %s)", src, kr.ActiveID())
+	}
+
+	var vault secret.Vault
+	if *dbPath == "" {
+		vault = secret.NewMemVault(kr)
+	} else {
+		vpath := strings.TrimSuffix(*dbPath, ".db") + "-secrets.db"
+		vv, verr := secret.OpenSQLiteVault(vpath, kr)
+		if verr != nil {
+			log.Fatalf("bughound: vault secret: %v", verr)
+		}
+		defer vv.Close()
+		vault = vv
+		log.Printf("secret: vault %s (terpisah dari temuan)", vpath)
+	}
+
 	var engines []engine.Engine
 	var rec recon.Engine
 	switch strings.ToLower(*engineMode) {
@@ -52,7 +82,7 @@ func main() {
 		log.Printf("engine: mock (nuclei + ffuf) — tanpa koneksi jaringan")
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec})
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}

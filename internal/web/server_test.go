@@ -15,16 +15,19 @@ import (
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/finding"
 	"bughound/internal/recon"
+	"bughound/internal/secret"
 	"bughound/internal/store"
 )
 
 func newTestServer(t *testing.T) (*Server, *store.Mem) {
 	t.Helper()
 	st := store.NewMem()
+	k, _ := secret.NewRandomKey()
 	srv, err := NewServer(Config{
 		Store:   st,
 		Engines: []engine.Engine{nuclei.Mock{}, ffuf.Mock{}},
 		Recon:   recon.MockPipeline{},
+		Vault:   secret.NewMemVault(secret.NewKeyring(k)),
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -269,5 +272,36 @@ func TestReportFlow(t *testing.T) {
 	rec = do(t, srv, "GET", "/report/print?program=demo", nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "window.print()") {
 		t.Errorf("tampilan cetak gagal (code=%d)", rec.Code)
+	}
+}
+
+func TestSettingsSecretFlow(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	rec := do(t, srv, "POST", "/settings/secrets", url.Values{
+		"scope": {"global"}, "name": {"nuclei-key"}, "value": {"supersecret-xyz"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST add = %d, ingin 303", rec.Code)
+	}
+
+	rec = do(t, srv, "GET", "/settings?scope=global", nil)
+	body := rec.Body.String()
+	if !strings.Contains(body, "nuclei-key") {
+		t.Error("secret harus terdaftar (nama)")
+	}
+	if strings.Contains(body, "supersecret-xyz") {
+		t.Error("NILAI secret tidak boleh muncul di UI")
+	}
+
+	rec = do(t, srv, "POST", "/settings/secrets/delete", url.Values{
+		"scope": {"global"}, "name": {"nuclei-key"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST delete = %d, ingin 303", rec.Code)
+	}
+	rec = do(t, srv, "GET", "/settings?scope=global", nil)
+	if strings.Contains(rec.Body.String(), "nuclei-key") {
+		t.Error("secret harus hilang setelah dihapus")
 	}
 }
