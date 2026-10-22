@@ -29,6 +29,12 @@ type Store interface {
 	List(ctx context.Context, q Query) ([]*finding.Finding, error)
 	// Programs mengembalikan nama program berbeda yang punya temuan tersimpan.
 	Programs(ctx context.Context) ([]string, error)
+	// SaveProgram menyimpan/memperbarui definisi scope sebuah program (persisten).
+	SaveProgram(ctx context.Context, p Program) error
+	// GetProgram mengambil definisi program; ErrNotFound bila tak ada.
+	GetProgram(ctx context.Context, name string) (*Program, error)
+	// ListPrograms mengembalikan semua program tersimpan, terurut nama.
+	ListPrograms(ctx context.Context) ([]*Program, error)
 	// SetStatus mengubah status triase sebuah temuan.
 	SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error
 	// Close melepaskan sumber daya (no-op untuk in-memory).
@@ -55,6 +61,14 @@ type Query struct {
 
 // ErrNotFound dikembalikan Get/SetStatus bila id tak ada.
 var ErrNotFound = errors.New("store: temuan tidak ditemukan")
+
+// Program menyimpan definisi scope sebuah program bounty (persisten).
+type Program struct {
+	Name      string
+	InScope   []string
+	OutScope  []string
+	UpdatedAt time.Time
+}
 
 // prepare mengisi field turunan (id, schema_version, dedup_key, created_at)
 // yang masih kosong lalu memvalidasi temuan.

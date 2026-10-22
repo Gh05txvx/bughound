@@ -182,6 +182,35 @@ func TestSaveRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestMemProgramCRUD(t *testing.T) {
+	s := NewMem()
+	ctx := context.Background()
+	if _, err := s.GetProgram(ctx, "demo"); err != ErrNotFound {
+		t.Fatalf("program tak ada harus ErrNotFound, dapat %v", err)
+	}
+	if err := s.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"demo.test"}, OutScope: []string{"admin.demo.test"}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetProgram(ctx, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.InScope) != 1 || got.InScope[0] != "demo.test" || len(got.OutScope) != 1 || got.UpdatedAt.IsZero() {
+		t.Errorf("program tersimpan tak sesuai: %+v", got)
+	}
+	s.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"a", "b"}}) // update
+	if g2, _ := s.GetProgram(ctx, "demo"); len(g2.InScope) != 2 {
+		t.Error("update scope gagal")
+	}
+	s.SaveProgram(ctx, Program{Name: "alpha"})
+	if ps, _ := s.ListPrograms(ctx); len(ps) != 2 || ps[0].Name != "alpha" {
+		t.Errorf("ListPrograms harus 2 & terurut: %+v", ps)
+	}
+	if err := s.SaveProgram(ctx, Program{Name: "  "}); err == nil {
+		t.Error("nama kosong harus ditolak")
+	}
+}
+
 func TestMemPrograms(t *testing.T) {
 	s := NewMem()
 	ctx := context.Background()

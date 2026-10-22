@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"bughound/internal/audit"
@@ -52,9 +51,6 @@ type Server struct {
 	authSecret string
 	queue   *jobs.Queue
 
-	mu       sync.Mutex
-	programs map[string]*programState
-
 	pages map[string]*template.Template
 }
 
@@ -69,14 +65,6 @@ type Config struct {
 	// AuthSecret, username diabaikan). Kosong = tanpa auth (hanya aman untuk
 	// bind localhost tepercaya).
 	AuthSecret string
-}
-
-// programState menyimpan scope terakhir dan audit trail per program (in-memory
-// untuk M0; persistensi menyusul bersama store SQLite).
-type programState struct {
-	Name     string
-	InScope  []string
-	OutScope []string
 }
 
 // NewServer menyiapkan server dengan store dan engine yang diberikan.
@@ -97,7 +85,6 @@ func NewServer(cfg Config) (*Server, error) {
 		audit:    cfg.Audit,
 		authSecret: cfg.AuthSecret,
 		queue:    jobs.New(4),
-		programs: map[string]*programState{},
 		pages:    pages,
 	}
 	s.routes()
@@ -207,6 +194,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/scan", http.StatusFound)
 	})
+	s.mux.HandleFunc("GET /programs", s.handlePrograms)
+	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
+	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
+	s.mux.HandleFunc("POST /programs/preview", s.handleProgramPreview)
 	s.mux.HandleFunc("GET /scan", s.handleScanForm)
 	s.mux.HandleFunc("POST /scan", s.handleScanRun)
 	s.mux.HandleFunc("GET /runs/{id}", s.handleRunStatus)
@@ -256,18 +247,25 @@ type denialView struct {
 }
 
 func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
-	// Prefill dengan contoh yang langsung mendemokan gate (engine mock => demo.test).
-	s.render(w, "scan", "base", scanPage{
-		Nav:      "scan",
-		Title:    "Scan",
-		Program:  "demo",
-		CSRF:     s.csrfToken(r),
-		Seeds:    "demo.test",
-		InScope:  "demo.test\n*.demo.test",
-		OutScope: "admin.demo.test",
-		Targets:  "demo.test\nevil.test",
-		RPS:      "10",
-	})
+	page := scanPage{Nav: "scan", Title: "Scan", CSRF: s.csrfToken(r), RPS: "10"}
+
+	// Bila diberi ?program=, prefill scope dari program tersimpan.
+	if prog := strings.TrimSpace(r.URL.Query().Get("program")); prog != "" {
+		if p, err := s.store.GetProgram(r.Context(), prog); err == nil {
+			page.Program = p.Name
+			page.InScope = strings.Join(p.InScope, "\n")
+			page.OutScope = strings.Join(p.OutScope, "\n")
+		}
+	}
+	// Default contoh (langsung mendemokan gate) bila tak ada program.
+	if page.Program == "" {
+		page.Program = "demo"
+		page.Seeds = "demo.test"
+		page.InScope = "demo.test\n*.demo.test"
+		page.OutScope = "admin.demo.test"
+		page.Targets = "demo.test\nevil.test"
+	}
+	s.render(w, "scan", "base", page)
 }
 
 func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
@@ -308,8 +306,8 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ps := s.programStateFor(program)
-	ps.InScope, ps.OutScope = inScope, outScope
+	// Simpan/perbarui definisi scope program (persisten lintas-restart).
+	_ = s.store.SaveProgram(r.Context(), store.Program{Name: program, InScope: inScope, OutScope: outScope})
 
 	storeRef := s.store
 
@@ -529,6 +527,111 @@ func (s *Server) handleReportPrint(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "report_print", "report_print", rep)
 }
 
+// ---- Programs / scope editor ----
+
+type programsPage struct {
+	Nav      string
+	Title    string
+	Program  string
+	CSRF     string
+	Programs []*store.Program
+}
+
+func (s *Server) handlePrograms(w http.ResponseWriter, r *http.Request) {
+	progs, _ := s.store.ListPrograms(r.Context())
+	s.render(w, "programs", "base", programsPage{
+		Nav: "programs", Title: "Programs", CSRF: s.csrfToken(r), Programs: progs,
+	})
+}
+
+type programEditPage struct {
+	Nav      string
+	Title    string
+	Program  string
+	CSRF     string
+	Name     string
+	InScope  string
+	OutScope string
+	Targets  string
+	IsNew    bool
+	Errors   []string
+}
+
+func (s *Server) handleProgramEdit(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	page := programEditPage{Nav: "programs", Title: "Scope editor", CSRF: s.csrfToken(r), Program: name, Name: name, IsNew: true}
+	if name != "" {
+		if p, err := s.store.GetProgram(r.Context(), name); err == nil {
+			page.InScope = strings.Join(p.InScope, "\n")
+			page.OutScope = strings.Join(p.OutScope, "\n")
+			page.IsNew = false
+		}
+	}
+	s.render(w, "program_edit", "base", page)
+}
+
+func (s *Server) handleProgramSave(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	inScope := splitLines(r.FormValue("in_scope"))
+	outScope := splitLines(r.FormValue("out_scope"))
+
+	page := programEditPage{
+		Nav: "programs", Title: "Scope editor", CSRF: s.csrfToken(r), Program: name, Name: name,
+		InScope: r.FormValue("in_scope"), OutScope: r.FormValue("out_scope"), Targets: r.FormValue("targets"),
+		IsNew: false,
+	}
+	if name == "" {
+		page.Errors = append(page.Errors, "Nama program wajib.")
+	}
+	// Fail-closed: tolak simpan bila ada entri scope tak terurai (khususnya out-of-scope).
+	if _, errs := scope.New(inScope, outScope); len(errs) > 0 {
+		for _, e := range errs {
+			page.Errors = append(page.Errors, "Scope tak valid: "+e.Error())
+		}
+	}
+	if len(page.Errors) > 0 {
+		s.render(w, "program_edit", "base", page)
+		return
+	}
+	if err := s.store.SaveProgram(r.Context(), store.Program{Name: name, InScope: inScope, OutScope: outScope}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/programs", http.StatusSeeOther)
+}
+
+type previewResult struct {
+	Warnings []string
+	Rows     []previewRow
+}
+
+type previewRow struct {
+	Target  string
+	Allowed bool
+	Reason  string
+}
+
+func (s *Server) handleProgramPreview(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	guard, errs := scope.New(splitLines(r.FormValue("in_scope")), splitLines(r.FormValue("out_scope")))
+	res := previewResult{}
+	for _, e := range errs {
+		res.Warnings = append(res.Warnings, e.Error())
+	}
+	for _, t := range splitLines(r.FormValue("targets")) {
+		d := guard.Evaluate(t)
+		res.Rows = append(res.Rows, previewRow{Target: d.Target, Allowed: d.Allowed, Reason: string(d.Reason)})
+	}
+	s.renderPartial(w, "program_edit", "program_preview", res)
+}
+
 // ---- Audit ----
 
 func (s *Server) auditAppend(ctx context.Context, e audit.Event) {
@@ -635,20 +738,8 @@ func normScope(s string) string {
 
 // ---- helpers ----
 
-func (s *Server) programStateFor(name string) *programState {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ps := s.programs[name]
-	if ps == nil {
-		ps = &programState{Name: name}
-		s.programs[name] = ps
-	}
-	return ps
-}
-
-// programNames menggabungkan program yang punya temuan tersimpan (dari store,
-// sehingga persisten lintas-restart) dengan program yang baru discan di sesi ini
-// (registry in-memory, termasuk yang belum punya temuan).
+// programNames menggabungkan program yang punya temuan tersimpan dengan program
+// yang scope-nya sudah didefinisikan — keduanya persisten lintas-restart.
 func (s *Server) programNames(ctx context.Context) []string {
 	set := map[string]bool{}
 	if progs, err := s.store.Programs(ctx); err == nil {
@@ -656,12 +747,11 @@ func (s *Server) programNames(ctx context.Context) []string {
 			set[p] = true
 		}
 	}
-	s.mu.Lock()
-	for n := range s.programs {
-		set[n] = true
+	if defs, err := s.store.ListPrograms(ctx); err == nil {
+		for _, p := range defs {
+			set[p.Name] = true
+		}
 	}
-	s.mu.Unlock()
-
 	out := make([]string, 0, len(set))
 	for n := range set {
 		out = append(out, n)
@@ -741,6 +831,8 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"report_print": {"templates/report_print.html"},
 		"settings":     {"templates/base.html", "templates/settings.html"},
 		"audit":        {"templates/base.html", "templates/audit.html"},
+		"programs":     {"templates/base.html", "templates/programs.html"},
+		"program_edit": {"templates/base.html", "templates/program_edit.html", "templates/program_preview.html"},
 	}
 	out := map[string]*template.Template{}
 	for name, files := range sets {

@@ -150,6 +150,33 @@ func TestSQLitePersistenceAcrossReopen(t *testing.T) {
 	}
 }
 
+func TestSQLiteProgramCRUDPersists(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "prog.db")
+
+	s1, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s1.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"demo.test", "*.demo.test"}, OutScope: []string{"admin.demo.test"}}); err != nil {
+		t.Fatal(err)
+	}
+	s1.Close()
+
+	s2, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	got, err := s2.GetProgram(ctx, "demo")
+	if err != nil {
+		t.Fatalf("GetProgram setelah reopen: %v", err)
+	}
+	if len(got.InScope) != 2 || got.OutScope[0] != "admin.demo.test" {
+		t.Errorf("scope tak bertahan lintas-restart: %+v", got)
+	}
+}
+
 func TestSQLitePrograms(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()

@@ -57,6 +57,12 @@ func (s *SQLite) init() error {
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_findings_program ON findings(program);`,
 		`CREATE INDEX IF NOT EXISTS idx_findings_dedup   ON findings(program, dedup_key);`,
+		`CREATE TABLE IF NOT EXISTS programs (
+			name       TEXT PRIMARY KEY,
+			in_scope   TEXT NOT NULL,
+			out_scope  TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -248,6 +254,62 @@ func (s *SQLite) SetStatus(ctx context.Context, id string, status finding.Status
 		return fmt.Errorf("store: update status: %w", err)
 	}
 	return nil
+}
+
+// SaveProgram: lihat Store.SaveProgram.
+func (s *SQLite) SaveProgram(ctx context.Context, p Program) error {
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("store: nama program wajib")
+	}
+	in, _ := json.Marshal(p.InScope)
+	out, _ := json.Marshal(p.OutScope)
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO programs (name,in_scope,out_scope,updated_at) VALUES (?,?,?,?)
+		 ON CONFLICT(name) DO UPDATE SET in_scope=excluded.in_scope, out_scope=excluded.out_scope, updated_at=excluded.updated_at`,
+		p.Name, string(in), string(out), s.now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("store: simpan program: %w", err)
+	}
+	return nil
+}
+
+// GetProgram: lihat Store.GetProgram.
+func (s *SQLite) GetProgram(ctx context.Context, name string) (*Program, error) {
+	var in, out, upd string
+	err := s.db.QueryRowContext(ctx, `SELECT in_scope,out_scope,updated_at FROM programs WHERE name=?`, name).Scan(&in, &out, &upd)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: ambil program: %w", err)
+	}
+	return decodeProgram(name, in, out, upd), nil
+}
+
+// ListPrograms: lihat Store.ListPrograms.
+func (s *SQLite) ListPrograms(ctx context.Context) ([]*Program, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name,in_scope,out_scope,updated_at FROM programs ORDER BY name`)
+	if err != nil {
+		return nil, fmt.Errorf("store: daftar program: %w", err)
+	}
+	defer rows.Close()
+	var out []*Program
+	for rows.Next() {
+		var name, in, outs, upd string
+		if err := rows.Scan(&name, &in, &outs, &upd); err != nil {
+			return nil, err
+		}
+		out = append(out, decodeProgram(name, in, outs, upd))
+	}
+	return out, rows.Err()
+}
+
+func decodeProgram(name, in, out, upd string) *Program {
+	p := &Program{Name: name}
+	_ = json.Unmarshal([]byte(in), &p.InScope)
+	_ = json.Unmarshal([]byte(out), &p.OutScope)
+	p.UpdatedAt, _ = time.Parse(time.RFC3339, upd)
+	return p
 }
 
 // Close menutup database.

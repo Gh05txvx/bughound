@@ -18,16 +18,63 @@ type Mem struct {
 	now  func() time.Time
 	byID map[string]*finding.Finding
 	// primary: program -> dedup_key -> id temuan utama.
-	primary map[string]map[string]string
+	primary  map[string]map[string]string
+	programs map[string]*Program
 }
 
 // NewMem membuat store in-memory kosong.
 func NewMem() *Mem {
 	return &Mem{
-		now:     time.Now,
-		byID:    map[string]*finding.Finding{},
-		primary: map[string]map[string]string{},
+		now:      time.Now,
+		byID:     map[string]*finding.Finding{},
+		primary:  map[string]map[string]string{},
+		programs: map[string]*Program{},
 	}
+}
+
+// SaveProgram: lihat Store.SaveProgram.
+func (m *Mem) SaveProgram(ctx context.Context, p Program) error {
+	if strings.TrimSpace(p.Name) == "" {
+		return fmt.Errorf("store: nama program wajib")
+	}
+	p.UpdatedAt = m.now().UTC()
+	p.InScope = append([]string(nil), p.InScope...)
+	p.OutScope = append([]string(nil), p.OutScope...)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := p
+	m.programs[p.Name] = &cp
+	return nil
+}
+
+// GetProgram: lihat Store.GetProgram.
+func (m *Mem) GetProgram(ctx context.Context, name string) (*Program, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, ok := m.programs[name]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return cloneProgram(p), nil
+}
+
+// ListPrograms: lihat Store.ListPrograms.
+func (m *Mem) ListPrograms(ctx context.Context) ([]*Program, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*Program, 0, len(m.programs))
+	for _, p := range m.programs {
+		out = append(out, cloneProgram(p))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func cloneProgram(p *Program) *Program {
+	cp := *p
+	cp.InScope = append([]string(nil), p.InScope...)
+	cp.OutScope = append([]string(nil), p.OutScope...)
+	return &cp
 }
 
 // Save: lihat Store.Save. Dedup ditegakkan di sini.

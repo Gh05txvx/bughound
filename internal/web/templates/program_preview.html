@@ -1,0 +1,24 @@
+{{define "program_preview"}}
+{{if .Warnings}}
+<div class="errors">
+  <h4>Peringatan scope</h4>
+  <ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>
+</div>
+{{end}}
+{{if .Rows}}
+<table class="tbl compact">
+  <thead><tr><th>Target (ternormalkan)</th><th>Keputusan</th><th>Alasan</th></tr></thead>
+  <tbody>
+  {{range .Rows}}
+  <tr>
+    <td class="mono">{{.Target}}</td>
+    <td>{{if .Allowed}}<span class="pill st-confirmed">izin</span>{{else}}<span class="pill st-false_positive">tolak</span>{{end}}</td>
+    <td class="muted">{{.Reason}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">Tidak ada target uji untuk dipratinjau.</p>
+{{end}}
+{{end}}
