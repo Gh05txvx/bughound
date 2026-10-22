@@ -211,6 +211,31 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
+// ProxyEnv mengembalikan environment (berbasis base, mis. os.Environ()) yang
+// MEMAKSA HTTP(S)_PROXY/ALL_PROXY ke proxyURL dan mengosongkan NO_PROXY.
+// Dipakai sebagai pertahanan berlapis (belt-and-suspenders) agar subprocess
+// engine tetap ber-egress lewat proxy scope guard walau mengabaikan flag
+// -proxy. (Egress non-HTTP tetap di luar jangkauan proxy — lihat ADR egress.)
+func ProxyEnv(base []string, proxyURL string) []string {
+	out := make([]string, 0, len(base)+8)
+	for _, kv := range base {
+		up := strings.ToUpper(kv)
+		switch {
+		case strings.HasPrefix(up, "HTTP_PROXY="),
+			strings.HasPrefix(up, "HTTPS_PROXY="),
+			strings.HasPrefix(up, "ALL_PROXY="),
+			strings.HasPrefix(up, "NO_PROXY="):
+			// buang; akan diganti paksa di bawah
+		default:
+			out = append(out, kv)
+		}
+	}
+	for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+		out = append(out, k+"="+proxyURL)
+	}
+	return append(out, "NO_PROXY=", "no_proxy=")
+}
+
 func hostOnly(hostport string) string {
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		return h

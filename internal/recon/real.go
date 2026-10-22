@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+
+	"bughound/internal/egress"
 )
 
 // RealPipeline menjalankan recon NYATA via subprocess: subfinder (pasif, OSINT)
@@ -85,7 +88,7 @@ func (s Subfinder) Enumerate(ctx context.Context, domain string) ([]string, erro
 	if domain == "" {
 		return nil, nil
 	}
-	return runLines(ctx, s.bin(), "", s.args(domain)...)
+	return runLines(ctx, s.bin(), "", nil, s.args(domain)...) // pasif: tanpa proxy
 }
 
 // Httpx: probe host hidup (aktif → lewat proxy egress).
@@ -113,7 +116,14 @@ func (h *Httpx) Probe(ctx context.Context, hosts []string) ([]string, error) {
 	if len(hosts) == 0 {
 		return nil, nil
 	}
-	return runLines(ctx, h.bin(), strings.Join(hosts, "\n"), h.args()...)
+	return runLines(ctx, h.bin(), strings.Join(hosts, "\n"), h.proxyEnvOrNil(), h.args()...)
+}
+
+func (h *Httpx) proxyEnvOrNil() []string {
+	if h.proxyAddr == "" {
+		return nil
+	}
+	return egress.ProxyEnv(os.Environ(), "http://"+h.proxyAddr)
 }
 
 // Katana: crawling (aktif → lewat proxy egress).
@@ -141,15 +151,22 @@ func (k *Katana) Crawl(ctx context.Context, urls []string) ([]string, error) {
 	if len(urls) == 0 {
 		return nil, nil
 	}
-	return runLines(ctx, k.bin(), strings.Join(urls, "\n"), k.args()...)
+	var env []string
+	if k.proxyAddr != "" {
+		env = egress.ProxyEnv(os.Environ(), "http://"+k.proxyAddr)
+	}
+	return runLines(ctx, k.bin(), strings.Join(urls, "\n"), env, k.args()...)
 }
 
 // runLines menjalankan tool berbasis baris (stdin opsional) dan mengembalikan
 // baris stdout yang tidak kosong.
-func runLines(ctx context.Context, bin, stdin string, args ...string) ([]string, error) {
+func runLines(ctx context.Context, bin, stdin string, env []string, args ...string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
+	}
+	if env != nil {
+		cmd.Env = env
 	}
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out

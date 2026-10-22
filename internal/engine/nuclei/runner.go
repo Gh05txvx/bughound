@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 
+	"bughound/internal/egress"
 	"bughound/internal/finding"
 )
 
@@ -37,6 +39,9 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 		bin = "nuclei"
 	}
 	cmd := exec.CommandContext(ctx, bin, r.buildArgs(target)...)
+	if r.proxyAddr != "" {
+		cmd.Env = egress.ProxyEnv(os.Environ(), "http://"+r.proxyAddr) // belt-and-suspenders
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
