@@ -14,32 +14,61 @@
     <p>Belum ada program. <a href="/scan">Jalankan scan pertama →</a></p>
   </div>
 {{else}}
+
+<form method="get" action="/findings" class="filters">
+  <input type="hidden" name="program" value="{{.Program}}">
+  <select name="severity">
+    <option value="">severity: semua</option>
+    {{range $s := strs "critical" "high" "medium" "low" "info"}}<option value="{{$s}}" {{if eq $.FSeverity $s}}selected{{end}}>{{$s}}</option>{{end}}
+  </select>
+  <select name="status">
+    <option value="">status: semua</option>
+    {{range $s := strs "new" "confirmed" "duplicate" "false_positive" "ignored"}}<option value="{{$s}}" {{if eq $.FStatus $s}}selected{{end}}>{{$s}}</option>{{end}}
+  </select>
+  <input type="text" name="type" value="{{.FType}}" placeholder="type" autocomplete="off">
+  <input type="text" name="run" value="{{.FRun}}" placeholder="run id" autocomplete="off">
+  <button class="btn" type="submit">Filter</button>
+  <a class="btn ghost" href="/findings?program={{.Program}}">reset</a>
+</form>
+
 <div class="master-detail">
   <div class="master">
     {{if .Findings}}
-    <table class="tbl findings">
-      <thead><tr><th>Sev</th><th>Type</th><th>Target</th><th>Status</th><th>Judul</th></tr></thead>
-      <tbody>
-      {{range .Findings}}
-        <tr class="row {{if $.Selected}}{{if eq .ID $.Selected.ID}}selected{{end}}{{end}}"
-            hx-get="/findings/{{.ID}}?program={{$.Program}}" hx-target="#detail" hx-swap="innerHTML" style="cursor:pointer">
-          <td><span class="badge {{sevClass .Severity}}">{{.Severity}}</span></td>
-          <td class="mono">{{.Type}}</td>
-          <td class="mono truncate">{{.Target}}</td>
-          <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
-          <td class="truncate">{{.Title}}</td>
-        </tr>
-      {{end}}
-      </tbody>
-    </table>
+    <form method="post" action="/findings/bulk" id="bulkform">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="program" value="{{.Program}}">
+      <div class="bulk-bar">
+        <label><input type="checkbox" onclick="document.querySelectorAll('#bulkform input[name=ids]').forEach(function(c){c.checked=this.checked}.bind(this))"> semua</label>
+        <span class="muted small">aksi terpilih:</span>
+        <button class="btn good" name="status" value="confirmed" type="submit">Konfirmasi</button>
+        <button class="btn" name="status" value="false_positive" type="submit">False positive</button>
+        <button class="btn" name="status" value="ignored" type="submit">Abaikan</button>
+      </div>
+      <table class="tbl findings">
+        <thead><tr><th></th><th>Sev</th><th>Type</th><th>Target</th><th>Status</th><th>Judul</th></tr></thead>
+        <tbody>
+        {{range .Findings}}
+          <tr class="row {{if $.Selected}}{{if eq .ID $.Selected.ID}}selected{{end}}{{end}}"
+              hx-get="/findings/{{.ID}}?program={{$.Program}}" hx-target="#detail" hx-swap="innerHTML" style="cursor:pointer">
+            <td onclick="event.stopPropagation()"><input type="checkbox" name="ids" value="{{.ID}}"></td>
+            <td><span class="badge {{sevClass .Severity}}">{{.Severity}}</span></td>
+            <td class="mono">{{.Type}}</td>
+            <td class="mono truncate">{{.Target}}</td>
+            <td><span class="pill {{statusClass .Status}}">{{.Status}}</span></td>
+            <td class="truncate">{{.Title}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </form>
     {{else}}
-      <div class="empty"><p class="muted">Belum ada temuan untuk program ini. Jalankan scan, atau scan selesai tanpa temuan.</p></div>
+      <div class="empty"><p class="muted">Tidak ada temuan untuk filter ini. <a href="/findings?program={{.Program}}">reset filter</a> atau jalankan scan.</p></div>
     {{end}}
   </div>
 
   <aside class="detail" id="detail">
     {{if .Selected}}{{template "finding_detail" .Selected}}{{else}}
-    <p class="muted">Pilih satu baris untuk melihat bukti &amp; aksi triase.</p>
+    <p class="muted">Pilih satu baris untuk melihat bukti &amp; aksi triase. Centang beberapa baris untuk aksi massal.</p>
     {{end}}
   </aside>
 </div>

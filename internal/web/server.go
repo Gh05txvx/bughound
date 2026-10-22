@@ -202,6 +202,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /scan", s.handleScanRun)
 	s.mux.HandleFunc("GET /runs/{id}", s.handleRunStatus)
 	s.mux.HandleFunc("GET /findings", s.handleFindings)
+	s.mux.HandleFunc("POST /findings/bulk", s.handleBulkTriage)
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
 	s.mux.HandleFunc("POST /findings/{id}/status", s.handleTriage)
 	s.mux.HandleFunc("GET /report", s.handleReport)
@@ -416,6 +417,11 @@ type findingsPage struct {
 	Programs []string
 	Findings []*finding.Finding
 	Selected *finding.Finding
+	// filter aktif (untuk mengisi ulang kontrol & mempertahankan di query).
+	FSeverity string
+	FStatus   string
+	FType     string
+	FRun      string
 }
 
 func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
@@ -425,14 +431,29 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 		program = progs[0]
 	}
 
+	q := store.Query{Program: program, RunID: strings.TrimSpace(r.URL.Query().Get("run"))}
+	fSev := strings.TrimSpace(r.URL.Query().Get("severity"))
+	fStatus := strings.TrimSpace(r.URL.Query().Get("status"))
+	fType := strings.TrimSpace(r.URL.Query().Get("type"))
+	if fSev != "" {
+		q.Severities = []finding.Severity{finding.Severity(fSev)}
+	}
+	if fStatus != "" {
+		q.Statuses = []finding.Status{finding.Status(fStatus)}
+	}
+	if fType != "" {
+		q.Types = []string{fType}
+	}
+
 	var findings []*finding.Finding
 	if program != "" {
-		findings, _ = s.store.List(r.Context(), store.Query{Program: program})
+		findings, _ = s.store.List(r.Context(), q)
 	}
 
 	page := findingsPage{
 		Nav: "findings", Title: "Findings", Program: program, CSRF: s.csrfToken(r),
 		Programs: progs, Findings: findings,
+		FSeverity: fSev, FStatus: fStatus, FType: fType, FRun: q.RunID,
 	}
 	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
 		if f, err := s.store.Get(r.Context(), id); err == nil {
@@ -440,6 +461,24 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "findings", "base", page)
+}
+
+func (s *Server) handleBulkTriage(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	status := finding.Status(strings.TrimSpace(r.FormValue("status")))
+	switch status {
+	case finding.StatusConfirmed, finding.StatusFalsePositive, finding.StatusIgnored, finding.StatusNew:
+	default:
+		http.Error(w, "status triase tidak diizinkan", http.StatusBadRequest)
+		return
+	}
+	for _, id := range r.Form["ids"] {
+		_ = s.store.SetStatus(r.Context(), id, status, "")
+	}
+	http.Redirect(w, r, "/findings?program="+url.QueryEscape(strings.TrimSpace(r.FormValue("program"))), http.StatusSeeOther)
 }
 
 func (s *Server) handleFindingDetail(w http.ResponseWriter, r *http.Request) {
@@ -823,6 +862,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"statusClass": func(s finding.Status) string { return "st-" + strings.ToLower(string(s)) },
 		"join":        func(v []string, sep string) string { return strings.Join(v, sep) },
 		"add":         func(a, b int) int { return a + b },
+		"strs":        func(v ...string) []string { return v },
 	}
 	sets := map[string][]string{
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
