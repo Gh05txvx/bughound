@@ -1,7 +1,12 @@
-// Package orchestrator menyatukan scope guard, engine, dan store menjadi satu
-// alur scan. Scope guard adalah SATU-SATUNYA titik keputusan dan ditegakkan di
-// dua lapis (BH-SPEC-SCOPE): saat input/perencanaan dan saat egress (sebelum
-// temuan dari engine diterima). Tidak ada jalur sampingan.
+// Package orchestrator menyatukan scope guard, (opsional) recon, engine DAST,
+// rate limiter, dan store menjadi satu alur scan.
+//
+// Dua jaminan struktural (BH-SPEC-SCOPE + prinsip bughound):
+//   - Scope guard adalah SATU-SATUNYA titik keputusan, ditegakkan dua lapis:
+//     saat input/perencanaan dan saat egress (sebelum temuan diterima). Aset
+//     hasil recon pun wajib lolos scope guard; recon tidak memintas scope.
+//   - Rate limiter ADA DI JALUR EKSEKUSI: setiap pemanggilan recon dan setiap
+//     scan menunggu token lebih dulu, dan limiter tidak bisa dimatikan.
 package orchestrator
 
 import (
@@ -10,6 +15,8 @@ import (
 	"time"
 
 	"bughound/internal/engine"
+	"bughound/internal/ratelimit"
+	"bughound/internal/recon"
 	"bughound/internal/scope"
 	"bughound/internal/store"
 )
@@ -22,8 +29,7 @@ const (
 	LayerEgress Layer = "egress" // saat temuan/koneksi keluar hendak diterima
 )
 
-// AuditEvent adalah satu entri audit trail untuk keputusan scope. Dikirim ke
-// sink audit baik untuk izin maupun tolak (BH-SPEC-SCOPE: keputusan tercatat).
+// AuditEvent adalah satu entri audit trail untuk keputusan scope.
 type AuditEvent struct {
 	Time         time.Time
 	Program      string
@@ -40,36 +46,49 @@ type Orchestrator struct {
 	guard  *scope.Guard
 	engine engine.Engine
 	store  store.Store
+	lim    *ratelimit.Limiter
+	recon  recon.Engine // opsional
 	audit  func(AuditEvent)
 	now    func() time.Time
 }
 
-// New membuat Orchestrator. audit boleh nil (jadi no-op).
-func New(guard *scope.Guard, eng engine.Engine, st store.Store, audit func(AuditEvent)) *Orchestrator {
+// New membuat Orchestrator. audit boleh nil (jadi no-op). lim boleh nil, tetapi
+// TIDAK dimatikan: nil diganti limiter default yang aman (rate limiter selalu
+// ada di jalur eksekusi).
+func New(guard *scope.Guard, eng engine.Engine, st store.Store, lim *ratelimit.Limiter, audit func(AuditEvent)) *Orchestrator {
 	if audit == nil {
 		audit = func(AuditEvent) {}
 	}
-	return &Orchestrator{guard: guard, engine: eng, store: st, audit: audit, now: time.Now}
+	if lim == nil {
+		lim = ratelimit.New(ratelimit.Config{})
+	}
+	return &Orchestrator{guard: guard, engine: eng, store: st, lim: lim, audit: audit, now: time.Now}
 }
 
-// ScanRequest meminta scan satu program terhadap sekumpulan target.
+// UseRecon mengaktifkan tahap recon (opsional).
+func (o *Orchestrator) UseRecon(r recon.Engine) { o.recon = r }
+
+// ScanRequest meminta scan satu program.
 type ScanRequest struct {
 	Program string
-	RunID   string // dibuat otomatis bila kosong
-	Targets []string
+	RunID   string   // dibuat otomatis bila kosong
+	Seeds   []string // domain awal untuk recon (opsional)
+	Targets []string // target eksplisit
 }
 
 // ScanResult meringkas hasil satu run.
 type ScanResult struct {
 	RunID         string
+	Discovered    int          // aset dari recon
 	Scanned       []string     // target in-scope yang discan (ternormalkan)
 	Denied        []AuditEvent // target/temuan yang ditolak guard (input/egress)
 	FindingsSaved int
 	Duplicates    int
 }
 
-// RunScan menegakkan scope guard, menjalankan engine untuk target in-scope,
-// memeriksa ulang setiap temuan di lapis egress, lalu menyimpan yang lolos.
+// RunScan menjalankan recon (bila aktif), menegakkan scope guard + rate limiter,
+// menjalankan engine untuk target in-scope, memeriksa ulang setiap temuan di
+// lapis egress, lalu menyimpan yang lolos.
 func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult, error) {
 	if req.Program == "" {
 		return ScanResult{}, fmt.Errorf("orchestrator: program wajib")
@@ -80,7 +99,31 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 	}
 	res := ScanResult{RunID: runID}
 
-	for _, target := range req.Targets {
+	candidates := append([]string{}, req.Targets...)
+
+	// Tahap recon (opsional). Pemanggilannya pun dibatasi rate limiter.
+	if o.recon != nil && len(req.Seeds) > 0 {
+		if err := o.lim.Wait(ctx); err != nil {
+			return res, fmt.Errorf("orchestrator: rate limit (recon): %w", err)
+		}
+		assets, err := o.recon.Discover(ctx, req.Seeds)
+		if err != nil {
+			return res, fmt.Errorf("orchestrator: recon %s gagal: %w", o.recon.Name(), err)
+		}
+		for _, a := range assets {
+			res.Discovered++
+			candidates = append(candidates, a.Value)
+		}
+	}
+
+	// Tahap DAST atas kandidat in-scope.
+	seen := map[string]bool{}
+	for _, target := range candidates {
+		if target == "" || seen[target] {
+			continue
+		}
+		seen[target] = true
+
 		// Lapis 1 — penegakan saat input/perencanaan.
 		d := o.guard.Evaluate(target)
 		ev := o.auditEvent(req.Program, runID, d, LayerInput)
@@ -91,14 +134,17 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		}
 		res.Scanned = append(res.Scanned, d.Target)
 
+		// Rate limiter di jalur eksekusi: tunggu token sebelum menjalankan engine.
+		if err := o.lim.Wait(ctx); err != nil {
+			return res, fmt.Errorf("orchestrator: rate limit (scan): %w", err)
+		}
 		findings, err := o.engine.Scan(ctx, target, req.Program, runID)
 		if err != nil {
 			return res, fmt.Errorf("orchestrator: engine %s gagal scan %q: %w", o.engine.Name(), target, err)
 		}
 
 		for _, f := range findings {
-			// Lapis 2 — penegakan egress. Temuan pada lokasi di luar scope
-			// (mis. akibat redirect/link baru) dihadang walau target awal in-scope.
+			// Lapis 2 — penegakan egress.
 			dd := o.guard.Evaluate(f.Location.URL)
 			if !dd.Allowed {
 				eev := o.auditEvent(req.Program, runID, dd, LayerEgress)

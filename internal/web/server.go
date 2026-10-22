@@ -11,12 +11,15 @@ import (
 	"io/fs"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
 	"bughound/internal/engine"
 	"bughound/internal/finding"
 	"bughound/internal/orchestrator"
+	"bughound/internal/ratelimit"
+	"bughound/internal/recon"
 	"bughound/internal/scope"
 	"bughound/internal/store"
 )
@@ -91,15 +94,18 @@ type scanPage struct {
 	Nav      string
 	Title    string
 	Program  string
+	Seeds    string
 	InScope  string
 	OutScope string
 	Targets  string
+	RPS      string
 	Errors   []string
 	Result   *scanView
 }
 
 type scanView struct {
 	RunID      string
+	Discovered int
 	Scanned    []string
 	Saved      int
 	Duplicates int
@@ -120,9 +126,11 @@ func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 		Nav:      "scan",
 		Title:    "Scan",
 		Program:  "demo",
+		Seeds:    "demo.test",
 		InScope:  "demo.test\n*.demo.test",
 		OutScope: "admin.demo.test",
 		Targets:  "demo.test\nevil.test",
+		RPS:      "10",
 	})
 }
 
@@ -132,22 +140,26 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	program := strings.TrimSpace(r.FormValue("program"))
+	seeds := splitLines(r.FormValue("seeds"))
 	inScope := splitLines(r.FormValue("in_scope"))
 	outScope := splitLines(r.FormValue("out_scope"))
 	targets := splitLines(r.FormValue("targets"))
+	rps := parseRPS(r.FormValue("rps"))
 
 	page := scanPage{
 		Nav: "scan", Title: "Scan", Program: program,
+		Seeds:    r.FormValue("seeds"),
 		InScope:  r.FormValue("in_scope"),
 		OutScope: r.FormValue("out_scope"),
 		Targets:  r.FormValue("targets"),
+		RPS:      r.FormValue("rps"),
 	}
 
 	if program == "" {
 		page.Errors = append(page.Errors, "Nama program wajib diisi.")
 	}
-	if len(targets) == 0 {
-		page.Errors = append(page.Errors, "Minimal satu target.")
+	if len(targets) == 0 && len(seeds) == 0 {
+		page.Errors = append(page.Errors, "Isi minimal satu target, atau satu seed domain untuk recon.")
 	}
 
 	guard, errs := scope.New(inScope, outScope)
@@ -169,8 +181,12 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 	}
 
-	o := orchestrator.New(guard, s.engine, s.store, audit)
-	res, err := o.RunScan(r.Context(), orchestrator.ScanRequest{Program: program, Targets: targets})
+	o := orchestrator.New(guard, s.engine, s.store,
+		ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), audit)
+	if len(seeds) > 0 {
+		o.UseRecon(recon.MockPipeline{})
+	}
+	res, err := o.RunScan(r.Context(), orchestrator.ScanRequest{Program: program, Seeds: seeds, Targets: targets})
 	if err != nil {
 		page.Errors = append(page.Errors, "Scan gagal: "+err.Error())
 		s.renderPartial(w, "scan", "scan_result_errors", page)
@@ -179,6 +195,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 
 	view := &scanView{
 		RunID:      res.RunID,
+		Discovered: res.Discovered,
 		Scanned:    res.Scanned,
 		Saved:      res.FindingsSaved,
 		Duplicates: res.Duplicates,
@@ -331,6 +348,16 @@ func splitLines(raw string) []string {
 		out = append(out, line)
 	}
 	return out
+}
+
+// parseRPS membaca laju dari form; nilai kosong/tak sah => 10 req/dtk (limiter
+// tetap menjepit ke rentang amannya).
+func parseRPS(s string) float64 {
+	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil || v <= 0 {
+		return 10
+	}
+	return v
 }
 
 func parseTemplates() (map[string]*template.Template, error) {

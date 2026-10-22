@@ -2,6 +2,7 @@
 {{with .Result}}
 <div class="result-summary">
   <span class="chip ok">run {{.RunID}}</span>
+  {{if .Discovered}}<span class="chip">{{.Discovered}} aset recon</span>{{end}}
   <span class="chip">{{len .Scanned}} discan</span>
   <span class="chip good">{{.Saved}} temuan baru</span>
   <span class="chip">{{.Duplicates}} duplikat</span>

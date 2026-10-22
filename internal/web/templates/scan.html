@@ -7,6 +7,9 @@
     <label>Program</label>
     <input type="text" name="program" value="{{.Program}}" autocomplete="off" required>
 
+    <label>Seed domain untuk recon <span class="muted small">(opsional · subfinder→httpx→katana, mock — hasilnya tetap disaring scope guard)</span></label>
+    <textarea name="seeds" rows="2" spellcheck="false">{{.Seeds}}</textarea>
+
     <label>In-scope <span class="muted small">(satu entri per baris · domain, *.wildcard, URL, IP, CIDR)</span></label>
     <textarea name="in_scope" rows="4" spellcheck="false">{{.InScope}}</textarea>
 
@@ -15,6 +18,9 @@
 
     <label>Target <span class="muted small">(satu per baris)</span></label>
     <textarea name="targets" rows="4" spellcheck="false">{{.Targets}}</textarea>
+
+    <label>Rate limit <span class="muted small">(request/detik · wajib di jalur eksekusi, dijepit maks 50)</span></label>
+    <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">
 
     <div class="actions">
       <button type="submit" class="btn primary">Jalankan scan</button>

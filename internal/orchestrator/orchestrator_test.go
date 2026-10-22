@@ -7,6 +7,8 @@ import (
 
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/finding"
+	"bughound/internal/ratelimit"
+	"bughound/internal/recon"
 	"bughound/internal/scope"
 	"bughound/internal/store"
 )
@@ -20,30 +22,31 @@ func newGuard(t *testing.T, in, out []string) *scope.Guard {
 	return g
 }
 
-// TestRunScanGate membuktikan gate M0: satu temuan mengalir scan -> normalisasi
-// -> store; target luar scope ditolak; secret tak bocor; tanpa jaringan.
+// testLimiter: burst besar supaya test tak melambat (laju efektif dijepit ke maks).
+func testLimiter() *ratelimit.Limiter {
+	return ratelimit.New(ratelimit.Config{RequestsPerSecond: 1000, Burst: 1000})
+}
+
+// TestRunScanGate membuktikan gate M0 masih berlaku: satu temuan mengalir scan
+// -> normalisasi -> store; target luar scope ditolak; secret tak bocor.
 func TestRunScanGate(t *testing.T) {
 	g := newGuard(t, []string{"demo.test", "*.demo.test"}, nil)
 	st := store.NewMem()
 	var audit []AuditEvent
-	o := New(g, nuclei.Mock{}, st, func(e AuditEvent) { audit = append(audit, e) })
+	o := New(g, nuclei.Mock{}, st, testLimiter(), func(e AuditEvent) { audit = append(audit, e) })
 
 	res, err := o.RunScan(context.Background(), ScanRequest{
-		Program: "demo",
-		RunID:   "run1",
-		Targets: []string{"demo.test", "evil.test"},
+		Program: "demo", RunID: "run1", Targets: []string{"demo.test", "evil.test"},
 	})
 	if err != nil {
 		t.Fatalf("RunScan error: %v", err)
 	}
-
 	if res.FindingsSaved != 2 || res.Duplicates != 0 {
 		t.Errorf("ingin 2 tersimpan / 0 duplikat; dapat saved=%d dup=%d", res.FindingsSaved, res.Duplicates)
 	}
 	if len(res.Scanned) != 1 || res.Scanned[0] != "demo.test" {
 		t.Errorf("hanya demo.test yang discan; dapat %v", res.Scanned)
 	}
-
 	var deniedEvil *AuditEvent
 	for i := range res.Denied {
 		if res.Denied[i].Target == "evil.test" {
@@ -53,10 +56,9 @@ func TestRunScanGate(t *testing.T) {
 	if deniedEvil == nil || deniedEvil.Layer != LayerInput || deniedEvil.Reason != scope.ReasonNotInScope {
 		t.Errorf("evil.test harus ditolak di lapis input (not-in-scope); dapat %+v", res.Denied)
 	}
-
 	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
 	if len(fs) != 2 || fs[0].Severity != finding.SeverityCritical {
-		t.Fatalf("store tidak sesuai: %d temuan, teratas %v", len(fs), sev(fs))
+		t.Fatalf("store tidak sesuai: %d temuan", len(fs))
 	}
 	for _, f := range fs {
 		if f.Evidence != nil && strings.Contains(f.Evidence.Request, "SECRET-abc123") {
@@ -64,14 +66,14 @@ func TestRunScanGate(t *testing.T) {
 		}
 	}
 	if len(audit) == 0 {
-		t.Error("audit trail kosong; keputusan scope harus tercatat")
+		t.Error("audit trail kosong")
 	}
 }
 
 func TestRunScanDedupSecondRun(t *testing.T) {
 	g := newGuard(t, []string{"demo.test"}, nil)
 	st := store.NewMem()
-	o := New(g, nuclei.Mock{}, st, nil)
+	o := New(g, nuclei.Mock{}, st, testLimiter(), nil)
 	ctx := context.Background()
 
 	if _, err := o.RunScan(ctx, ScanRequest{Program: "demo", RunID: "run1", Targets: []string{"demo.test"}}); err != nil {
@@ -86,7 +88,7 @@ func TestRunScanDedupSecondRun(t *testing.T) {
 	}
 	fs, _ := st.List(ctx, store.Query{Program: "demo"})
 	if len(fs) != 2 {
-		t.Errorf("harus tetap 2 temuan utama (duplikat disembunyikan); dapat %d", len(fs))
+		t.Errorf("harus tetap 2 temuan utama; dapat %d", len(fs))
 	}
 }
 
@@ -105,32 +107,27 @@ func (f fakeEngine) Scan(_ context.Context, _ string, program, runID string) ([]
 }
 
 // TestRunScanEgressBlocks membuktikan penegakan lapis kedua: temuan pada lokasi
-// di luar scope (mis. akibat redirect) dihadang walau target awal in-scope.
+// di luar scope dihadang walau target awal in-scope.
 func TestRunScanEgressBlocks(t *testing.T) {
 	g := newGuard(t, []string{"demo.test"}, nil)
 	st := store.NewMem()
 	var audit []AuditEvent
 	eng := fakeEngine{out: []*finding.Finding{{
-		Target:       "demo.test",
-		Type:         "redirect-ssrf",
-		Title:        "leak via redirect",
-		Severity:     finding.SeverityHigh,
-		Confidence:   finding.ConfidenceMedium,
-		Status:       finding.StatusNew,
-		SourceEngine: "fake",
-		Location:     finding.Location{URL: "https://external.evil/x"}, // di luar scope
+		Target: "demo.test", Type: "redirect-ssrf", Title: "leak via redirect",
+		Severity: finding.SeverityHigh, Confidence: finding.ConfidenceMedium,
+		Status: finding.StatusNew, SourceEngine: "fake",
+		Location: finding.Location{URL: "https://external.evil/x"},
 	}}}
-	o := New(g, eng, st, func(e AuditEvent) { audit = append(audit, e) })
+	o := New(g, eng, st, testLimiter(), func(e AuditEvent) { audit = append(audit, e) })
 
 	res, err := o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r", Targets: []string{"demo.test"}})
 	if err != nil {
 		t.Fatalf("RunScan error: %v", err)
 	}
 	if res.FindingsSaved != 0 {
-		t.Errorf("temuan di luar scope tidak boleh tersimpan; saved=%d", res.FindingsSaved)
+		t.Errorf("temuan di luar scope tak boleh tersimpan; saved=%d", res.FindingsSaved)
 	}
-	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
-	if len(fs) != 0 {
+	if fs, _ := st.List(context.Background(), store.Query{Program: "demo"}); len(fs) != 0 {
 		t.Errorf("store harus kosong; dapat %d", len(fs))
 	}
 	var egressDeny bool
@@ -144,10 +141,45 @@ func TestRunScanEgressBlocks(t *testing.T) {
 	}
 }
 
-func sev(fs []*finding.Finding) []finding.Severity {
-	out := make([]finding.Severity, len(fs))
-	for i, f := range fs {
-		out[i] = f.Severity
+// TestRunScanWithRecon membuktikan alur recon → scope guard → DAST: aset recon
+// yang in-scope discan; yang out-of-scope/di luar scope ditolak.
+func TestRunScanWithRecon(t *testing.T) {
+	g := newGuard(t, []string{"demo.test", "*.demo.test"}, []string{"admin.demo.test"})
+	st := store.NewMem()
+	o := New(g, nuclei.Mock{}, st, testLimiter(), nil)
+	o.UseRecon(recon.MockPipeline{})
+
+	res, err := o.RunScan(context.Background(), ScanRequest{
+		Program: "demo", RunID: "run1", Seeds: []string{"demo.test"},
+	})
+	if err != nil {
+		t.Fatalf("RunScan: %v", err)
 	}
-	return out
+	if res.Discovered == 0 {
+		t.Error("recon harus menemukan aset")
+	}
+	if len(res.Scanned) == 0 {
+		t.Error("harus ada target in-scope yang discan")
+	}
+	if res.FindingsSaved != 2 {
+		t.Errorf("mock DAST => 2 temuan utama; dapat %d", res.FindingsSaved)
+	}
+
+	denied := map[string]scope.Reason{}
+	for _, e := range res.Denied {
+		denied[e.Target] = e.Reason
+	}
+	if denied["admin.demo.test"] != scope.ReasonOutOfScope {
+		t.Errorf("admin.demo.test harus ditolak out-of-scope; dapat %q", denied["admin.demo.test"])
+	}
+	if _, ok := denied["exfil.evil.test"]; !ok {
+		t.Error("exfil.evil.test (di luar scope) harus ditolak")
+	}
+
+	all, _ := st.List(context.Background(), store.Query{Program: "demo", IncludeDuplicates: true})
+	for _, f := range all {
+		if strings.Contains(f.Target, "evil.test") {
+			t.Error("temuan di luar scope tak boleh tersimpan")
+		}
+	}
 }

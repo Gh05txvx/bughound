@@ -165,3 +165,27 @@ func TestFindingsListsProgramFromStore(t *testing.T) {
 		t.Errorf("program dari store seharusnya tampil tanpa scan ulang:\n%s", body)
 	}
 }
+
+func TestScanWithReconDiscovers(t *testing.T) {
+	srv, st := newTestServer(t)
+	rec := do(t, srv, "POST", "/scan", url.Values{
+		"program":   {"demo"},
+		"seeds":     {"demo.test"},
+		"in_scope":  {"demo.test\n*.demo.test"},
+		"out_scope": {"admin.demo.test"},
+		"targets":   {""},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /scan = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "aset recon") {
+		t.Error("hasil harus menampilkan jumlah aset recon")
+	}
+	if !strings.Contains(body, "exfil.evil.test") {
+		t.Error("aset recon di luar scope harus muncul sebagai ditolak")
+	}
+	if fs, _ := st.List(context.Background(), store.Query{Program: "demo"}); len(fs) == 0 {
+		t.Error("harus ada temuan dari aset recon yang in-scope")
+	}
+}
