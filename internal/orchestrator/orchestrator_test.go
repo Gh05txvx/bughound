@@ -2,8 +2,13 @@ package orchestrator
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
@@ -212,5 +217,77 @@ func TestRunScanMultiEngine(t *testing.T) {
 	}
 	if !hasNuclei || !hasFfuf {
 		t.Error("nuclei dan ffuf harus sama-sama menyumbang ke skema yang sama")
+	}
+}
+
+// probeEngine adalah engine eksternal palsu yang MEMBUAT request HTTP nyata
+// lewat proxy egress yang diberikan — untuk membuktikan proxy menegakkan scope
+// pada koneksi engine sungguhan (tanpa butuh nuclei asli).
+type probeEngine struct {
+	proxyAddr string
+	urls      []string
+}
+
+func (p *probeEngine) Name() string        { return "probe" }
+func (p *probeEngine) UseProxy(addr string) { p.proxyAddr = addr }
+
+func (p *probeEngine) Scan(_ context.Context, _, program, runID string) ([]*finding.Finding, error) {
+	pu, _ := url.Parse("http://" + p.proxyAddr)
+	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+	var out []*finding.Finding
+	for _, u := range p.urls {
+		resp, err := client.Get(u)
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			out = append(out, &finding.Finding{
+				Program: program, RunID: runID, Target: u, Type: "probe-hit",
+				Title: "reachable " + u, Severity: finding.SeverityInfo,
+				Confidence: finding.ConfidenceHigh, Status: finding.StatusNew,
+				SourceEngine: "probe", Location: finding.Location{URL: u},
+			})
+		}
+	}
+	return out, nil
+}
+
+// TestRunScanEgressProxyEnforcesScope membuktikan mekanisme pilihan pengguna:
+// orchestrator menyalakan proxy egress untuk engine ProxyAware, dan koneksi
+// engine ke host di luar scope DIBLOK sebelum terjadi.
+func TestRunScanEgressProxyEnforcesScope(t *testing.T) {
+	var hits int32
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.Write([]byte("ok"))
+	}))
+	defer backend.Close()
+	bu, _ := url.Parse(backend.URL)
+
+	g := newGuard(t, []string{bu.Hostname()}, nil) // hanya host backend in-scope
+	st := store.NewMem()
+	eng := &probeEngine{urls: []string{backend.URL, "http://evil.test/x"}}
+	o := New(g, eng, st, testLimiter(), nil)
+
+	res, err := o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r", Targets: []string{bu.Hostname()}})
+	if err != nil {
+		t.Fatalf("RunScan: %v", err)
+	}
+
+	if res.FindingsSaved != 1 {
+		t.Errorf("hanya probe in-scope yang berhasil => 1 temuan; dapat %d", res.FindingsSaved)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Errorf("backend in-scope harus kena tepat 1x; dapat %d", hits)
+	}
+	var blockedEvil bool
+	for _, d := range res.Denied {
+		if d.Layer == LayerEgress && strings.Contains(d.Target, "evil.test") {
+			blockedEvil = true
+		}
+	}
+	if !blockedEvil {
+		t.Error("proxy egress harus menolak koneksi ke evil.test (lapis egress)")
 	}
 }

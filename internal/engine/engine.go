@@ -19,3 +19,11 @@ type Engine interface {
 	Name() string
 	Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error)
 }
+
+// ProxyAware ditandai oleh engine yang koneksinya bisa diarahkan lewat proxy
+// egress bughound (internal/egress). Orchestrator memanggil UseProxy sebelum
+// Scan agar engine eksternal menegakkan scope guard pada setiap koneksi keluar
+// (bukan hanya pemeriksaan setelah hasil). Engine mock tidak perlu ini.
+type ProxyAware interface {
+	UseProxy(addr string)
+}

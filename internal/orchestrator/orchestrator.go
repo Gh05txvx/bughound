@@ -12,8 +12,10 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
+	"bughound/internal/egress"
 	"bughound/internal/engine"
 	"bughound/internal/ratelimit"
 	"bughound/internal/recon"
@@ -103,6 +105,35 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 	}
 	res := ScanResult{RunID: runID}
 
+	// Proxy egress: bila ada engine eksternal (ProxyAware), nyalakan proxy penegak
+	// scope untuk run ini dan arahkan engine ke sana, agar setiap koneksi keluar
+	// engine diperiksa SEBELUM dibuat. Fail closed: bila proxy gagal dimulai,
+	// engine eksternal tidak dijalankan.
+	var egressMu sync.Mutex
+	var egressDenied []AuditEvent
+	if o.hasProxyAwareEngine() {
+		px := egress.New(o.guard, func(d egress.Decision) {
+			if d.Allowed {
+				return
+			}
+			ev := AuditEvent{Time: o.now().UTC(), Program: req.Program, RunID: runID, Target: d.Target, Allowed: false, Reason: d.Reason, Layer: LayerEgress}
+			o.audit(ev)
+			egressMu.Lock()
+			egressDenied = append(egressDenied, ev)
+			egressMu.Unlock()
+		})
+		addr, stop, err := px.Listen("127.0.0.1:0")
+		if err != nil {
+			return res, fmt.Errorf("orchestrator: gagal memulai proxy egress (fail closed): %w", err)
+		}
+		defer stop()
+		for _, eng := range o.engines {
+			if pa, ok := eng.(engine.ProxyAware); ok {
+				pa.UseProxy(addr)
+			}
+		}
+	}
+
 	candidates := append([]string{}, req.Targets...)
 
 	// Tahap recon (opsional). Pemanggilannya pun dibatasi rate limiter.
@@ -169,7 +200,19 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 			}
 		}
 	}
+	egressMu.Lock()
+	res.Denied = append(res.Denied, egressDenied...)
+	egressMu.Unlock()
 	return res, nil
+}
+
+func (o *Orchestrator) hasProxyAwareEngine() bool {
+	for _, e := range o.engines {
+		if _, ok := e.(engine.ProxyAware); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (o *Orchestrator) auditEvent(program, runID string, d scope.Result, layer Layer) AuditEvent {
