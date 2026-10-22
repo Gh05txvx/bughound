@@ -10,15 +10,22 @@ import (
 	"testing"
 	"time"
 
+	"bughound/internal/engine"
+	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/finding"
+	"bughound/internal/recon"
 	"bughound/internal/store"
 )
 
 func newTestServer(t *testing.T) (*Server, *store.Mem) {
 	t.Helper()
 	st := store.NewMem()
-	srv, err := NewServer(st, nuclei.Mock{})
+	srv, err := NewServer(Config{
+		Store:   st,
+		Engines: []engine.Engine{nuclei.Mock{}, ffuf.Mock{}},
+		Recon:   recon.MockPipeline{},
+	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -179,10 +186,14 @@ func TestFindingsListsProgramFromStore(t *testing.T) {
 		t.Fatalf("seed Save: %v", err)
 	}
 
-	srv, err := NewServer(st, nuclei.Mock{}) // registry in-memory kosong
+	srv, err := NewServer(Config{ // registry in-memory kosong
+		Store:   st,
+		Engines: []engine.Engine{nuclei.Mock{}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { srv.Close() })
 	rec := do(t, srv, "GET", "/findings", nil) // tanpa ?program=
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /findings = %d", rec.Code)

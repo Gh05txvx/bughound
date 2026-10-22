@@ -111,7 +111,7 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 	// engine eksternal tidak dijalankan.
 	var egressMu sync.Mutex
 	var egressDenied []AuditEvent
-	if o.hasProxyAwareEngine() {
+	if o.needsEgressProxy() {
 		px := egress.New(o.guard, func(d egress.Decision) {
 			if d.Allowed {
 				return
@@ -131,6 +131,9 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 			if pa, ok := eng.(engine.ProxyAware); ok {
 				pa.UseProxy(addr)
 			}
+		}
+		if pa, ok := o.recon.(engine.ProxyAware); ok {
+			pa.UseProxy(addr) // recon aktif (httpx/katana) juga ditegakkan scope
 		}
 	}
 
@@ -206,11 +209,14 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 	return res, nil
 }
 
-func (o *Orchestrator) hasProxyAwareEngine() bool {
+func (o *Orchestrator) needsEgressProxy() bool {
 	for _, e := range o.engines {
 		if _, ok := e.(engine.ProxyAware); ok {
 			return true
 		}
+	}
+	if _, ok := o.recon.(engine.ProxyAware); ok {
+		return true
 	}
 	return false
 }

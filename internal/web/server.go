@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"bughound/internal/engine"
-	"bughound/internal/engine/ffuf"
 	"bughound/internal/finding"
 	"bughound/internal/jobs"
 	"bughound/internal/orchestrator"
@@ -38,15 +37,23 @@ var staticFS embed.FS
 
 // Server adalah handler HTTP utama bughound.
 type Server struct {
-	mux    *http.ServeMux
-	store  store.Store
-	engine engine.Engine
-	queue  *jobs.Queue
+	mux     *http.ServeMux
+	store   store.Store
+	engines []engine.Engine
+	recon   recon.Engine
+	queue   *jobs.Queue
 
 	mu       sync.Mutex
 	programs map[string]*programState
 
 	pages map[string]*template.Template
+}
+
+// Config mengonfigurasi server: store, engine DAST (minimal 1), recon opsional.
+type Config struct {
+	Store   store.Store
+	Engines []engine.Engine
+	Recon   recon.Engine
 }
 
 // programState menyimpan scope terakhir dan audit trail per program (in-memory
@@ -59,15 +66,19 @@ type programState struct {
 }
 
 // NewServer menyiapkan server dengan store dan engine yang diberikan.
-func NewServer(st store.Store, eng engine.Engine) (*Server, error) {
+func NewServer(cfg Config) (*Server, error) {
+	if len(cfg.Engines) == 0 {
+		return nil, fmt.Errorf("web: minimal satu engine DAST")
+	}
 	pages, err := parseTemplates()
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{
 		mux:      http.NewServeMux(),
-		store:    st,
-		engine:   eng,
+		store:    cfg.Store,
+		engines:  cfg.Engines,
+		recon:    cfg.Recon,
 		queue:    jobs.New(4),
 		programs: map[string]*programState{},
 		pages:    pages,
@@ -193,7 +204,6 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	ps := s.programStateFor(program)
 	ps.InScope, ps.OutScope = inScope, outScope
 
-	engineRef := s.engine
 	storeRef := s.store
 
 	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
@@ -205,11 +215,13 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 			ps.Audit = append(ps.Audit, e)
 			s.mu.Unlock()
 		}
-		o := orchestrator.New(guard, engineRef, storeRef,
+		o := orchestrator.New(guard, s.engines[0], storeRef,
 			ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), audit)
-		o.AddEngine(ffuf.Mock{}) // M1: >1 engine ke skema yang sama (nuclei + ffuf)
-		if len(seeds) > 0 {
-			o.UseRecon(recon.MockPipeline{})
+		for _, e := range s.engines[1:] {
+			o.AddEngine(e)
+		}
+		if len(seeds) > 0 && s.recon != nil {
+			o.UseRecon(s.recon)
 		}
 		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets})
 		if err != nil {
