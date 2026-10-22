@@ -1,0 +1,56 @@
+{{define "report_print"}}<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}}</title>
+<style>
+  body { font-family: Georgia, "Times New Roman", serif; color: #111; max-width: 800px; margin: 24px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 22px; margin-bottom: 2px; }
+  h2 { font-size: 16px; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 28px; }
+  .draft { color: #b00; font-weight: bold; }
+  .meta { color: #555; font-size: 13px; }
+  .sev { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 11px; font-weight: bold; text-transform: uppercase; border: 1px solid #999; }
+  dl { display: grid; grid-template-columns: 110px 1fr; gap: 1px 10px; font-size: 13px; }
+  dt { color: #555; }
+  dd { margin: 0; }
+  pre { background: #f4f4f4; border: 1px solid #ddd; padding: 8px; font-size: 11px; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, Consolas, monospace; }
+  .item { margin: 18px 0; padding-bottom: 10px; border-bottom: 1px solid #eee; }
+  .noprint button { padding: 8px 14px; cursor: pointer; }
+  @media print { .noprint { display: none; } body { margin: 0; } }
+</style>
+</head>
+<body>
+  <div class="noprint" style="text-align:right;margin-bottom:12px;">
+    <button onclick="window.print()">Cetak / Simpan sebagai PDF</button>
+  </div>
+  <h1>{{.Title}}</h1>
+  <p class="meta">Dihasilkan {{.GeneratedAt.Format "2006-01-02 15:04 MST"}} · {{len .Items}} temuan terkonfirmasi · <span class="draft">DRAFT — verifikasi manual sebelum submit</span></p>
+
+  {{if .Items}}
+  <h2>Ringkasan</h2>
+  <ul>{{range .BySeverity}}<li>{{.Severity}}: {{.Count}}</li>{{end}}</ul>
+
+  <h2>Temuan</h2>
+  {{range $i, $f := .Items}}
+  <div class="item">
+    <h3>{{add $i 1}}. {{$f.Title}} <span class="sev">{{$f.Severity}}</span></h3>
+    <dl>
+      <dt>Type</dt><dd>{{$f.Type}}</dd>
+      <dt>Target</dt><dd>{{$f.Target}}</dd>
+      <dt>Lokasi</dt><dd>{{$f.Location.URL}}{{if $f.Location.Parameter}} (param: {{$f.Location.Parameter}}){{end}}</dd>
+      {{if $f.CVSS}}<dt>CVSS</dt><dd>{{$f.CVSS.Score}} {{$f.CVSS.Vector}}</dd>{{end}}
+      {{if $f.CWE}}<dt>CWE</dt><dd>{{join $f.CWE ", "}}</dd>{{end}}
+    </dl>
+    {{if $f.Description}}<p>{{$f.Description}}</p>{{end}}
+    {{with $f.Evidence}}
+    {{if .Request}}<p><b>Request</b></p><pre>{{.Request}}</pre>{{end}}
+    {{if .ResponseExcerpt}}<p><b>Response</b></p><pre>{{.ResponseExcerpt}}</pre>{{end}}
+    {{end}}
+  </div>
+  {{end}}
+  {{else}}
+  <p>Belum ada temuan terkonfirmasi.</p>
+  {{end}}
+</body>
+</html>{{end}}

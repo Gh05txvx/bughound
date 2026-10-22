@@ -7,19 +7,23 @@ package web
 import (
 	"context"
 	"embed"
+	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"bughound/internal/engine"
 	"bughound/internal/finding"
 	"bughound/internal/orchestrator"
 	"bughound/internal/ratelimit"
 	"bughound/internal/recon"
+	"bughound/internal/report"
 	"bughound/internal/scope"
 	"bughound/internal/store"
 )
@@ -86,6 +90,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /findings", s.handleFindings)
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
 	s.mux.HandleFunc("POST /findings/{id}/status", s.handleTriage)
+	s.mux.HandleFunc("GET /report", s.handleReport)
+	s.mux.HandleFunc("GET /report/download", s.handleReportDownload)
+	s.mux.HandleFunc("GET /report/print", s.handleReportPrint)
 }
 
 // ---- Scan ----
@@ -283,6 +290,52 @@ func (s *Server) handleTriage(w http.ResponseWriter, r *http.Request) {
 	s.renderPartial(w, "findings", "finding_detail", f)
 }
 
+// ---- Report ----
+
+type reportPage struct {
+	Nav     string
+	Title   string
+	Program string
+	Report  report.Report
+}
+
+func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	if progs := s.programNames(r.Context()); program == "" && len(progs) > 0 {
+		program = progs[0]
+	}
+	page := reportPage{Nav: "report", Title: "Reports", Program: program}
+	if program != "" {
+		findings, _ := s.store.List(r.Context(), store.Query{Program: program})
+		page.Report = report.Build(program, findings, time.Now())
+	}
+	s.render(w, "report", "base", page)
+}
+
+func (s *Server) handleReportDownload(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	if program == "" {
+		http.Error(w, "program wajib", http.StatusBadRequest)
+		return
+	}
+	findings, _ := s.store.List(r.Context(), store.Query{Program: program})
+	rep := report.Build(program, findings, time.Now())
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="report-%s.md"`, safeFilename(program)))
+	io.WriteString(w, rep.Markdown)
+}
+
+func (s *Server) handleReportPrint(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	if program == "" {
+		http.Error(w, "program wajib", http.StatusBadRequest)
+		return
+	}
+	findings, _ := s.store.List(r.Context(), store.Query{Program: program})
+	rep := report.Build(program, findings, time.Now())
+	s.render(w, "report_print", "report_print", rep)
+}
+
 // ---- helpers ----
 
 func (s *Server) programStateFor(name string) *programState {
@@ -360,15 +413,35 @@ func parseRPS(s string) float64 {
 	return v
 }
 
+// safeFilename menyaring nama program menjadi nama berkas yang aman.
+func safeFilename(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "report"
+	}
+	return b.String()
+}
+
 func parseTemplates() (map[string]*template.Template, error) {
 	funcs := template.FuncMap{
 		"sevClass":    func(s finding.Severity) string { return "sev-" + strings.ToLower(string(s)) },
 		"statusClass": func(s finding.Status) string { return "st-" + strings.ToLower(string(s)) },
 		"join":        func(v []string, sep string) string { return strings.Join(v, sep) },
+		"add":         func(a, b int) int { return a + b },
 	}
 	sets := map[string][]string{
-		"scan":     {"templates/base.html", "templates/scan.html", "templates/scan_result.html"},
-		"findings": {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
+		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html"},
+		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
+		"report":       {"templates/base.html", "templates/report.html"},
+		"report_print": {"templates/report_print.html"},
 	}
 	out := map[string]*template.Template{}
 	for name, files := range sets {

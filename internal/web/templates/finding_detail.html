@@ -44,7 +44,9 @@
   </div>
 </form>
 
-<button class="btn primary" disabled title="Report module: M1 (belum ada auto-submit; report selalu draft)">
-  Tambah ke report{{if ne .Status "confirmed"}} (perlu konfirmasi){{end}}
-</button>
+{{if eq .Status "confirmed"}}
+<a class="btn primary" href="/report?program={{.Program}}">Lihat draft report →</a>
+{{else}}
+<button class="btn" disabled title="Konfirmasi dulu agar masuk ke draft report (report selalu draft; tanpa auto-submit)">Masuk report (perlu konfirmasi)</button>
+{{end}}
 {{end}}

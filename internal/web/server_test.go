@@ -189,3 +189,46 @@ func TestScanWithReconDiscovers(t *testing.T) {
 		t.Error("harus ada temuan dari aset recon yang in-scope")
 	}
 }
+
+func TestReportFlow(t *testing.T) {
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+
+	do(t, srv, "POST", "/scan", url.Values{
+		"program": {"demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test"},
+	})
+	fs, _ := st.List(ctx, store.Query{Program: "demo"})
+	if len(fs) == 0 {
+		t.Fatal("tak ada temuan untuk direport")
+	}
+
+	// Sebelum ada yang dikonfirmasi: report kosong.
+	rec := do(t, srv, "GET", "/report?program=demo", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Belum ada temuan") {
+		t.Errorf("report tanpa confirmed harus empty state (code=%d)", rec.Code)
+	}
+
+	// Konfirmasi satu temuan.
+	do(t, srv, "POST", "/findings/"+fs[0].ID+"/status", url.Values{"status": {"confirmed"}})
+
+	rec = do(t, srv, "GET", "/report?program=demo", nil)
+	body := rec.Body.String()
+	if !strings.Contains(body, "DRAFT") || !strings.Contains(body, fs[0].Title) {
+		t.Error("report harus memuat temuan terkonfirmasi dan ditandai DRAFT")
+	}
+
+	// Unduh .md.
+	rec = do(t, srv, "GET", "/report/download?program=demo", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Disposition"), "report-demo.md") {
+		t.Errorf("unduh .md gagal: code=%d cd=%q", rec.Code, rec.Header().Get("Content-Disposition"))
+	}
+	if !strings.Contains(rec.Body.String(), "# Laporan") {
+		t.Error("isi .md tidak sesuai")
+	}
+
+	// Tampilan cetak (untuk Simpan sebagai PDF).
+	rec = do(t, srv, "GET", "/report/print?program=demo", nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "window.print()") {
+		t.Errorf("tampilan cetak gagal (code=%d)", rec.Code)
+	}
+}

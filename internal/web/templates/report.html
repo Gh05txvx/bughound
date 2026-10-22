@@ -1,0 +1,54 @@
+{{define "content"}}
+{{$prog := .Program}}
+{{with .Report}}
+<div class="report-head">
+  <div>
+    <h2>{{.Title}}</h2>
+    <p class="muted small">Dihasilkan {{.GeneratedAt.Format "2006-01-02 15:04 MST"}} · {{len .Items}} temuan terkonfirmasi · <b>DRAFT</b></p>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/report/download?program={{$prog}}">Unduh .md</a>
+    <a class="btn" href="/report/print?program={{$prog}}" target="_blank" rel="noopener">Cetak / PDF</a>
+  </div>
+</div>
+
+{{if .Items}}
+<div class="result-summary">
+  {{range .BySeverity}}<span class="badge {{sevClass .Severity}}">{{.Severity}}: {{.Count}}</span>{{end}}
+</div>
+
+{{range $i, $f := .Items}}
+<div class="card report-item">
+  <div class="detail-head">
+    <span class="badge {{sevClass $f.Severity}}">{{$f.Severity}}</span>
+    <h3>{{add $i 1}}. {{$f.Title}}</h3>
+  </div>
+  <dl class="meta">
+    <dt>Type</dt><dd class="mono">{{$f.Type}}</dd>
+    <dt>Target</dt><dd class="mono">{{$f.Target}}</dd>
+    <dt>Lokasi</dt><dd class="mono">{{$f.Location.URL}}{{if $f.Location.Parameter}} · param {{$f.Location.Parameter}}{{end}}</dd>
+    {{if $f.CVSS}}<dt>CVSS</dt><dd class="mono">{{$f.CVSS.Score}} · {{$f.CVSS.Vector}}</dd>{{end}}
+    {{if $f.CWE}}<dt>CWE</dt><dd class="mono">{{join $f.CWE ", "}}</dd>{{end}}
+    {{if $f.VerifiedBy}}<dt>Diverifikasi</dt><dd>{{$f.VerifiedBy}}</dd>{{end}}
+  </dl>
+  {{if $f.Description}}<p>{{$f.Description}}</p>{{end}}
+  {{with $f.Evidence}}
+  {{if .Request}}<div class="ev-label">Request</div><pre class="ev mono">{{.Request}}</pre>{{end}}
+  {{if .ResponseExcerpt}}<div class="ev-label">Response</div><pre class="ev mono">{{.ResponseExcerpt}}</pre>{{end}}
+  {{end}}
+</div>
+{{end}}
+
+<details class="card">
+  <summary>Markdown mentah (untuk disalin)</summary>
+  <pre class="ev mono">{{.Markdown}}</pre>
+</details>
+
+<p class="muted small">Report ini <b>draft</b>. Tidak ada tombol submit — pengiriman ke platform kamu lakukan manual setelah review.</p>
+{{else}}
+<div class="empty">
+  <p class="muted">Belum ada temuan <b>terkonfirmasi</b> untuk program ini. Konfirmasi temuan di halaman <a href="/findings?program={{$prog}}">Findings</a> dulu.</p>
+</div>
+{{end}}
+{{end}}
+{{end}}
