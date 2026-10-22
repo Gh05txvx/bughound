@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"bughound/internal/audit"
 	"bughound/internal/engine"
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
@@ -28,6 +29,7 @@ func newTestServer(t *testing.T) (*Server, *store.Mem) {
 		Engines: []engine.Engine{nuclei.Mock{}, ffuf.Mock{}},
 		Recon:   recon.MockPipeline{},
 		Vault:   secret.NewMemVault(secret.NewKeyring(k)),
+		Audit:   audit.NewMemLog([]byte("test-audit-key")),
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -303,5 +305,26 @@ func TestSettingsSecretFlow(t *testing.T) {
 	rec = do(t, srv, "GET", "/settings?scope=global", nil)
 	if strings.Contains(rec.Body.String(), "nuclei-key") {
 		t.Error("secret harus hilang setelah dihapus")
+	}
+}
+
+func TestAuditTrail(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	rec := do(t, srv, "POST", "/scan", url.Values{
+		"program": {"demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test\nevil.test"},
+	})
+	waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
+
+	rec = do(t, srv, "GET", "/audit?program=demo", nil)
+	body := rec.Body.String()
+	if !strings.Contains(body, "integritas OK") {
+		t.Error("integritas audit harus OK")
+	}
+	if !strings.Contains(body, "scope.decision") {
+		t.Error("audit harus memuat entri keputusan scope")
+	}
+	if !strings.Contains(body, "evil.test") {
+		t.Error("penolakan evil.test harus tercatat di audit")
 	}
 }

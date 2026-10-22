@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"bughound/internal/audit"
 	"bughound/internal/engine"
 	"bughound/internal/finding"
 	"bughound/internal/jobs"
@@ -44,6 +45,7 @@ type Server struct {
 	engines []engine.Engine
 	recon   recon.Engine
 	vault   secret.Vault
+	audit   audit.Log
 	queue   *jobs.Queue
 
 	mu       sync.Mutex
@@ -58,6 +60,7 @@ type Config struct {
 	Engines []engine.Engine
 	Recon   recon.Engine
 	Vault   secret.Vault
+	Audit   audit.Log
 }
 
 // programState menyimpan scope terakhir dan audit trail per program (in-memory
@@ -66,7 +69,6 @@ type programState struct {
 	Name     string
 	InScope  []string
 	OutScope []string
-	Audit    []orchestrator.AuditEvent
 }
 
 // NewServer menyiapkan server dengan store dan engine yang diberikan.
@@ -84,6 +86,7 @@ func NewServer(cfg Config) (*Server, error) {
 		engines:  cfg.Engines,
 		recon:    cfg.Recon,
 		vault:    cfg.Vault,
+		audit:    cfg.Audit,
 		queue:    jobs.New(4),
 		programs: map[string]*programState{},
 		pages:    pages,
@@ -123,6 +126,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /settings", s.handleSettings)
 	s.mux.HandleFunc("POST /settings/secrets", s.handleAddSecret)
 	s.mux.HandleFunc("POST /settings/secrets/delete", s.handleDeleteSecret)
+	s.mux.HandleFunc("GET /audit", s.handleAudit)
 }
 
 // ---- Scan ----
@@ -218,13 +222,16 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	// Task memakai ctx milik queue (bukan r.Context()) agar tak dibatalkan saat
 	// response web dikirim.
 	runID := s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
-		audit := func(e orchestrator.AuditEvent) {
-			s.mu.Lock()
-			ps.Audit = append(ps.Audit, e)
-			s.mu.Unlock()
+		s.auditAppend(ctx, audit.Event{Kind: "run.start", Program: program, RunID: runID, Message: scanLabel(seeds, targets)})
+
+		auditSink := func(e orchestrator.AuditEvent) {
+			s.auditAppend(ctx, audit.Event{
+				Kind: "scope.decision", Program: e.Program, RunID: e.RunID, Target: e.Target,
+				Allowed: e.Allowed, Reason: string(e.Reason), Layer: string(e.Layer), Message: e.MatchedEntry,
+			})
 		}
 		o := orchestrator.New(guard, s.engines[0], storeRef,
-			ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), audit)
+			ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), auditSink)
 		for _, e := range s.engines[1:] {
 			o.AddEngine(e)
 		}
@@ -233,8 +240,12 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		}
 		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets})
 		if err != nil {
+			s.auditAppend(ctx, audit.Event{Kind: "run.finish", Program: program, RunID: runID, Message: "gagal: " + err.Error()})
 			return jobs.Summary{}, err
 		}
+		s.auditAppend(ctx, audit.Event{Kind: "run.finish", Program: program, RunID: runID,
+			Message: fmt.Sprintf("saved=%d dup=%d denied=%d", res.FindingsSaved, res.Duplicates, len(res.Denied))})
+
 		sum := jobs.Summary{
 			Discovered: res.Discovered,
 			Scanned:    res.Scanned,
@@ -421,6 +432,38 @@ func (s *Server) handleReportPrint(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "report_print", "report_print", rep)
 }
 
+// ---- Audit ----
+
+func (s *Server) auditAppend(ctx context.Context, e audit.Event) {
+	if s.audit != nil {
+		_, _ = s.audit.Append(ctx, e)
+	}
+}
+
+type auditPage struct {
+	Nav       string
+	Title     string
+	Program   string
+	Programs  []string
+	Events    []audit.Event
+	Integrity audit.Result
+	AuditOn   bool
+}
+
+func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	page := auditPage{
+		Nav: "audit", Title: "Audit", Program: program,
+		AuditOn:  s.audit != nil,
+		Programs: s.programNames(r.Context()),
+	}
+	if s.audit != nil {
+		page.Events, _ = s.audit.List(r.Context(), audit.Filter{Program: program, Limit: 200})
+		page.Integrity, _ = s.audit.Verify(r.Context())
+	}
+	s.render(w, "audit", "base", page)
+}
+
 // ---- Settings / secrets ----
 
 type settingsPage struct {
@@ -598,6 +641,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"report":       {"templates/base.html", "templates/report.html"},
 		"report_print": {"templates/report_print.html"},
 		"settings":     {"templates/base.html", "templates/settings.html"},
+		"audit":        {"templates/base.html", "templates/audit.html"},
 	}
 	out := map[string]*template.Template{}
 	for name, files := range sets {

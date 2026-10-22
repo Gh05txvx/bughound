@@ -1,0 +1,53 @@
+{{define "content"}}
+{{if not .AuditOn}}
+  <div class="empty"><p class="muted">Audit trail tidak dikonfigurasi.</p></div>
+{{else}}
+<div class="report-head">
+  <div>
+    <h2>Audit trail</h2>
+    <p class="muted small">Append-only · rantai HMAC — penghapusan/perubahan entri terdeteksi.</p>
+  </div>
+  <div>
+    {{if .Integrity.OK}}
+      <span class="badge st-confirmed">integritas OK · {{.Integrity.Count}} entri</span>
+    {{else}}
+      <span class="badge sev-critical">INTEGRITAS RUSAK</span>
+      <div class="muted small">seq {{.Integrity.BrokenAt}}: {{.Integrity.Reason}}</div>
+    {{end}}
+  </div>
+</div>
+
+<div class="findings-head">
+  <div class="prog-tabs">
+    <a href="/audit" class="tab {{if not .Program}}active{{end}}">semua</a>
+    {{range .Programs}}<a href="/audit?program={{.}}" class="tab {{if eq . $.Program}}active{{end}}">{{.}}</a>{{end}}
+  </div>
+</div>
+
+{{if .Events}}
+<table class="tbl compact">
+  <thead><tr><th>Seq</th><th>Waktu</th><th>Jenis</th><th>Target</th><th>Keputusan</th><th>Alasan</th><th>Lapis</th></tr></thead>
+  <tbody>
+  {{range .Events}}
+    <tr>
+      <td class="mono muted">{{.Seq}}</td>
+      <td class="mono muted">{{.Time.Format "2006-01-02 15:04:05"}}</td>
+      <td class="mono">{{.Kind}}</td>
+      <td class="mono truncate">{{.Target}}{{if .Message}} <span class="muted">{{.Message}}</span>{{end}}</td>
+      <td>
+        {{if eq .Kind "scope.decision"}}
+          {{if .Allowed}}<span class="pill st-confirmed">izin</span>{{else}}<span class="pill st-false_positive">tolak</span>{{end}}
+        {{else}}<span class="muted">—</span>{{end}}
+      </td>
+      <td class="muted">{{.Reason}}</td>
+      <td class="muted">{{.Layer}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+<p class="muted small">Menampilkan hingga 200 entri terbaru. Tidak ada tombol hapus — audit trail bersifat append-only.</p>
+{{else}}
+<div class="empty"><p class="muted">Belum ada entri audit. Jalankan scan untuk mencatat keputusan scope.</p></div>
+{{end}}
+{{end}}
+{{end}}

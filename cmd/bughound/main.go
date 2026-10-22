@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"bughound/internal/audit"
 	"bughound/internal/engine"
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
@@ -68,6 +69,20 @@ func main() {
 		log.Printf("secret: vault %s (terpisah dari temuan)", vpath)
 	}
 
+	var auditLog audit.Log
+	if *dbPath == "" {
+		auditLog = audit.NewMemLog(kr.Subkey("audit"))
+	} else {
+		apath := strings.TrimSuffix(*dbPath, ".db") + "-audit.db"
+		al, aerr := audit.OpenSQLiteLog(apath, kr.Subkey("audit"))
+		if aerr != nil {
+			log.Fatalf("bughound: audit log: %v", aerr)
+		}
+		defer al.Close()
+		auditLog = al
+		log.Printf("audit: trail %s (append-only, rantai HMAC)", apath)
+	}
+
 	var engines []engine.Engine
 	var rec recon.Engine
 	switch strings.ToLower(*engineMode) {
@@ -82,7 +97,7 @@ func main() {
 		log.Printf("engine: mock (nuclei + ffuf) — tanpa koneksi jaringan")
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault})
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}

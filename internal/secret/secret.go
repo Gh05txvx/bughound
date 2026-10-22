@@ -82,6 +82,15 @@ func (r *Keyring) Rotate(newActive Key) {
 	r.active = newActive
 }
 
+// Subkey menurunkan kunci tujuan-khusus dari kunci aktif (mis. untuk HMAC audit
+// trail) tanpa mengekspos kunci master itu sendiri.
+func (r *Keyring) Subkey(label string) []byte {
+	h := sha256.New()
+	h.Write(r.active.bytes)
+	h.Write([]byte(label))
+	return h.Sum(nil)
+}
+
 // Encrypt mengenkripsi plaintext dengan kunci aktif.
 func (r *Keyring) Encrypt(plaintext []byte) (string, error) {
 	gcm, err := newGCM(r.active)
