@@ -6,7 +6,10 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"html/template"
 	"io"
@@ -46,6 +49,7 @@ type Server struct {
 	recon   recon.Engine
 	vault   secret.Vault
 	audit   audit.Log
+	authSecret string
 	queue   *jobs.Queue
 
 	mu       sync.Mutex
@@ -61,6 +65,10 @@ type Config struct {
 	Recon   recon.Engine
 	Vault   secret.Vault
 	Audit   audit.Log
+	// AuthSecret, bila tidak kosong, mewajibkan HTTP Basic auth (password =
+	// AuthSecret, username diabaikan). Kosong = tanpa auth (hanya aman untuk
+	// bind localhost tepercaya).
+	AuthSecret string
 }
 
 // programState menyimpan scope terakhir dan audit trail per program (in-memory
@@ -87,6 +95,7 @@ func NewServer(cfg Config) (*Server, error) {
 		recon:    cfg.Recon,
 		vault:    cfg.Vault,
 		audit:    cfg.Audit,
+		authSecret: cfg.AuthSecret,
 		queue:    jobs.New(4),
 		programs: map[string]*programState{},
 		pages:    pages,
@@ -101,10 +110,94 @@ func (s *Server) Close() error {
 	return nil
 }
 
+const csrfCookie = "bh_csrf"
+
+type csrfCtxKey struct{}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+
+	if !s.checkAuth(w, r) {
+		return
+	}
+
+	// CSRF: pastikan cookie token ada; sediakan ke handler lewat context agar
+	// ter-render ke form/hx-headers. Tiap permintaan state-changing wajib
+	// mengirim token yang cocok (double-submit) — memblok CSRF lintas-situs.
+	token := s.ensureCSRFCookie(w, r)
+	r = r.WithContext(context.WithValue(r.Context(), csrfCtxKey{}, token))
+	if isStateChanging(r.Method) && !validCSRF(r, token) {
+		http.Error(w, "CSRF: token tidak valid atau permintaan lintas-situs", http.StatusForbidden)
+		return
+	}
+
 	s.mux.ServeHTTP(w, r)
+}
+
+// checkAuth menegakkan HTTP Basic bila authSecret diset (username diabaikan).
+func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.authSecret == "" {
+		return true
+	}
+	if _, pass, ok := r.BasicAuth(); ok && subtle.ConstantTimeCompare([]byte(pass), []byte(s.authSecret)) == 1 {
+		return true
+	}
+	w.Header().Set("WWW-Authenticate", `Basic realm="bughound"`)
+	http.Error(w, "autentikasi diperlukan", http.StatusUnauthorized)
+	return false
+}
+
+func (s *Server) ensureCSRFCookie(w http.ResponseWriter, r *http.Request) string {
+	if c, err := r.Cookie(csrfCookie); err == nil && c.Value != "" {
+		return c.Value
+	}
+	tok := randToken()
+	http.SetCookie(w, &http.Cookie{
+		Name: csrfCookie, Value: tok, Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteStrictMode,
+	})
+	return tok
+}
+
+func (s *Server) csrfToken(r *http.Request) string {
+	if v, ok := r.Context().Value(csrfCtxKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func isStateChanging(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
+}
+
+func validCSRF(r *http.Request, cookieTok string) bool {
+	if cookieTok == "" {
+		return false
+	}
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" { // browser modern: tolak lintas-situs
+		return false
+	}
+	if o := r.Header.Get("Origin"); o != "" {
+		if u, err := url.Parse(o); err != nil || u.Host != r.Host {
+			return false
+		}
+	}
+	sent := r.Header.Get("X-CSRF-Token")
+	if sent == "" {
+		sent = r.FormValue("csrf")
+	}
+	return sent != "" && subtle.ConstantTimeCompare([]byte(sent), []byte(cookieTok)) == 1
+}
+
+func randToken() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func (s *Server) routes() {
@@ -135,6 +228,7 @@ type scanPage struct {
 	Nav      string
 	Title    string
 	Program  string
+	CSRF     string
 	Seeds    string
 	InScope  string
 	OutScope string
@@ -167,6 +261,7 @@ func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 		Nav:      "scan",
 		Title:    "Scan",
 		Program:  "demo",
+		CSRF:     s.csrfToken(r),
 		Seeds:    "demo.test",
 		InScope:  "demo.test\n*.demo.test",
 		OutScope: "admin.demo.test",
@@ -319,6 +414,7 @@ type findingsPage struct {
 	Nav      string
 	Title    string
 	Program  string
+	CSRF     string
 	Programs []string
 	Findings []*finding.Finding
 	Selected *finding.Finding
@@ -337,7 +433,7 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := findingsPage{
-		Nav: "findings", Title: "Findings", Program: program,
+		Nav: "findings", Title: "Findings", Program: program, CSRF: s.csrfToken(r),
 		Programs: progs, Findings: findings,
 	}
 	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
@@ -392,6 +488,7 @@ type reportPage struct {
 	Nav     string
 	Title   string
 	Program string
+	CSRF    string
 	Report  report.Report
 }
 
@@ -400,7 +497,7 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 	if progs := s.programNames(r.Context()); program == "" && len(progs) > 0 {
 		program = progs[0]
 	}
-	page := reportPage{Nav: "report", Title: "Reports", Program: program}
+	page := reportPage{Nav: "report", Title: "Reports", Program: program, CSRF: s.csrfToken(r)}
 	if program != "" {
 		findings, _ := s.store.List(r.Context(), store.Query{Program: program})
 		page.Report = report.Build(program, findings, time.Now())
@@ -444,6 +541,7 @@ type auditPage struct {
 	Nav       string
 	Title     string
 	Program   string
+	CSRF      string
 	Programs  []string
 	Events    []audit.Event
 	Integrity audit.Result
@@ -453,7 +551,7 @@ type auditPage struct {
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	page := auditPage{
-		Nav: "audit", Title: "Audit", Program: program,
+		Nav: "audit", Title: "Audit", Program: program, CSRF: s.csrfToken(r),
 		AuditOn:  s.audit != nil,
 		Programs: s.programNames(r.Context()),
 	}
@@ -470,6 +568,7 @@ type settingsPage struct {
 	Nav     string
 	Title   string
 	Program string
+	CSRF    string
 	Scope   string
 	Scopes  []string
 	Secrets []secret.Meta
@@ -479,7 +578,7 @@ type settingsPage struct {
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	scope := normScope(r.URL.Query().Get("scope"))
 	page := settingsPage{
-		Nav: "settings", Title: "Settings", Scope: scope,
+		Nav: "settings", Title: "Settings", Scope: scope, CSRF: s.csrfToken(r),
 		VaultOn: s.vault != nil,
 		Scopes:  append([]string{"global"}, s.programNames(r.Context())...),
 	}

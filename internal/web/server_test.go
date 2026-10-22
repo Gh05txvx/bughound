@@ -64,6 +64,17 @@ func waitRunDone(t *testing.T, srv *Server, id string) string {
 
 func do(t *testing.T, srv *Server, method, target string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
+	// Untuk permintaan state-changing, ambil token CSRF dulu (double-submit).
+	var token string
+	if method != http.MethodGet && method != http.MethodHead {
+		gr := httptest.NewRecorder()
+		srv.ServeHTTP(gr, httptest.NewRequest(http.MethodGet, "/scan", nil))
+		for _, c := range gr.Result().Cookies() {
+			if c.Name == csrfCookie {
+				token = c.Value
+			}
+		}
+	}
 	var body *strings.Reader
 	if form != nil {
 		body = strings.NewReader(form.Encode())
@@ -73,6 +84,10 @@ func do(t *testing.T, srv *Server, method, target string, form url.Values) *http
 	req := httptest.NewRequest(method, target, body)
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if token != "" {
+		req.AddCookie(&http.Cookie{Name: csrfCookie, Value: token})
+		req.Header.Set("X-CSRF-Token", token)
 	}
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)

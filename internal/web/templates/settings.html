@@ -11,6 +11,7 @@
 <div class="grid-2">
   <form class="card" method="post" action="/settings/secrets">
     <h2>Tambah secret · scope <b>{{.Scope}}</b></h2>
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
     <input type="hidden" name="scope" value="{{.Scope}}">
     <label>Nama <span class="muted small">(mis. nuclei-api-key, platform-token)</span></label>
     <input type="text" name="name" autocomplete="off" required>
@@ -35,6 +36,7 @@
         <td class="mono muted">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td>
         <td>
           <form method="post" action="/settings/secrets/delete" onsubmit="return confirm('Hapus secret {{.Name}}?')">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
             <input type="hidden" name="scope" value="{{$.Scope}}">
             <input type="hidden" name="name" value="{{.Name}}">
             <button class="btn ghost" type="submit">hapus</button>

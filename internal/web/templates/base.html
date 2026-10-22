@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
 </head>
-<body>
+<body hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
   <div class="shell">
     <aside class="sidebar">
       <div class="brand"><span class="logo">🐾</span> bughound</div>

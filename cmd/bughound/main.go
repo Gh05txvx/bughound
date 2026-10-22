@@ -7,7 +7,9 @@ package main
 import (
 	"flag"
 	"log"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"bughound/internal/audit"
@@ -25,7 +27,16 @@ func main() {
 	dbPath := flag.String("db", "bughound.db", "path file SQLite (kosongkan untuk in-memory/ephemeral)")
 	engineMode := flag.String("engine", "mock", "set engine: mock (nuclei+ffuf mock, tanpa jaringan) | real (nuclei + subfinder/httpx/katana nyata lewat proxy egress)")
 	keyPath := flag.String("key", "bughound.key", "path file kunci master untuk enkripsi secret (atau set env BUGHOUND_MASTER_KEY)")
+	authFlag := flag.String("auth", "", "password HTTP Basic auth (atau env BUGHOUND_AUTH); kosong = tanpa auth (hanya aman untuk localhost)")
 	flag.Parse()
+
+	authSecret := *authFlag
+	if authSecret == "" {
+		authSecret = strings.TrimSpace(os.Getenv("BUGHOUND_AUTH"))
+	}
+	if authSecret == "" && !isLocalhost(*addr) {
+		log.Printf("PERINGATAN: bind non-localhost (%s) TANPA -auth — UI terbuka tanpa kredensial. Set -auth atau BUGHOUND_AUTH.", *addr)
+	}
 
 	var st store.Store
 	if *dbPath == "" {
@@ -97,7 +108,7 @@ func main() {
 		log.Printf("engine: mock (nuclei + ffuf) — tanpa koneksi jaringan")
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog})
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, AuthSecret: authSecret})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}
@@ -110,4 +121,16 @@ func main() {
 	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("bughound: server berhenti: %v", err)
 	}
+}
+
+func isLocalhost(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	switch strings.ToLower(host) {
+	case "127.0.0.1", "localhost", "::1", "":
+		return true
+	}
+	return strings.HasPrefix(host, "127.")
 }

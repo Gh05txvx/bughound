@@ -2,10 +2,16 @@ package web
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"bughound/internal/audit"
+	"bughound/internal/engine"
+	"bughound/internal/engine/nuclei"
+	"bughound/internal/secret"
 	"bughound/internal/store"
 )
 
@@ -66,5 +72,80 @@ func TestAudit_TrailIntegrityAfterManyOps(t *testing.T) {
 	}
 	if strings.Contains(body, "INTEGRITAS RUSAK") {
 		t.Error("audit trail tidak boleh rusak")
+	}
+}
+
+// Remediasi BH-F01: POST tanpa token CSRF / lintas-situs harus ditolak.
+func TestAudit_CSRFBlocksForgedPost(t *testing.T) {
+	srv, _ := newTestServer(t)
+	form := url.Values{"program": {"x"}, "in_scope": {"demo.test"}, "targets": {"demo.test"}}
+
+	// Tanpa cookie & token -> 403.
+	req := httptest.NewRequest("POST", "/scan", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("POST tanpa CSRF harus 403, dapat %d", rec.Code)
+	}
+
+	// Token valid tapi Sec-Fetch-Site: cross-site -> tetap 403.
+	gr := httptest.NewRecorder()
+	srv.ServeHTTP(gr, httptest.NewRequest("GET", "/scan", nil))
+	var tok string
+	for _, c := range gr.Result().Cookies() {
+		if c.Name == csrfCookie {
+			tok = c.Value
+		}
+	}
+	req2 := httptest.NewRequest("POST", "/scan", strings.NewReader(form.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.AddCookie(&http.Cookie{Name: csrfCookie, Value: tok})
+	req2.Header.Set("X-CSRF-Token", tok)
+	req2.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec2 := httptest.NewRecorder()
+	srv.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("POST lintas-situs harus 403, dapat %d", rec2.Code)
+	}
+}
+
+// Remediasi BH-F01: HTTP Basic auth saat AuthSecret diset.
+func TestAudit_BasicAuthEnforced(t *testing.T) {
+	st := store.NewMem()
+	k, _ := secret.NewRandomKey()
+	srv, err := NewServer(Config{
+		Store:      st,
+		Engines:    []engine.Engine{nuclei.Mock{}},
+		Vault:      secret.NewMemVault(secret.NewKeyring(k)),
+		Audit:      audit.NewMemLog([]byte("k")),
+		AuthSecret: "s3kret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { srv.Close() })
+
+	// Tanpa kredensial -> 401.
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/scan", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("tanpa auth harus 401, dapat %d", rec.Code)
+	}
+	// Password benar -> 200.
+	req := httptest.NewRequest("GET", "/scan", nil)
+	req.SetBasicAuth("x", "s3kret")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("auth benar harus 200, dapat %d", rec.Code)
+	}
+	// Password salah -> 401.
+	req = httptest.NewRequest("GET", "/scan", nil)
+	req.SetBasicAuth("x", "salah")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("password salah harus 401, dapat %d", rec.Code)
 	}
 }
