@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/finding"
@@ -20,7 +22,32 @@ func newTestServer(t *testing.T) (*Server, *store.Mem) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
+	t.Cleanup(func() { srv.Close() })
 	return srv, st
+}
+
+// runIDFrom mengekstrak run id dari partial status (id="run-...").
+func runIDFrom(t *testing.T, body string) string {
+	t.Helper()
+	m := regexp.MustCompile(`id="run-([^"]+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("run id tak ditemukan di respons:\n%s", body)
+	}
+	return m[1]
+}
+
+// waitRunDone menunggu run mencapai keadaan terminal lalu mengembalikan body-nya.
+func waitRunDone(t *testing.T, srv *Server, id string) string {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		b := do(t, srv, "GET", "/runs/"+id, nil).Body.String()
+		if strings.Contains(b, "Lihat findings") || strings.Contains(b, "gagal") {
+			return b
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("run tidak selesai tepat waktu")
+	return ""
 }
 
 func do(t *testing.T, srv *Server, method, target string, form url.Values) *httptest.ResponseRecorder {
@@ -67,50 +94,41 @@ func TestScanRunThenFindings(t *testing.T) {
 	srv, st := newTestServer(t)
 
 	rec := do(t, srv, "POST", "/scan", url.Values{
-		"program":  {"demo"},
-		"in_scope": {"demo.test"},
-		"out_scope": {""},
-		"targets":  {"demo.test\nevil.test"},
+		"program": {"demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test\nevil.test"},
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /scan = %d", rec.Code)
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "temuan baru") || !strings.Contains(body, "evil.test") {
-		t.Errorf("hasil scan tidak memuat ringkasan/penolakan:\n%s", body)
+	done := waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
+	if !strings.Contains(done, "temuan baru") || !strings.Contains(done, "evil.test") {
+		t.Errorf("status run selesai tak memuat ringkasan/penolakan:\n%s", done)
 	}
 
-	// Dua temuan tersimpan di store.
 	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
 	if len(fs) != 2 {
 		t.Fatalf("ingin 2 temuan tersimpan, dapat %d", len(fs))
 	}
 
-	// Halaman findings menampilkannya.
 	rec = do(t, srv, "GET", "/findings?program=demo", nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "ssrf-via-fetch") {
 		t.Errorf("findings tidak menampilkan temuan (code=%d)", rec.Code)
 	}
 
-	// Detail satu temuan: bukti tersensor, tanpa secret.
-	id := fs[0].ID
-	rec = do(t, srv, "GET", "/findings/"+id+"?program=demo", nil)
+	rec = do(t, srv, "GET", "/findings/"+fs[0].ID+"?program=demo", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET detail = %d", rec.Code)
 	}
-	d := rec.Body.String()
-	if strings.Contains(d, "SECRET-abc123") {
+	if strings.Contains(rec.Body.String(), "SECRET-abc123") {
 		t.Error("detail membocorkan secret")
 	}
 }
 
 func TestTriageConfirm(t *testing.T) {
 	srv, st := newTestServer(t)
-	do(t, srv, "POST", "/scan", url.Values{
-		"program":  {"demo"},
-		"in_scope": {"demo.test"},
-		"targets":  {"demo.test"},
+	rec0 := do(t, srv, "POST", "/scan", url.Values{
+		"program": {"demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test"},
 	})
+	waitRunDone(t, srv, runIDFrom(t, rec0.Body.String()))
 	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
 	if len(fs) == 0 {
 		t.Fatal("tidak ada temuan untuk ditriase")
@@ -178,11 +196,11 @@ func TestScanWithReconDiscovers(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /scan = %d", rec.Code)
 	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "aset recon") {
-		t.Error("hasil harus menampilkan jumlah aset recon")
+	done := waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
+	if !strings.Contains(done, "aset recon") {
+		t.Error("status run harus menampilkan jumlah aset recon")
 	}
-	if !strings.Contains(body, "exfil.evil.test") {
+	if !strings.Contains(done, "exfil.evil.test") {
 		t.Error("aset recon di luar scope harus muncul sebagai ditolak")
 	}
 	if fs, _ := st.List(context.Background(), store.Query{Program: "demo"}); len(fs) == 0 {
@@ -194,9 +212,10 @@ func TestReportFlow(t *testing.T) {
 	srv, st := newTestServer(t)
 	ctx := context.Background()
 
-	do(t, srv, "POST", "/scan", url.Values{
+	rec0 := do(t, srv, "POST", "/scan", url.Values{
 		"program": {"demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test"},
 	})
+	waitRunDone(t, srv, runIDFrom(t, rec0.Body.String()))
 	fs, _ := st.List(ctx, store.Query{Program: "demo"})
 	if len(fs) == 0 {
 		t.Fatal("tak ada temuan untuk direport")

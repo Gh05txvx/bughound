@@ -39,6 +39,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}
+	defer srv.Close()
 
 	log.Printf("bughound (M0) di http://%s — engine: %s", *addr, eng.Name())
 	log.Printf("scope guard aktif · tanpa auto-submit · tanpa koneksi ke aset nyata")

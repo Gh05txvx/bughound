@@ -1,0 +1,35 @@
+{{define "run_status"}}
+<div id="run-{{.ID}}" class="run-status"
+     {{if .Active}}hx-get="/runs/{{.ID}}" hx-trigger="load delay:1s" hx-swap="outerHTML"{{end}}>
+  {{if .Active}}
+    <div class="result-summary">
+      <span class="chip">run {{.ID}}</span>
+      <span class="chip warn">⏳ {{.Status}}…</span>
+    </div>
+    <p class="muted small">Scan berjalan di latar belakang (rate limiter aktif di jalur eksekusi). Status diperbarui otomatis.</p>
+  {{else if eq .Status "failed"}}
+    <div class="result-summary">
+      <span class="chip">run {{.ID}}</span>
+      <span class="chip warn">gagal</span>
+    </div>
+    <div class="errors"><p>{{.Err}}</p></div>
+  {{else}}
+    <div class="result-summary">
+      <span class="chip ok">run {{.ID}}</span>
+      {{if .Discovered}}<span class="chip">{{.Discovered}} aset recon</span>{{end}}
+      <span class="chip">{{.Scanned}} discan</span>
+      <span class="chip good">{{.Saved}} temuan baru</span>
+      <span class="chip">{{.Duplicates}} duplikat</span>
+      <span class="chip warn">{{len .Denied}} ditolak</span>
+    </div>
+    {{if .Denied}}
+    <h3>Ditolak scope guard</h3>
+    <ul class="list">{{range .Denied}}<li class="mono">{{.}}</li>{{end}}</ul>
+    {{end}}
+    <div class="actions">
+      <a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a>
+      <a class="btn" href="/report?program={{.Program}}">Draft report →</a>
+    </div>
+  {{end}}
+</div>
+{{end}}

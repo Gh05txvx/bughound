@@ -20,6 +20,7 @@ import (
 
 	"bughound/internal/engine"
 	"bughound/internal/finding"
+	"bughound/internal/jobs"
 	"bughound/internal/orchestrator"
 	"bughound/internal/ratelimit"
 	"bughound/internal/recon"
@@ -39,6 +40,7 @@ type Server struct {
 	mux    *http.ServeMux
 	store  store.Store
 	engine engine.Engine
+	queue  *jobs.Queue
 
 	mu       sync.Mutex
 	programs map[string]*programState
@@ -65,11 +67,18 @@ func NewServer(st store.Store, eng engine.Engine) (*Server, error) {
 		mux:      http.NewServeMux(),
 		store:    st,
 		engine:   eng,
+		queue:    jobs.New(4),
 		programs: map[string]*programState{},
 		pages:    pages,
 	}
 	s.routes()
 	return s, nil
+}
+
+// Close menghentikan worker pool (menunggu scan yang berjalan selesai).
+func (s *Server) Close() error {
+	s.queue.Close()
+	return nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -87,6 +96,7 @@ func (s *Server) routes() {
 	})
 	s.mux.HandleFunc("GET /scan", s.handleScanForm)
 	s.mux.HandleFunc("POST /scan", s.handleScanRun)
+	s.mux.HandleFunc("GET /runs/{id}", s.handleRunStatus)
 	s.mux.HandleFunc("GET /findings", s.handleFindings)
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
 	s.mux.HandleFunc("POST /findings/{id}/status", s.handleTriage)
@@ -181,40 +191,93 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 
 	ps := s.programStateFor(program)
 	ps.InScope, ps.OutScope = inScope, outScope
-	ps.Audit = nil
-	audit := func(e orchestrator.AuditEvent) {
-		s.mu.Lock()
-		ps.Audit = append(ps.Audit, e)
-		s.mu.Unlock()
-	}
 
-	o := orchestrator.New(guard, s.engine, s.store,
-		ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), audit)
-	if len(seeds) > 0 {
-		o.UseRecon(recon.MockPipeline{})
+	engineRef := s.engine
+	storeRef := s.store
+
+	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
+	// Task memakai ctx milik queue (bukan r.Context()) agar tak dibatalkan saat
+	// response web dikirim.
+	runID := s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
+		audit := func(e orchestrator.AuditEvent) {
+			s.mu.Lock()
+			ps.Audit = append(ps.Audit, e)
+			s.mu.Unlock()
+		}
+		o := orchestrator.New(guard, engineRef, storeRef,
+			ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), audit)
+		if len(seeds) > 0 {
+			o.UseRecon(recon.MockPipeline{})
+		}
+		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets})
+		if err != nil {
+			return jobs.Summary{}, err
+		}
+		sum := jobs.Summary{
+			Discovered: res.Discovered,
+			Scanned:    res.Scanned,
+			Saved:      res.FindingsSaved,
+			Duplicates: res.Duplicates,
+		}
+		for _, d := range res.Denied {
+			sum.Denied = append(sum.Denied, fmt.Sprintf("%s — %s (%s)", d.Target, d.Reason, d.Layer))
+		}
+		return sum, nil
+	})
+
+	if run, ok := s.queue.Get(runID); ok {
+		s.renderPartial(w, "scan", "run_status", toRunView(run))
 	}
-	res, err := o.RunScan(r.Context(), orchestrator.ScanRequest{Program: program, Seeds: seeds, Targets: targets})
-	if err != nil {
-		page.Errors = append(page.Errors, "Scan gagal: "+err.Error())
-		s.renderPartial(w, "scan", "scan_result_errors", page)
+}
+
+func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {
+	run, ok := s.queue.Get(r.PathValue("id"))
+	if !ok {
+		http.Error(w, "run tidak ditemukan", http.StatusNotFound)
 		return
 	}
+	s.renderPartial(w, "scan", "run_status", toRunView(run))
+}
 
-	view := &scanView{
-		RunID:      res.RunID,
-		Discovered: res.Discovered,
-		Scanned:    res.Scanned,
-		Saved:      res.FindingsSaved,
-		Duplicates: res.Duplicates,
-		AuditCount: len(ps.Audit),
+type runView struct {
+	ID         string
+	Program    string
+	Status     string
+	Label      string
+	Err        string
+	Active     bool
+	Discovered int
+	Scanned    int
+	Saved      int
+	Duplicates int
+	Denied     []string
+}
+
+func toRunView(r *jobs.Run) runView {
+	return runView{
+		ID:         r.ID,
+		Program:    r.Program,
+		Status:     string(r.Status),
+		Label:      r.Label,
+		Err:        r.Err,
+		Active:     r.Status == jobs.Queued || r.Status == jobs.Running,
+		Discovered: r.Summary.Discovered,
+		Scanned:    len(r.Summary.Scanned),
+		Saved:      r.Summary.Saved,
+		Duplicates: r.Summary.Duplicates,
+		Denied:     r.Summary.Denied,
 	}
-	for _, d := range res.Denied {
-		view.Denials = append(view.Denials, denialView{
-			Target: d.Target, Reason: string(d.Reason), Layer: string(d.Layer), Entry: d.MatchedEntry,
-		})
+}
+
+func scanLabel(seeds, targets []string) string {
+	var parts []string
+	if len(seeds) > 0 {
+		parts = append(parts, fmt.Sprintf("%d seed", len(seeds)))
 	}
-	page.Result = view
-	s.renderPartial(w, "scan", "scan_result", page)
+	if len(targets) > 0 {
+		parts = append(parts, fmt.Sprintf("%d target", len(targets)))
+	}
+	return strings.Join(parts, " + ")
 }
 
 // ---- Findings ----
@@ -438,7 +501,7 @@ func parseTemplates() (map[string]*template.Template, error) {
 		"add":         func(a, b int) int { return a + b },
 	}
 	sets := map[string][]string{
-		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html"},
+		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
 		"report":       {"templates/base.html", "templates/report.html"},
 		"report_print": {"templates/report_print.html"},
