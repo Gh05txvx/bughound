@@ -12,9 +12,12 @@
 package egress
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +40,7 @@ type Proxy struct {
 	audit     func(Decision)
 	transport http.RoundTripper
 	dialer    *net.Dialer
+	lookupIP  func(ctx context.Context, host string) ([]netip.Addr, error)
 
 	mu     sync.Mutex
 	denied []Decision
@@ -47,12 +51,62 @@ func New(guard *scope.Guard, audit func(Decision)) *Proxy {
 	if audit == nil {
 		audit = func(Decision) {}
 	}
-	return &Proxy{
-		guard:     guard,
-		audit:     audit,
-		transport: &http.Transport{},
-		dialer:    &net.Dialer{Timeout: 10 * time.Second},
+	p := &Proxy{
+		guard:  guard,
+		audit:  audit,
+		dialer: &net.Dialer{Timeout: 10 * time.Second},
+		lookupIP: func(ctx context.Context, host string) ([]netip.Addr, error) {
+			return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+		},
 	}
+	// Semua dial (HTTP forward & CONNECT) lewat dialer ter-guard: anti SSRF ke
+	// IP internal + anti DNS rebinding (IP yang dicek = IP yang disambung).
+	p.transport = &http.Transport{DialContext: p.dialGuarded}
+	return p
+}
+
+// dialGuarded me-resolve host, menolak IP internal/terlarang (kecuali eksplisit
+// in-scope), lalu menyambung ke IP yang SUDAH diperiksa (di-pin) agar resolusi
+// tak bisa berubah antara pengecekan dan koneksi (DNS rebinding).
+func (p *Proxy) dialGuarded(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := p.resolve(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("egress: resolusi %q gagal: %w", host, err)
+	}
+	for _, ip := range ips {
+		if p.ipAllowed(ip) {
+			return p.dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		}
+	}
+	p.record(Decision{Method: "DIAL", Host: host, Target: host, Allowed: false, Reason: scope.Reason("ip-internal")})
+	return nil, fmt.Errorf("egress ditolak: %q menuju IP internal/terlarang (anti-SSRF / DNS rebinding)", host)
+}
+
+func (p *Proxy) resolve(ctx context.Context, host string) ([]netip.Addr, error) {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		return []netip.Addr{ip}, nil
+	}
+	return p.lookupIP(ctx, host)
+}
+
+// ipAllowed: IP publik biasa diizinkan (host sudah lolos scope guard); IP
+// internal/khusus hanya bila eksplisit in-scope sebagai IP/CIDR.
+func (p *Proxy) ipAllowed(ip netip.Addr) bool {
+	if !isSpecialIP(ip) {
+		return true
+	}
+	return p.guard.Evaluate(ip.String()).Allowed
+}
+
+func isSpecialIP(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() ||
+		a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() ||
+		a.IsMulticast() || a.IsUnspecified()
 }
 
 // Listen menjalankan proxy pada addr (pakai "127.0.0.1:0" untuk port acak) dan
@@ -128,7 +182,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "proxy: hijack tak didukung", http.StatusInternalServerError)
 		return
 	}
-	dest, err := p.dialer.Dial("tcp", r.Host)
+	dest, err := p.dialGuarded(r.Context(), "tcp", r.Host)
 	if err != nil {
 		http.Error(w, "egress gagal: "+err.Error(), http.StatusBadGateway)
 		return
