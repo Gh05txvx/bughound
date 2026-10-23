@@ -25,6 +25,9 @@
     <label>Rate limit <span class="muted small">(request/detik · wajib di jalur eksekusi, dijepit maks 50)</span></label>
     <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">
 
+    <label>Upstream proxy <span class="muted small">(opsional · egress engine diteruskan ke sini SETELAH lolos scope guard)</span></label>
+    <input type="text" name="upstream_proxy" value="{{.UpstreamProxy}}" autocomplete="off" placeholder="http://127.0.0.1:8080 · https://… · socks5://127.0.0.1:9050">
+
     <div class="actions">
       <button type="submit" class="btn primary">Jalankan scan</button>
       <span class="muted small">tanpa auto-submit · report selalu draft</span>

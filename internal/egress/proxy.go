@@ -40,6 +40,7 @@ type Proxy struct {
 	audit     func(Decision)
 	transport http.RoundTripper
 	dialer    *net.Dialer
+	finalDial dialFunc // nil = dial langsung; selain itu lewat proxy upstream
 	lookupIP  func(ctx context.Context, host string) ([]netip.Addr, error)
 
 	mu     sync.Mutex
@@ -79,7 +80,11 @@ func (p *Proxy) dialGuarded(ctx context.Context, network, addr string) (net.Conn
 	}
 	for _, ip := range ips {
 		if p.ipAllowed(ip) {
-			return p.dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			dest := net.JoinHostPort(ip.String(), port)
+			if p.finalDial != nil {
+				return p.finalDial(ctx, network, dest) // lewat upstream (ke IP yang sudah di-pin)
+			}
+			return p.dialer.DialContext(ctx, network, dest)
 		}
 	}
 	p.record(Decision{Method: "DIAL", Host: host, Target: host, Allowed: false, Reason: scope.Reason("ip-internal")})
@@ -107,6 +112,23 @@ func isSpecialIP(a netip.Addr) bool {
 	return a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() ||
 		a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() ||
 		a.IsMulticast() || a.IsUnspecified()
+}
+
+// SetUpstream mengarahkan koneksi akhir (ke IP yang sudah di-scope-check &
+// di-pin) lewat proxy upstream. Skema: http/https (CONNECT), socks5/socks5h.
+// URL kosong mengembalikan ke dial langsung. Scope guard & IP-pinning TETAP di
+// hulu — upstream hanya mengganti jalur, bukan memintas keamanan.
+func (p *Proxy) SetUpstream(proxyURL string) error {
+	if strings.TrimSpace(proxyURL) == "" {
+		p.finalDial = nil
+		return nil
+	}
+	d, err := upstreamDialer(proxyURL, p.dialer)
+	if err != nil {
+		return err
+	}
+	p.finalDial = d
+	return nil
 }
 
 // Listen menjalankan proxy pada addr (pakai "127.0.0.1:0" untuk port acak) dan

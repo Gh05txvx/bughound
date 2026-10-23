@@ -106,6 +106,12 @@ Di form **Scan**, tempel spec **OpenAPI 3 / Swagger 2** (JSON atau YAML) pada ko
 
 > Catatan cakupan: ini memperluas endpoint sebagai target (probe + template engine). Fuzzing per-method/body yang lebih dalam (mis. `nuclei -im openapi`) belum didukung. Untuk **gRPC**, lihat halaman **gRPC** (enumerasi layanan/metode via reflection + fuzz invokasi opt-in: memanggil metode read-only tanpa kredensial untuk mendeteksi akses tanpa autentikasi; metode mutasi dilewati).
 
+## Proxy upstream (meneruskan egress)
+
+Sebagian target mewajibkan lalu lintas lewat proxy tertentu, atau kamu ingin melewatkan traffic lewat Burp/ZAP, proxy korporat, atau SOCKS5/Tor. Isi kolom **Upstream proxy** di form Scan (mis. `http://127.0.0.1:8080`, `https://…`, `socks5://127.0.0.1:9050`; kredensial via `user:pass@host`).
+
+Alur: `engine → proxy egress bughound (scope guard + pin IP) → upstream → target`. **Keamanan tetap utuh** — scope guard & IP-pinning (anti-SSRF/rebinding) berjalan **sebelum** diteruskan; upstream hanya mengganti jalur ke IP yang sudah dicek. Upstream tak valid = **fail-closed** (scan tak jalan).
+
 ## Docker (engine ikut di dalam image)
 
 Karena engine nyata tidak di-bundle ke binary, cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan bughound + engine (nuclei, subfinder, httpx, katana, ffuf, semgrep; ZAP opsional). Di dalam container semua engine ada di `PATH`, jadi `-engine real`/`nuclei,ffuf,zap` langsung jalan.

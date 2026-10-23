@@ -264,11 +264,12 @@ type scanPage struct {
 	Seeds    string
 	InScope  string
 	OutScope string
-	Targets  string
-	OpenAPI  string
-	RPS      string
-	Errors   []string
-	Result   *scanView
+	Targets       string
+	OpenAPI       string
+	UpstreamProxy string
+	RPS           string
+	Errors        []string
+	Result        *scanView
 }
 
 type scanView struct {
@@ -321,15 +322,17 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	outScope := splitLines(r.FormValue("out_scope"))
 	targets := splitLines(r.FormValue("targets"))
 	rps := parseRPS(r.FormValue("rps"))
+	upstreamProxy := strings.TrimSpace(r.FormValue("upstream_proxy"))
 
 	page := scanPage{
 		Nav: "scan", Title: "Scan", Program: program,
-		Seeds:    r.FormValue("seeds"),
-		InScope:  r.FormValue("in_scope"),
-		OutScope: r.FormValue("out_scope"),
-		Targets:  r.FormValue("targets"),
-		OpenAPI:  r.FormValue("openapi"),
-		RPS:      r.FormValue("rps"),
+		Seeds:         r.FormValue("seeds"),
+		InScope:       r.FormValue("in_scope"),
+		OutScope:      r.FormValue("out_scope"),
+		Targets:       r.FormValue("targets"),
+		OpenAPI:       r.FormValue("openapi"),
+		UpstreamProxy: upstreamProxy,
+		RPS:           r.FormValue("rps"),
 	}
 
 	// Scan ter-arah spec: perluas OpenAPI/Swagger jadi endpoint → target. Tiap
@@ -389,7 +392,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		if len(seeds) > 0 && s.recon != nil {
 			o.UseRecon(s.recon)
 		}
-		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets})
+		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, UpstreamProxy: upstreamProxy})
 		if err != nil {
 			s.auditAppend(ctx, audit.Event{Kind: "run.finish", Program: program, RunID: runID, Message: "gagal: " + err.Error()})
 			return jobs.Summary{}, err
