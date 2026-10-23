@@ -19,6 +19,9 @@
     <label>Target <span class="muted small">(satu per baris)</span></label>
     <textarea name="targets" rows="4" spellcheck="false">{{.Targets}}</textarea>
 
+    <label>OpenAPI/Swagger spec <span class="muted small">(opsional · tempel JSON/YAML · tiap endpoint jadi target &amp; tetap lewat scope guard)</span></label>
+    <textarea name="openapi" rows="3" spellcheck="false" placeholder="tempel isi openapi.json / swagger.yaml (OpenAPI 3 / Swagger 2)">{{.OpenAPI}}</textarea>
+
     <label>Rate limit <span class="muted small">(request/detik · wajib di jalur eksekusi, dijepit maks 50)</span></label>
     <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">
 

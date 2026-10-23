@@ -27,6 +27,7 @@ import (
 	"bughound/internal/jobs"
 	"bughound/internal/orchestrator"
 	"bughound/internal/ratelimit"
+	"bughound/internal/openapi"
 	"bughound/internal/recon"
 	"bughound/internal/report"
 	"bughound/internal/sast"
@@ -250,6 +251,7 @@ type scanPage struct {
 	InScope  string
 	OutScope string
 	Targets  string
+	OpenAPI  string
 	RPS      string
 	Errors   []string
 	Result   *scanView
@@ -312,7 +314,23 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		InScope:  r.FormValue("in_scope"),
 		OutScope: r.FormValue("out_scope"),
 		Targets:  r.FormValue("targets"),
+		OpenAPI:  r.FormValue("openapi"),
 		RPS:      r.FormValue("rps"),
+	}
+
+	// Scan ter-arah spec: perluas OpenAPI/Swagger jadi endpoint → target. Tiap
+	// endpoint TETAP lewat scope guard di bawah (spec tak memintas batas).
+	if spec := strings.TrimSpace(r.FormValue("openapi")); spec != "" {
+		base := ""
+		if len(targets) > 0 {
+			base = targets[0]
+		}
+		eps, perr := openapi.Endpoints([]byte(spec), base)
+		if perr != nil {
+			page.Errors = append(page.Errors, "OpenAPI/Swagger: "+perr.Error())
+		} else {
+			targets = append(targets, eps...)
+		}
 	}
 
 	if program == "" {

@@ -98,6 +98,12 @@ go run ./cmd/bughound -sast-root /path/ke/repo           # aktifkan SAST (semgre
 
 `mock` (default) menjalankan versi mock semua engine (tanpa jaringan). Menambah engine baru = menulis **satu adapter** (bangun argumen → subprocess `ProxyAware` → `Parse` ke skema temuan), lihat `internal/engine/*` dan `internal/sast`.
 
+## Scan ter-arah OpenAPI/Swagger (API/backend)
+
+Di form **Scan**, tempel spec **OpenAPI 3 / Swagger 2** (JSON atau YAML) pada kolom *OpenAPI/Swagger spec*. Tiap endpoint di `paths` diperluas jadi target konkret (param `{id}` → `1`, base dari `servers`/`host` atau target pertama), lalu **masing-masing tetap melewati scope guard** sebelum di-scan engine. Ini membuat scan menjangkau seluruh endpoint API yang didokumentasikan, bukan hanya hasil crawling.
+
+> Catatan cakupan: ini memperluas endpoint sebagai target (probe + template engine). Fuzzing per-method/body yang lebih dalam (mis. `nuclei -im openapi`) dan protokol non-HTTP seperti **gRPC** belum didukung.
+
 ## Docker (engine ikut di dalam image)
 
 Karena engine nyata tidak di-bundle ke binary, cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan bughound + engine (nuclei, subfinder, httpx, katana, ffuf, semgrep; ZAP opsional). Di dalam container semua engine ada di `PATH`, jadi `-engine real`/`nuclei,ffuf,zap` langsung jalan.

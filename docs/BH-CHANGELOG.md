@@ -86,6 +86,10 @@ Halaman landing `/dashboard`: KPI lintas-program (program/temuan/terkonfirmasi/r
 
 Pemilihan engine: `-engine mock` (default, semua mock, tanpa jaringan) · `-engine real` (nuclei + recon nyata) · daftar koma `-engine nuclei,ffuf,zap`. Semua engine nyata = subprocess tool eksternal yang **tidak di-bundle**; lihat README "Engine yang didukung & cara pasang".
 
+## Scan ter-arah OpenAPI/Swagger (API)
+
+`internal/openapi`: `Endpoints(spec, fallbackBase)` mem-parse OpenAPI 3 / Swagger 2 (JSON atau YAML via gopkg.in/yaml.v3, fallback encoding/json) → daftar URL endpoint absolut unik (base dari `servers`/`host`+`basePath`+`schemes` atau fallback target; param path `{id}`→`1`). Form Scan dapat kolom *OpenAPI/Swagger spec*: endpoint hasil ekspansi ditambahkan ke target dan **tetap lewat scope guard** (spec tak memintas batas). Menjangkau seluruh endpoint API terdokumentasi, bukan hanya crawling. Batas: belum fuzzing per-method/body (nuclei `-im openapi`) & belum gRPC. Uji `openapi/openapi_test.go` + `web/openapi_scan_test.go`.
+
 ## Docker (engine ikut di image)
 
 `Dockerfile` multi-stage + `docker-compose.yml` + `.dockerignore`: image gabungan **bughound + engine** (nuclei/subfinder/httpx/katana/ffuf via `go install`, semgrep via pip; **ZAP opsional** `--build-arg WITH_ZAP=true`). Di dalam container engine ada di `PATH` → `-engine real` jalan tanpa pasang tool di host. Non-root, data di `/data`, default `-engine mock` (aman); port dipetakan ke localhost + `-auth` untuk akses non-lokal. Divalidasi `docker build --check` (bersih; base image resolve). Cocok untuk mesin tanpa engine terpasang tapi punya Docker. Workflow `docker.yml`: saat tag `v*`, build & push image ke **GitHub Container Registry** (`ghcr.io/<owner>/bughound`, varian lean) dengan cache GHA → `docker pull ghcr.io/…:latest`. Lihat README "Docker".
