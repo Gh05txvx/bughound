@@ -9,6 +9,8 @@
   <div class="actions">
     <a class="btn" href="/report/download?program={{$prog}}">Unduh .md</a>
     <a class="btn" href="/report/print?program={{$prog}}" target="_blank" rel="noopener">Cetak / PDF</a>
+    <a class="btn" href="/report/export?program={{$prog}}&platform=hackerone">Export HackerOne</a>
+    <a class="btn" href="/report/export?program={{$prog}}&platform=bugcrowd">Export Bugcrowd</a>
   </div>
 </div>
 
@@ -22,6 +24,11 @@
   <div class="detail-head">
     <span class="badge {{sevClass $f.Severity}}">{{$f.Severity}}</span>
     <h3>{{add $i 1}}. {{$f.Title}}</h3>
+  </div>
+  <div class="actions">
+    <span class="muted small">export temuan ini:</span>
+    <a class="btn ghost" href="/report/export?program={{$prog}}&id={{$f.ID}}&platform=hackerone">HackerOne .md</a>
+    <a class="btn ghost" href="/report/export?program={{$prog}}&id={{$f.ID}}&platform=bugcrowd">Bugcrowd .md</a>
   </div>
   <dl class="meta">
     <dt>Type</dt><dd class="mono">{{$f.Type}}</dd>
@@ -44,7 +51,7 @@
   <pre class="ev mono">{{.Markdown}}</pre>
 </details>
 
-<p class="muted small">Report ini <b>draft</b>. Tidak ada tombol submit — pengiriman ke platform kamu lakukan manual setelah review.</p>
+<p class="muted small">Report ini <b>draft</b>. Export HackerOne/Bugcrowd hanya memformat draft untuk kamu salin &amp; submit <b>manual</b> — tidak ada tombol submit, tidak ada pengiriman otomatis.</p>
 {{else}}
 <div class="empty">
   <p class="muted">Belum ada temuan <b>terkonfirmasi</b> untuk program ini. Konfirmasi temuan di halaman <a href="/findings?program={{$prog}}">Findings</a> dulu.</p>

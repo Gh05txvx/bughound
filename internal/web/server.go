@@ -223,6 +223,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /report", s.handleReport)
 	s.mux.HandleFunc("GET /report/download", s.handleReportDownload)
 	s.mux.HandleFunc("GET /report/print", s.handleReportPrint)
+	s.mux.HandleFunc("GET /report/export", s.handleReportExport)
 	s.mux.HandleFunc("GET /settings", s.handleSettings)
 	s.mux.HandleFunc("POST /settings/secrets", s.handleAddSecret)
 	s.mux.HandleFunc("POST /settings/secrets/delete", s.handleDeleteSecret)
@@ -579,6 +580,45 @@ func (s *Server) handleReportPrint(w http.ResponseWriter, r *http.Request) {
 	findings, _ := s.store.List(r.Context(), store.Query{Program: program})
 	rep := report.Build(program, findings, time.Now())
 	s.render(w, "report_print", "report_print", rep)
+}
+
+// handleReportExport mengunduh draft terformat template platform (HackerOne /
+// Bugcrowd). Dengan ?id= -> satu temuan terkonfirmasi; tanpa id -> seluruh
+// report. Hanya menghasilkan berkas untuk disalin/submit MANUAL — tanpa
+// auto-submit, tanpa koneksi keluar.
+func (s *Server) handleReportExport(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	platform := report.Platform(strings.TrimSpace(r.URL.Query().Get("platform")))
+	if program == "" {
+		http.Error(w, "program wajib", http.StatusBadRequest)
+		return
+	}
+	if !platform.Valid() {
+		http.Error(w, "platform export tidak didukung", http.StatusBadRequest)
+		return
+	}
+
+	var md, fname string
+	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
+		f, err := s.store.Get(r.Context(), id)
+		if err != nil || f.Program != program {
+			http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
+			return
+		}
+		if f.Status != finding.StatusConfirmed {
+			http.Error(w, "hanya temuan terkonfirmasi yang bisa diekspor", http.StatusBadRequest)
+			return
+		}
+		md = report.ExportFinding(f, platform)
+		fname = fmt.Sprintf("%s-%s.md", platform, safeFilename(id))
+	} else {
+		findings, _ := s.store.List(r.Context(), store.Query{Program: program})
+		md = report.ExportReport(report.Build(program, findings, time.Now()), platform)
+		fname = fmt.Sprintf("%s-%s.md", platform, safeFilename(program))
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, fname))
+	io.WriteString(w, md)
 }
 
 // ---- Programs / scope editor ----
