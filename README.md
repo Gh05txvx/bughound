@@ -113,6 +113,15 @@ docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data -e BUGHOUND_AUTH=r
 
 Atau `docker compose up --build` (lihat `docker-compose.yml`; port sudah ke localhost, data di volume).
 
+**Image rilis (GHCR).** Setiap tag `vX.Y.Z` memicu workflow [`docker.yml`](.github/workflows/docker.yml) yang mem-build & push image gabungan ke GitHub Container Registry, jadi tak perlu build sendiri:
+
+```bash
+docker pull ghcr.io/gh05txvx/bughound:latest     # atau :vX.Y.Z
+docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data ghcr.io/gh05txvx/bughound:latest
+```
+
+(Image GHCR = varian lean tanpa ZAP; untuk ZAP build lokal dengan `--build-arg WITH_ZAP=true`.)
+
 **Keamanan:** petakan port ke `127.0.0.1` saja dan set `-auth`/`BUGHOUND_AUTH` bila diakses dari luar localhost. Default container tetap `-engine mock` (tak ada scan nyata) sampai engine dipilih eksplisit.
 
 ## Struktur

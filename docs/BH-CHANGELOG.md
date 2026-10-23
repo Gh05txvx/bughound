@@ -85,7 +85,7 @@ Pemilihan engine: `-engine mock` (default, semua mock, tanpa jaringan) · `-engi
 
 ## Docker (engine ikut di image)
 
-`Dockerfile` multi-stage + `docker-compose.yml` + `.dockerignore`: image gabungan **bughound + engine** (nuclei/subfinder/httpx/katana/ffuf via `go install`, semgrep via pip; **ZAP opsional** `--build-arg WITH_ZAP=true`). Di dalam container engine ada di `PATH` → `-engine real` jalan tanpa pasang tool di host. Non-root, data di `/data`, default `-engine mock` (aman); port dipetakan ke localhost + `-auth` untuk akses non-lokal. Divalidasi `docker build --check` (bersih; base image resolve). Cocok untuk mesin tanpa engine terpasang tapi punya Docker. Lihat README "Docker".
+`Dockerfile` multi-stage + `docker-compose.yml` + `.dockerignore`: image gabungan **bughound + engine** (nuclei/subfinder/httpx/katana/ffuf via `go install`, semgrep via pip; **ZAP opsional** `--build-arg WITH_ZAP=true`). Di dalam container engine ada di `PATH` → `-engine real` jalan tanpa pasang tool di host. Non-root, data di `/data`, default `-engine mock` (aman); port dipetakan ke localhost + `-auth` untuk akses non-lokal. Divalidasi `docker build --check` (bersih; base image resolve). Cocok untuk mesin tanpa engine terpasang tapi punya Docker. Workflow `docker.yml`: saat tag `v*`, build & push image ke **GitHub Container Registry** (`ghcr.io/<owner>/bughound`, varian lean) dengan cache GHA → `docker pull ghcr.io/…:latest`. Lihat README "Docker".
 
 ## Catatan pola
 
