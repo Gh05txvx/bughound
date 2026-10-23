@@ -56,7 +56,7 @@ type Server struct {
 	queue   *jobs.Queue
 	version string
 	sastRoot string // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
-	grpcEngine engine.Engine // enumerasi gRPC (mock default; grpcurl bila -grpc real)
+	grpcEngine grpc.Scanner // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
 
 	pages map[string]*template.Template
 }
@@ -1003,6 +1003,7 @@ type grpcPage struct {
 	Programs   []string
 	EngineName string
 	Targets    string
+	Fuzz       bool
 	Result     *grpcResult
 	Error      string
 }
@@ -1028,7 +1029,7 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 		Nav: "grpc", Title: "gRPC", CSRF: s.csrfToken(r),
 		Program: strings.TrimSpace(r.FormValue("program")),
 		Targets: r.FormValue("targets"), Programs: s.programNames(r.Context()),
-		EngineName: s.grpcEngine.Name(),
+		EngineName: s.grpcEngine.Name(), Fuzz: r.FormValue("fuzz") != "",
 	}
 	targets := splitLines(r.FormValue("targets"))
 	if page.Program == "" || len(targets) == 0 {
@@ -1062,7 +1063,11 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		s.auditAppend(r.Context(), audit.Event{Kind: "grpc.scope", Program: page.Program, RunID: runID, Target: tgt, Allowed: true, Layer: "input"})
-		fs, serr := s.grpcEngine.Scan(r.Context(), tgt, page.Program, runID)
+		scan := s.grpcEngine.Scan
+		if page.Fuzz {
+			scan = s.grpcEngine.Fuzz
+		}
+		fs, serr := scan(r.Context(), tgt, page.Program, runID)
 		if serr != nil {
 			page.Error = "Enumerasi gagal untuk " + tgt + ": " + serr.Error()
 			continue

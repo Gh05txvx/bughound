@@ -18,8 +18,11 @@
     <label>Target gRPC <span class="muted small">(host:port, satu per baris)</span></label>
     <textarea name="targets" rows="4" spellcheck="false" placeholder="api.demo.test:9090">{{.Targets}}</textarea>
 
+    <label class="check"><input type="checkbox" name="fuzz" {{if .Fuzz}}checked{{end}}> Fuzz invokasi (AKTIF)</label>
+    <p class="muted small">Peringatan: fuzz <b>memanggil</b> metode (hanya yang terlihat read-only: Get/List/Query/…) dengan payload kosong untuk mendeteksi akses tanpa autentikasi. Metode berpotensi mutasi (Create/Delete/Update/…) <b>dilewati</b> demi keamanan.</p>
+
     <div class="actions">
-      <button type="submit" class="btn primary">Enumerasi gRPC</button>
+      <button type="submit" class="btn primary">{{if .Fuzz}}Enumerasi + Fuzz{{else}}Enumerasi gRPC{{end}}</button>
       <span class="muted small">reflection · tanpa auto-submit</span>
     </div>
   </form>

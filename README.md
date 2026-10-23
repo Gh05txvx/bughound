@@ -86,7 +86,7 @@ bughound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak 
 | **ffuf** | DAST (content discovery) | mock + nyata | `go install github.com/ffuf/ffuf/v2@latest` · wordlist bawaan (override `-ffuf-wordlist`) |
 | **ZAP** | DAST (proxy scanner) | mock + nyata | [OWASP ZAP](https://www.zaproxy.org/download/) (`zap.sh` di PATH) · `-zap-mode quick\|baseline\|full` |
 | **semgrep** | SAST | mock + nyata | `pipx install semgrep` · aktif via `-sast-root` |
-| **grpcurl** | gRPC (enumerasi reflection) | mock + nyata | `go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest` · `-grpc real` |
+| **grpcurl** | gRPC (enumerasi + fuzz invokasi) | mock + nyata | `go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest` · `-grpc real` |
 
 Mengaktifkan engine nyata lewat flag `-engine` (daftar dipisah koma):
 
@@ -104,7 +104,7 @@ go run ./cmd/bughound -sast-root /path/ke/repo           # aktifkan SAST (semgre
 
 Di form **Scan**, tempel spec **OpenAPI 3 / Swagger 2** (JSON atau YAML) pada kolom *OpenAPI/Swagger spec*. Tiap endpoint di `paths` diperluas jadi target konkret (param `{id}` → `1`, base dari `servers`/`host` atau target pertama), lalu **masing-masing tetap melewati scope guard** sebelum di-scan engine. Ini membuat scan menjangkau seluruh endpoint API yang didokumentasikan, bukan hanya hasil crawling.
 
-> Catatan cakupan: ini memperluas endpoint sebagai target (probe + template engine). Fuzzing per-method/body yang lebih dalam (mis. `nuclei -im openapi`) belum didukung. Untuk **gRPC**, lihat halaman **gRPC** (enumerasi layanan/metode via reflection; fuzzing invokasi belum).
+> Catatan cakupan: ini memperluas endpoint sebagai target (probe + template engine). Fuzzing per-method/body yang lebih dalam (mis. `nuclei -im openapi`) belum didukung. Untuk **gRPC**, lihat halaman **gRPC** (enumerasi layanan/metode via reflection + fuzz invokasi opt-in: memanggil metode read-only tanpa kredensial untuk mendeteksi akses tanpa autentikasi; metode mutasi dilewati).
 
 ## Docker (engine ikut di dalam image)
 

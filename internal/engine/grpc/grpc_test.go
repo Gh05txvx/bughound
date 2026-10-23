@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -66,5 +67,82 @@ func TestRunnerArgs(t *testing.T) {
 	// tanpa plaintext → tak ada flag.
 	if strings.Contains(strings.Join((&Runner{}).listArgs("t:1"), " "), "-plaintext") {
 		t.Error("tanpa Plaintext tak boleh ada -plaintext")
+	}
+}
+
+func TestInvokeArgs(t *testing.T) {
+	got := strings.Join((&Runner{Plaintext: true}).invokeArgs("t:1", "a.B.GetX"), " ")
+	for _, w := range []string{"-plaintext", "-d {}", "t:1", "a.B.GetX"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("invokeArgs harus memuat %q; dapat %q", w, got)
+		}
+	}
+}
+
+func TestReadOnlyMethod(t *testing.T) {
+	cases := map[string]bool{
+		"acme.UserService.GetUser":     true,
+		"acme.UserService.ListUsers":   true,
+		"x.Y.QueryStuff":               true,
+		"acme.OrderService.CreateOrder": false,
+		"x.Y.DeleteThing":              false,
+		"x.Y.UpdateFoo":                false,
+	}
+	for m, want := range cases {
+		if got := readOnlyMethod(m); got != want {
+			t.Errorf("readOnlyMethod(%q) = %v; ingin %v", m, got, want)
+		}
+	}
+}
+
+func TestClassifyInvoke(t *testing.T) {
+	e := errors.New("exit status 1")
+	if classifyInvoke("{\"ok\":true}", nil) != "OK" {
+		t.Error("sukses harus OK")
+	}
+	if got := classifyInvoke("ERROR:\n  Code: Unauthenticated\n  Message: x", e); got != "Unauthenticated" {
+		t.Errorf("Unauthenticated; dapat %q", got)
+	}
+	if got := classifyInvoke("ERROR:\n  Code: InvalidArgument\n  Message: y", e); got != "InvalidArgument" {
+		t.Errorf("InvalidArgument; dapat %q", got)
+	}
+	if got := classifyInvoke("weird output", e); got != "Unknown" {
+		t.Errorf("Unknown; dapat %q", got)
+	}
+}
+
+func TestMockFuzzAddsUnauthFinding(t *testing.T) {
+	fs, err := Mock{}.Fuzz(context.Background(), "api.demo.test:9090", "demo", "run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 6 enumerasi + 1 fuzz (callable-unauth) = 7.
+	if len(fs) != 7 {
+		t.Fatalf("Fuzz harus 7 temuan (6 enum + 1 fuzz); dapat %d", len(fs))
+	}
+	var unauth *finding.Finding
+	for _, f := range fs {
+		if f.Type == "grpc-method-callable-unauth" {
+			unauth = f
+		}
+	}
+	if unauth == nil {
+		t.Fatal("harus ada temuan grpc-method-callable-unauth")
+	}
+	if unauth.Severity != finding.SeverityMedium || len(unauth.CWE) == 0 || unauth.CWE[0] != "CWE-306" {
+		t.Errorf("temuan unauth salah: %+v", unauth)
+	}
+}
+
+// fuzzFinding untuk status terproteksi tidak melaporkan temuan.
+func TestFuzzFindingProtectedNil(t *testing.T) {
+	if fuzzFinding("t:1", "a.B.GetX", "Unauthenticated", "p", "r") != nil {
+		t.Error("Unauthenticated tak boleh menghasilkan temuan")
+	}
+	if fuzzFinding("t:1", "a.B.GetX", "PermissionDenied", "p", "r") != nil {
+		t.Error("PermissionDenied tak boleh menghasilkan temuan")
+	}
+	if fuzzFinding("t:1", "a.B.GetX", "OK", "p", "r") == nil {
+		t.Error("OK harus menghasilkan temuan callable-unauth")
 	}
 }

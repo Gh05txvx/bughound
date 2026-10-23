@@ -83,7 +83,7 @@ Halaman landing `/dashboard`: KPI lintas-program (program/temuan/terkonfirmasi/r
 | ffuf | DAST (content discovery) | mock + nyata (wordlist bawaan ter-embed; override `-ffuf-wordlist`) |
 | ZAP | DAST (proxy scanner) | mock + nyata (mode `-zap-mode` quick/baseline/full; full = spider + active scan via Automation Framework; upstream proxy config) |
 | semgrep | SAST | mock + nyata (opt-in via `-sast-root`) |
-| grpcurl | gRPC (enumerasi reflection) | mock + nyata (`-grpc real`) |
+| grpcurl | gRPC (enumerasi + fuzz invokasi) | mock + nyata (`-grpc real`) |
 
 Pemilihan engine: `-engine mock` (default, semua mock, tanpa jaringan) · `-engine real` (nuclei + recon nyata) · daftar koma `-engine nuclei,ffuf,zap`. Semua engine nyata = subprocess tool eksternal yang **tidak di-bundle**; lihat README "Engine yang didukung & cara pasang".
 
@@ -93,7 +93,7 @@ Pemilihan engine: `-engine mock` (default, semua mock, tanpa jaringan) · `-engi
 
 ## gRPC — enumerasi via reflection
 
-`internal/engine/grpc`: `Mock` + `Runner` (grpcurl) + `buildFindings`. Memakai gRPC Server Reflection untuk mengenumerasi layanan & metode → temuan: `grpc-reflection-enabled` (Medium, CWE-200), `grpc-service-exposed`, `grpc-method-exposed` (Info); layanan infra (reflection/health/channelz) disaring. Halaman web **gRPC** (`GET /grpc`, `POST /grpc/run`): target `host:port`, tiap host **wajib lolos scope guard program** (grpcurl tak bisa diproxy → scope ditegakkan di hulu; penolakan dicatat audit `grpc.scope`). Engine: mock default, `-grpc real` (+ `-grpc-plaintext`) memakai grpcurl; ditambahkan ke image Docker. Cakupan = ENUMERASI; fuzzing invokasi metode belum. Uji `engine/grpc/grpc_test` + `web/grpc_test`.
+`internal/engine/grpc`: `Mock` + `Runner` (grpcurl) + `buildFindings`. Memakai gRPC Server Reflection untuk mengenumerasi layanan & metode → temuan: `grpc-reflection-enabled` (Medium, CWE-200), `grpc-service-exposed`, `grpc-method-exposed` (Info); layanan infra (reflection/health/channelz) disaring. Halaman web **gRPC** (`GET /grpc`, `POST /grpc/run`): target `host:port`, tiap host **wajib lolos scope guard program** (grpcurl tak bisa diproxy → scope ditegakkan di hulu; penolakan dicatat audit `grpc.scope`). Engine: mock default, `-grpc real` (+ `-grpc-plaintext`) memakai grpcurl; ditambahkan ke image Docker. **Fuzz invokasi** (opt-in, checkbox di halaman gRPC): `Scanner.Fuzz` menginvoke metode yang terlihat **read-only** (Get/List/Query/… — metode mutasi Create/Delete/… dilewati demi keamanan) dengan payload kosong, lalu mengklasifikasi status gRPC → temuan `grpc-method-callable-unauth` (Medium, CWE-306, respons OK tanpa kredensial) / `grpc-method-reachable-unauth` (Low, InvalidArgument); Unauthenticated/PermissionDenied = terproteksi (tak dilaporkan). Uji `engine/grpc/grpc_test` (+ classify/readOnly/fuzz) + `web/grpc_test` (+ fuzz).
 
 ## Docker (engine ikut di image)
 
