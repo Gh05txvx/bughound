@@ -18,6 +18,7 @@ import (
 	"bughound/internal/engine"
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
+	"bughound/internal/engine/zap"
 	"bughound/internal/recon"
 	"bughound/internal/secret"
 	"bughound/internal/store"
@@ -37,6 +38,7 @@ func main() {
 	authFlag := flag.String("auth", "", "password HTTP Basic auth (atau env BUGHOUND_AUTH); kosong = tanpa auth (hanya aman untuk localhost)")
 	rotateKey := flag.Bool("rotate-key", false, "rotasi kunci master: re-enkripsi semua secret ke kunci baru lalu keluar")
 	sastRoot := flag.String("sast-root", "", "root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini")
+	ffufWordlist := flag.String("ffuf-wordlist", "", "path wordlist untuk engine ffuf nyata (wajib bila -engine memuat ffuf)")
 	flag.Parse()
 
 	if *showVersion {
@@ -161,16 +163,33 @@ func main() {
 
 	var engines []engine.Engine
 	var rec recon.Engine
-	switch strings.ToLower(*engineMode) {
-	case "real", "nuclei":
-		engines = []engine.Engine{&nuclei.Runner{}}
-		rec = recon.NewRealPipeline()
-		log.Printf("engine: NYATA (nuclei + subfinder/httpx/katana) — egress lewat proxy scope guard")
-		log.Printf("PERINGATAN: hanya scan target yang sah (in-scope / lab / izin eksplisit)")
-	default:
-		engines = []engine.Engine{nuclei.Mock{}, ffuf.Mock{}}
+	names, useMock := parseEngineMode(*engineMode)
+	if useMock {
+		engines = []engine.Engine{nuclei.Mock{}, ffuf.Mock{}, zap.Mock{}}
 		rec = recon.MockPipeline{}
-		log.Printf("engine: mock (nuclei + ffuf) — tanpa koneksi jaringan")
+		log.Printf("engine: mock (nuclei + ffuf + zap) — tanpa koneksi jaringan")
+	} else {
+		for _, n := range names {
+			switch n {
+			case "nuclei":
+				engines = append(engines, &nuclei.Runner{})
+			case "ffuf":
+				engines = append(engines, &ffuf.Runner{Wordlist: *ffufWordlist})
+			case "zap":
+				engines = append(engines, &zap.Runner{})
+			}
+		}
+		if len(engines) == 0 {
+			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap)", *engineMode)
+		}
+		rec = recon.NewRealPipeline()
+		log.Printf("engine: NYATA (%s + recon subfinder/httpx/katana) — egress lewat proxy scope guard", strings.Join(names, ", "))
+		log.Printf("PERINGATAN: hanya scan target yang sah (in-scope / lab / izin eksplisit)")
+		for _, n := range names {
+			if n == "ffuf" && strings.TrimSpace(*ffufWordlist) == "" {
+				log.Printf("PERINGATAN: ffuf dipilih tetapi -ffuf-wordlist kosong; scan ffuf akan gagal sampai diisi")
+			}
+		}
 	}
 
 	if *sastRoot != "" {
@@ -190,6 +209,39 @@ func main() {
 	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("bughound: server berhenti: %v", err)
 	}
+}
+
+// parseEngineMode menafsirkan flag -engine. "" / "mock" -> engine mock (mock
+// eksklusif). Selain itu daftar dipisah koma: "real" = alias nuclei; nama yang
+// dikenal (nuclei, ffuf, zap) membangun Runner nyata. Nama tak dikenal diabaikan
+// (pemanggil menolak bila tak ada yang dikenali). Hasil ter-dedup, urut input.
+func parseEngineMode(mode string) (names []string, mock bool) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		return nil, true
+	}
+	seen := map[string]bool{}
+	add := func(n string) {
+		if !seen[n] {
+			names = append(names, n)
+			seen[n] = true
+		}
+	}
+	for _, tok := range strings.Split(mode, ",") {
+		switch strings.TrimSpace(tok) {
+		case "":
+			// lewati
+		case "mock":
+			return nil, true // mock mengalahkan sisanya
+		case "real", "nuclei":
+			add("nuclei")
+		case "ffuf":
+			add("ffuf")
+		case "zap":
+			add("zap")
+		}
+	}
+	return names, false
 }
 
 func isLocalhost(addr string) bool {
