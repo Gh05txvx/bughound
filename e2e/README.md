@@ -24,8 +24,8 @@ npm run test:headed         # dengan browser terlihat
 npm run report              # buka laporan HTML terakhir
 ```
 
-`global-setup.ts` membangun binary `bughound-e2e` dari `./cmd/bughound`, lalu
-Playwright menjalankannya sebagai `webServer` (port `8799`). Tak perlu start server manual.
+`webServer` di `playwright.config.ts` membangun binary `bughound-e2e` dari
+`./cmd/bughound` lalu menjalankannya (port `8799`). Tak perlu start server manual.
 
 ## Struktur
 

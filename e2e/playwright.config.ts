@@ -34,17 +34,17 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
 
-  // Membangun binary dilakukan di global-setup (butuh jaringan untuk cache
-  // modul), BUKAN di sini — agar proses server bisa dijalankan dengan egress
-  // diblok tanpa mengganggu `go build`.
-  globalSetup: require.resolve('./global-setup'),
-
   webServer: {
-    // Binary sudah dibangun oleh global-setup. Engine MOCK, store in-memory
-    // ephemeral, bind localhost. Tidak pernah menyentuh jaringan.
-    // -db "" + -key "" → store & kunci in-memory ephemeral: tak ada file (db
-    // atau kunci) yang tersisa di repo setelah test.
-    command: `"${BIN_ABS}" -addr 127.0.0.1:${PORT} -db "" -key "" -engine mock`,
+    // Bangun lalu jalankan dalam satu perintah. globalSetup TIDAK dipakai:
+    // Playwright memulai webServer SEBELUM globalSetup, jadi binary harus
+    // dibangun di sini. Build hanya meng-compile dari cache modul (tanpa
+    // jaringan), sehingga env proxy mati di bawah tak mengganggu; di CI cache
+    // modul dihangatkan lebih dulu (.github/workflows/e2e.yml).
+    // Engine MOCK, store & kunci in-memory ephemeral, bind localhost → tak ada
+    // file (db/kunci) tersisa & tak pernah menyentuh jaringan.
+    command:
+      `go build -trimpath -o "${BIN_ABS}" ./cmd/bughound && ` +
+      `"${BIN_ABS}" -addr 127.0.0.1:${PORT} -db "" -key "" -engine mock`,
     cwd: ROOT,
     url: `${BASE_URL}/scan`,
     reuseExistingServer: !process.env.CI,

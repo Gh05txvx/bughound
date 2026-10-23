@@ -38,6 +38,11 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      # Hangatkan cache modul Go supaya `go build` di dalam webServer (yang
+      # berjalan dengan env proxy mati) hanya meng-compile, tanpa jaringan.
+      - name: Warm Go build cache
+        run: go build ./cmd/bughound
+
       - name: Run E2E
         working-directory: e2e
         run: npm test
