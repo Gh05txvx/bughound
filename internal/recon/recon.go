@@ -14,8 +14,8 @@ import (
 
 // Asset adalah satu aset hasil recon beserta tahap sumbernya.
 type Asset struct {
-	Value  string // host (mis. app.demo.test) atau URL (mis. https://app.demo.test/login)
-	Source string // "subfinder" | "httpx" | "katana"
+	Value  string // host, host:port, atau URL (mis. app.demo.test / app.demo.test:8443 / https://app.demo.test/login)
+	Source string // "subfinder" | "gau" | "dnsx" | "httpx" | "naabu" | "katana"
 }
 
 // Engine menjalankan recon dari seed dan mengembalikan aset yang ditemukan.
@@ -44,9 +44,23 @@ func (MockPipeline) Discover(_ context.Context, seeds []string) ([]Asset, error)
 		for _, h := range subs {
 			out = append(out, Asset{Value: h, Source: "subfinder"})
 		}
+		// gau: URL historis dari arsip (pasif).
+		out = append(out,
+			Asset{Value: "https://" + seed + "/old/index.php?id=1", Source: "gau"},
+			Asset{Value: "https://app." + seed + "/api/v1?debug=true", Source: "gau"},
+		)
+		// dnsx: host yang resolve (validasi DNS).
+		for _, h := range []string{seed, "app." + seed, "api." + seed} {
+			out = append(out, Asset{Value: h, Source: "dnsx"})
+		}
 		for _, h := range subs {
 			out = append(out, Asset{Value: "https://" + h, Source: "httpx"})
 		}
+		// naabu: port terbuka pada host in-scope (host:port).
+		out = append(out,
+			Asset{Value: "app." + seed + ":8443", Source: "naabu"},
+			Asset{Value: seed + ":22", Source: "naabu"},
+		)
 		out = append(out,
 			Asset{Value: "https://app." + seed + "/login", Source: "katana"},
 			Asset{Value: "https://api." + seed + "/v1/users", Source: "katana"},

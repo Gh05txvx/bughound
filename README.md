@@ -78,7 +78,10 @@ bughound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak 
 | Engine | Peran | Adapter | Pasang |
 | --- | --- | --- | --- |
 | **nuclei** | DAST (template) | mock + nyata | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
-| **subfinder → httpx → katana** | recon | mock + nyata | `go install github.com/projectdiscovery/{subfinder/v2/cmd/subfinder,httpx/cmd/httpx,katana/cmd/katana}@latest` |
+| **subfinder → httpx → katana** | recon (subdomain → probe → crawl) | mock + nyata | `go install github.com/projectdiscovery/{subfinder/v2/cmd/subfinder,httpx/cmd/httpx,katana/cmd/katana}@latest` |
+| **gau** | recon (URL historis, pasif) | mock + nyata | `go install github.com/lc/gau/v2/cmd/gau@latest` |
+| **dnsx** | recon (resolusi/validasi DNS) | mock + nyata | `go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest` |
+| **naabu** | recon (port scan TCP) | mock + nyata | `go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` (butuh libpcap) |
 | **ffuf** | DAST (content discovery) | mock + nyata | `go install github.com/ffuf/ffuf/v2@latest` · wordlist bawaan (override `-ffuf-wordlist`) |
 | **ZAP** | DAST (proxy scanner) | mock + nyata | [OWASP ZAP](https://www.zaproxy.org/download/) (`zap.sh` di PATH) · `-zap-mode quick\|baseline\|full` |
 | **semgrep** | SAST | mock + nyata | `pipx install semgrep` · aktif via `-sast-root` |

@@ -19,19 +19,25 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}"
 # --- Stage 2: engine CLI berbasis Go (ter-isolasi agar cache rapi) ---
 FROM golang:1.27-bookworm AS engines
 ENV GOBIN=/engines
+# libpcap-dev dibutuhkan untuk mem-build naabu (gopacket).
+RUN apt-get update && apt-get install -y --no-install-recommends libpcap-dev \
+ && rm -rf /var/lib/apt/lists/*
 RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
  && go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest \
  && go install github.com/projectdiscovery/httpx/cmd/httpx@latest \
  && go install github.com/projectdiscovery/katana/cmd/katana@latest \
+ && go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest \
+ && go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest \
+ && go install github.com/lc/gau/v2/cmd/gau@latest \
  && go install github.com/ffuf/ffuf/v2@latest
 
 # --- Stage 3: runtime ---
 FROM debian:bookworm-slim AS runtime
 ARG WITH_ZAP=false
 
-# semgrep (SAST) via pip + CA certs untuk engine yang menjangkau jaringan.
+# semgrep (SAST) via pip + CA certs + libpcap0.8 (runtime naabu).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates python3 python3-pip \
+ && apt-get install -y --no-install-recommends ca-certificates python3 python3-pip libpcap0.8 \
  && pip3 install --no-cache-dir --break-system-packages semgrep \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 

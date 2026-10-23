@@ -37,6 +37,19 @@ func TestMockPipelineDiscovers(t *testing.T) {
 	}
 }
 
+func TestMockPipelineHasAllSources(t *testing.T) {
+	assets, _ := MockPipeline{}.Discover(context.Background(), []string{"demo.test"})
+	seen := map[string]bool{}
+	for _, a := range assets {
+		seen[a.Source] = true
+	}
+	for _, s := range []string{"subfinder", "gau", "dnsx", "httpx", "naabu", "katana"} {
+		if !seen[s] {
+			t.Errorf("mock harus menyertakan sumber %q", s)
+		}
+	}
+}
+
 func TestMockPipelineEmptySeeds(t *testing.T) {
 	assets, err := MockPipeline{}.Discover(context.Background(), nil)
 	if err != nil {

@@ -23,14 +23,21 @@ type RealPipeline struct {
 	Subfinder Subfinder
 	Httpx     *Httpx
 	Katana    *Katana
+	// Tambahan opsional (nil = dilewati). Gau pasif; Dnsx query resolver; Naabu
+	// port scan aktif yang hanya menyentuh host in-scope (lihat Discover).
+	Gau   *Gau
+	Dnsx  *Dnsx
+	Naabu *Naabu
 }
 
 // NewRealPipeline membuat pipeline dengan tool default (binary di PATH).
 func NewRealPipeline() *RealPipeline {
-	return &RealPipeline{Httpx: &Httpx{}, Katana: &Katana{}}
+	return &RealPipeline{Httpx: &Httpx{}, Katana: &Katana{}, Gau: &Gau{}, Dnsx: &Dnsx{}, Naabu: &Naabu{}}
 }
 
-func (p *RealPipeline) Name() string { return "recon (subfinder→httpx→katana)" }
+func (p *RealPipeline) Name() string {
+	return "recon (subfinder/gau→dnsx→httpx→naabu/katana)"
+}
 
 // UseProxy memenuhi engine.ProxyAware: hanya tahap aktif (httpx, katana) yang
 // diarahkan ke proxy; subfinder pasif dibiarkan.
@@ -39,22 +46,58 @@ func (p *RealPipeline) UseProxy(addr string) {
 	p.Katana.proxyAddr = addr
 }
 
-// Discover menjalankan pipeline untuk seluruh seed.
+// Discover menjalankan pipeline untuk seluruh seed. Urutan menjaga prinsip
+// "tak menyentuh out-of-scope": tahap aktif-HTTP (httpx, katana) lewat proxy
+// egress, dan naabu (TCP mentah, tak bisa diproxy) hanya dijalankan pada host
+// yang SUDAH terbukti in-scope dari keluaran httpx.
 func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, error) {
 	var assets []Asset
+
+	// 1. subfinder (pasif) → host (subdomain + seed).
 	var hosts []string
 	for _, d := range seeds {
-		subs, err := p.Subfinder.Enumerate(ctx, strings.TrimSpace(d))
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		subs, err := p.Subfinder.Enumerate(ctx, d)
 		if err != nil {
 			return nil, err
 		}
-		hosts = append(hosts, subs...)
+		hosts = append(hosts, append(subs, d)...)
 	}
 	for _, h := range hosts {
 		assets = append(assets, Asset{Value: h, Source: "subfinder"})
 	}
 
-	live, err := p.Httpx.Probe(ctx, hosts)
+	// 2. gau (pasif) → URL historis dari arsip web.
+	if p.Gau != nil {
+		urls, err := p.Gau.Collect(ctx, seeds)
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range urls {
+			assets = append(assets, Asset{Value: u, Source: "gau"})
+		}
+	}
+
+	// 3. dnsx (query resolver) → host yang resolve; dipakai sebagai kandidat probe.
+	probeHosts := hosts
+	if p.Dnsx != nil {
+		resolved, err := p.Dnsx.Resolve(ctx, hosts)
+		if err != nil {
+			return nil, err
+		}
+		for _, h := range resolved {
+			assets = append(assets, Asset{Value: h, Source: "dnsx"})
+		}
+		if len(resolved) > 0 {
+			probeHosts = resolved
+		}
+	}
+
+	// 4. httpx (aktif, via proxy egress) → URL hidup yang PASTI in-scope.
+	live, err := p.Httpx.Probe(ctx, probeHosts)
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +105,18 @@ func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, e
 		assets = append(assets, Asset{Value: u, Source: "httpx"})
 	}
 
+	// 5. naabu (aktif, TCP mentah, TAK diproxy) — hanya pada host in-scope hasil httpx.
+	if p.Naabu != nil {
+		ports, err := p.Naabu.ScanPorts(ctx, hostsFromURLs(live))
+		if err != nil {
+			return nil, err
+		}
+		for _, hp := range ports {
+			assets = append(assets, Asset{Value: hp, Source: "naabu"})
+		}
+	}
+
+	// 6. katana (aktif, via proxy egress) → crawling URL hidup.
 	crawled, err := p.Katana.Crawl(ctx, live)
 	if err != nil {
 		return nil, err

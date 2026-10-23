@@ -77,6 +77,9 @@ Halaman landing `/dashboard`: KPI lintas-program (program/temuan/terkonfirmasi/r
 | --- | --- | --- |
 | nuclei | DAST | mock + nyata (`-proxy`) |
 | subfinder → httpx → katana | recon | mock + nyata (httpx/katana via proxy) |
+| gau | recon (URL historis, pasif) | mock + nyata |
+| dnsx | recon (resolusi DNS) | mock + nyata |
+| naabu | recon (port scan TCP) | mock + nyata (TCP mentah; hanya dipindai pada host in-scope hasil httpx) |
 | ffuf | DAST (content discovery) | mock + nyata (wordlist bawaan ter-embed; override `-ffuf-wordlist`) |
 | ZAP | DAST (proxy scanner) | mock + nyata (mode `-zap-mode` quick/baseline/full; full = spider + active scan via Automation Framework; upstream proxy config) |
 | semgrep | SAST | mock + nyata (opt-in via `-sast-root`) |
