@@ -16,9 +16,13 @@ export class ReportPage {
     return this.page.getByRole('link', { name: /Cetak/ });
   }
 
-  /** Setiap kontrol yang terlihat seperti "kirim/submit" — harus NOL. */
+  /**
+   * Kontrol yang benar-benar MENGIRIM/submit — harus NOL. Catatan: tombol
+   * "Export HackerOne/Bugcrowd" adalah UNDUH (format untuk submit manual),
+   * bukan kontrol submit, jadi nama platform saja tak dihitung di sini.
+   */
   submitLikeControls(): Locator {
-    return this.page.getByRole('button', { name: /submit|kirim|send|lapor/i })
-      .or(this.page.getByRole('link', { name: /submit|kirim(?!an manual)|send|hackerone|bugcrowd/i }));
+    const re = /submit|kirim|send|lapor/i;
+    return this.page.getByRole('button', { name: re }).or(this.page.getByRole('link', { name: re }));
   }
 }

@@ -16,7 +16,7 @@ test('KRITIS: report draft tanpa auto-submit', async ({ page }) => {
   await expect(page.getByText('DRAFT', { exact: true })).toBeVisible();
   await expect(report.downloadMd()).toBeVisible();
   await expect(report.printPdf()).toBeVisible();
-  await expect(page.getByText(/Tidak ada tombol submit/)).toBeVisible();
+  await expect(page.getByText(/tidak ada tombol submit/i)).toBeVisible();
 
   // Tidak ada satu pun kontrol kirim/submit otomatis.
   await expect(report.submitLikeControls()).toHaveCount(0);
