@@ -77,8 +77,8 @@ Halaman landing `/dashboard`: KPI lintas-program (program/temuan/terkonfirmasi/r
 | --- | --- | --- |
 | nuclei | DAST | mock + nyata (`-proxy`) |
 | subfinder → httpx → katana | recon | mock + nyata (httpx/katana via proxy) |
-| ffuf | DAST (content discovery) | mock + nyata (butuh `-ffuf-wordlist`) |
-| ZAP | DAST (proxy scanner) | mock + nyata (quickscan; upstream proxy config) |
+| ffuf | DAST (content discovery) | mock + nyata (wordlist bawaan ter-embed; override `-ffuf-wordlist`) |
+| ZAP | DAST (proxy scanner) | mock + nyata (mode `-zap-mode` quick/baseline/full; full = spider + active scan via Automation Framework; upstream proxy config) |
 | semgrep | SAST | mock + nyata (opt-in via `-sast-root`) |
 
 Pemilihan engine: `-engine mock` (default, semua mock, tanpa jaringan) · `-engine real` (nuclei + recon nyata) · daftar koma `-engine nuclei,ffuf,zap`. Semua engine nyata = subprocess tool eksternal yang **tidak di-bundle**; lihat README "Engine yang didukung & cara pasang".

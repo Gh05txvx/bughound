@@ -1,15 +1,15 @@
 package ffuf
 
 import (
-	"context"
+	"os"
 	"strings"
 	"testing"
 )
 
 func TestRunnerArgs(t *testing.T) {
-	r := &Runner{Wordlist: "/wl.txt", RateLimit: 20}
+	r := &Runner{RateLimit: 20}
 	r.UseProxy("127.0.0.1:9000")
-	joined := strings.Join(r.buildArgs("https://demo.test", "/tmp/o.json"), " ")
+	joined := strings.Join(r.buildArgs("https://demo.test", "/tmp/o.json", "/wl.txt"), " ")
 	for _, want := range []string{
 		"-u https://demo.test/FUZZ", "-w /wl.txt", "-of json", "-o /tmp/o.json",
 		"-s", "-x http://127.0.0.1:9000", "-rate 20",
@@ -19,14 +19,40 @@ func TestRunnerArgs(t *testing.T) {
 		}
 	}
 	// FUZZ yang sudah ada tidak digandakan.
-	if j := strings.Join(r.buildArgs("https://demo.test/FUZZ", "o"), " "); strings.Contains(j, "FUZZ/FUZZ") {
+	if j := strings.Join(r.buildArgs("https://demo.test/FUZZ", "o", "wl"), " "); strings.Contains(j, "FUZZ/FUZZ") {
 		t.Errorf("FUZZ eksisting tak boleh digandakan: %q", j)
 	}
 }
 
-func TestRunnerRequiresWordlist(t *testing.T) {
-	r := &Runner{} // tanpa wordlist
-	if _, err := r.Scan(context.Background(), "https://demo.test", "p", "run"); err == nil {
-		t.Error("run ffuf tanpa wordlist harus gagal (fail-closed)")
+func TestDefaultWordlistUsedWhenEmpty(t *testing.T) {
+	if len(DefaultWordlist()) == 0 {
+		t.Fatal("wordlist bawaan tak boleh kosong")
+	}
+	for _, want := range []string{"admin", ".env", ".git/config", "robots.txt"} {
+		if !strings.Contains(string(DefaultWordlist()), want) {
+			t.Errorf("wordlist bawaan harus memuat %q", want)
+		}
+	}
+
+	// Tanpa Wordlist: resolve ke berkas sementara berisi wordlist bawaan.
+	r := &Runner{}
+	path, cleanup, err := r.resolveWordlist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("baca wordlist bawaan: %v", err)
+	}
+	if !strings.Contains(string(data), "admin") {
+		t.Error("berkas wordlist sementara harus berisi entri bawaan")
+	}
+
+	// Dengan Wordlist: dipakai apa adanya (tanpa berkas sementara).
+	r2 := &Runner{Wordlist: "/custom/wl.txt"}
+	p2, _, err := r2.resolveWordlist()
+	if err != nil || p2 != "/custom/wl.txt" {
+		t.Errorf("wordlist kustom harus dipakai apa adanya; dapat %q (%v)", p2, err)
 	}
 }

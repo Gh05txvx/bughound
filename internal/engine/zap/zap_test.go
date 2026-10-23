@@ -82,3 +82,26 @@ func TestRunnerArgs(t *testing.T) {
 		}
 	}
 }
+
+func TestRunnerFullMode(t *testing.T) {
+	if (&Runner{}).mode() != "quick" {
+		t.Error("mode default harus quick")
+	}
+	r := &Runner{Mode: "full"}
+	if r.mode() != "full" {
+		t.Error("Mode=full harus terbaca")
+	}
+	r.UseProxy("127.0.0.1:9000")
+	args := strings.Join(r.buildFullArgs("/tmp/plan.yaml"), " ")
+	for _, want := range []string{"-autorun /tmp/plan.yaml", "network.connection.httpProxy.host=127.0.0.1"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("full args harus memuat %q; dapat %q", want, args)
+		}
+	}
+	plan := planYAML("https://demo.test", "/out", "report.json")
+	for _, want := range []string{"activeScan", "spider", "https://demo.test", "traditional-json", `reportFile: "report.json"`} {
+		if !strings.Contains(plan, want) {
+			t.Errorf("plan harus memuat %q", want)
+		}
+	}
+}

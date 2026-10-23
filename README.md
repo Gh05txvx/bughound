@@ -48,6 +48,8 @@ Flag:
 - `-auth` — password HTTP Basic (atau env `BUGHOUND_AUTH`); kosong = tanpa auth (hanya aman di localhost).
 - `-key` — path kunci master enkripsi secret (atau env `BUGHOUND_MASTER_KEY`); `-rotate-key` merotasinya.
 - `-sast-root` — root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini (path scope, default-deny).
+- `-ffuf-wordlist` — wordlist untuk engine ffuf nyata (kosong = wordlist bawaan).
+- `-zap-mode` — mode ZAP nyata: `quick` (default) · `baseline` · `full` (spider + active scan via Automation Framework).
 - `-version` — cetak versi build lalu keluar.
 
 ## Rilis (single binary)
@@ -77,16 +79,17 @@ bughound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak 
 | --- | --- | --- | --- |
 | **nuclei** | DAST (template) | mock + nyata | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
 | **subfinder → httpx → katana** | recon | mock + nyata | `go install github.com/projectdiscovery/{subfinder/v2/cmd/subfinder,httpx/cmd/httpx,katana/cmd/katana}@latest` |
-| **ffuf** | DAST (content discovery) | mock + nyata | `go install github.com/ffuf/ffuf/v2@latest` · butuh `-ffuf-wordlist` |
-| **ZAP** | DAST (proxy scanner) | mock + nyata | [OWASP ZAP](https://www.zaproxy.org/download/) (`zap.sh` di PATH) |
+| **ffuf** | DAST (content discovery) | mock + nyata | `go install github.com/ffuf/ffuf/v2@latest` · wordlist bawaan (override `-ffuf-wordlist`) |
+| **ZAP** | DAST (proxy scanner) | mock + nyata | [OWASP ZAP](https://www.zaproxy.org/download/) (`zap.sh` di PATH) · `-zap-mode quick\|baseline\|full` |
 | **semgrep** | SAST | mock + nyata | `pipx install semgrep` · aktif via `-sast-root` |
 
 Mengaktifkan engine nyata lewat flag `-engine` (daftar dipisah koma):
 
 ```bash
 go run ./cmd/bughound -engine real                       # nuclei + recon nyata
+go run ./cmd/bughound -engine nuclei,ffuf                # ffuf pakai wordlist bawaan
 go run ./cmd/bughound -engine nuclei,ffuf -ffuf-wordlist /path/wordlist.txt
-go run ./cmd/bughound -engine nuclei,zap                 # + OWASP ZAP
+go run ./cmd/bughound -engine nuclei,zap -zap-mode full  # + ZAP spider & active scan
 go run ./cmd/bughound -sast-root /path/ke/repo           # aktifkan SAST (semgrep)
 ```
 

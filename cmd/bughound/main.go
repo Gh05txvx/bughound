@@ -38,7 +38,8 @@ func main() {
 	authFlag := flag.String("auth", "", "password HTTP Basic auth (atau env BUGHOUND_AUTH); kosong = tanpa auth (hanya aman untuk localhost)")
 	rotateKey := flag.Bool("rotate-key", false, "rotasi kunci master: re-enkripsi semua secret ke kunci baru lalu keluar")
 	sastRoot := flag.String("sast-root", "", "root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini")
-	ffufWordlist := flag.String("ffuf-wordlist", "", "path wordlist untuk engine ffuf nyata (wajib bila -engine memuat ffuf)")
+	ffufWordlist := flag.String("ffuf-wordlist", "", "path wordlist untuk engine ffuf nyata (kosong = wordlist bawaan)")
+	zapMode := flag.String("zap-mode", "quick", "mode engine ZAP nyata: quick | baseline | full (full = spider + active scan)")
 	flag.Parse()
 
 	if *showVersion {
@@ -176,7 +177,7 @@ func main() {
 			case "ffuf":
 				engines = append(engines, &ffuf.Runner{Wordlist: *ffufWordlist})
 			case "zap":
-				engines = append(engines, &zap.Runner{})
+				engines = append(engines, &zap.Runner{Mode: *zapMode})
 			}
 		}
 		if len(engines) == 0 {
@@ -187,7 +188,10 @@ func main() {
 		log.Printf("PERINGATAN: hanya scan target yang sah (in-scope / lab / izin eksplisit)")
 		for _, n := range names {
 			if n == "ffuf" && strings.TrimSpace(*ffufWordlist) == "" {
-				log.Printf("PERINGATAN: ffuf dipilih tetapi -ffuf-wordlist kosong; scan ffuf akan gagal sampai diisi")
+				log.Printf("ffuf: -ffuf-wordlist kosong, memakai wordlist bawaan")
+			}
+			if n == "zap" {
+				log.Printf("zap: mode %q", strings.ToLower(strings.TrimSpace(*zapMode)))
 			}
 		}
 	}

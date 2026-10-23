@@ -16,12 +16,13 @@ import (
 // Runner adalah engine ffuf NYATA: mengeksekusi binary ffuf sebagai subprocess,
 // menulis hasil JSON ke berkas sementara, lalu menormalkannya lewat Parse.
 //
-// Butuh wordlist (-w). Koneksi keluar wajib lewat proxy egress bughound
-// (UseProxy -> ffuf -x), sehingga tiap request diperiksa scope guard SEBELUM
-// koneksi dibuat. Bukan default; aktifkan secara sadar untuk target yang sah.
+// Wordlist opsional: bila kosong, dipakai wordlist bawaan (DefaultWordlist).
+// Koneksi keluar wajib lewat proxy egress bughound (UseProxy -> ffuf -x),
+// sehingga tiap request diperiksa scope guard SEBELUM koneksi dibuat. Bukan
+// default; aktifkan secara sadar untuk target yang sah.
 type Runner struct {
 	Binary    string // default "ffuf"
-	Wordlist  string // -w (wajib untuk run nyata)
+	Wordlist  string // -w; kosong = wordlist bawaan
 	RateLimit int    // -rate (req/dtk); 0 = default ffuf
 	proxyAddr string
 }
@@ -38,9 +39,12 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	if bin == "" {
 		bin = "ffuf"
 	}
-	if strings.TrimSpace(r.Wordlist) == "" {
-		return nil, fmt.Errorf("ffuf: wordlist (-w) wajib diisi untuk run nyata")
+	wordlist, cleanupWL, err := r.resolveWordlist()
+	if err != nil {
+		return nil, fmt.Errorf("ffuf: wordlist: %w", err)
 	}
+	defer cleanupWL()
+
 	tmp, err := os.CreateTemp("", "ffuf-*.json")
 	if err != nil {
 		return nil, fmt.Errorf("ffuf: berkas sementara: %w", err)
@@ -49,7 +53,7 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	tmp.Close()
 	defer os.Remove(out)
 
-	cmd := exec.CommandContext(ctx, bin, r.buildArgs(target, out)...)
+	cmd := exec.CommandContext(ctx, bin, r.buildArgs(target, out, wordlist)...)
 	if r.proxyAddr != "" {
 		cmd.Env = egress.ProxyEnv(os.Environ(), "http://"+r.proxyAddr) // belt-and-suspenders
 	}
@@ -65,12 +69,12 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	return Parse(bytes.NewReader(data), program, runID)
 }
 
-func (r *Runner) buildArgs(target, out string) []string {
+func (r *Runner) buildArgs(target, out, wordlist string) []string {
 	u := target
 	if !strings.Contains(u, "FUZZ") {
 		u = strings.TrimRight(u, "/") + "/FUZZ"
 	}
-	args := []string{"-u", u, "-w", r.Wordlist, "-of", "json", "-o", out, "-s"}
+	args := []string{"-u", u, "-w", wordlist, "-of", "json", "-o", out, "-s"}
 	if r.proxyAddr != "" {
 		args = append(args, "-x", "http://"+r.proxyAddr)
 	}
