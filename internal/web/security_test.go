@@ -110,6 +110,77 @@ func TestAudit_CSRFBlocksForgedPost(t *testing.T) {
 	}
 }
 
+// Regresi: form POST non-HTMX yang SAH memakai token di field + `Origin: null`
+// (dikirim Chromium untuk navigasi form same-origin di bawah Referrer-Policy:
+// no-referrer) harus DITERIMA. Sebelum perbaikan, Origin "null" dianggap
+// mismatch dan menolak semua form non-HTMX. Pertahanan tetap: token wajib &
+// lintas-situs tetap ditolak.
+func TestAudit_CSRFFormFieldNullOriginAccepted(t *testing.T) {
+	srv, st := newTestServer(t)
+
+	// Ambil cookie token dari GET.
+	gr := httptest.NewRecorder()
+	srv.ServeHTTP(gr, httptest.NewRequest("GET", "/programs/edit", nil))
+	var tok string
+	for _, c := range gr.Result().Cookies() {
+		if c.Name == csrfCookie {
+			tok = c.Value
+		}
+	}
+	if tok == "" {
+		t.Fatal("tidak dapat token CSRF dari GET")
+	}
+	form := url.Values{"name": {"csrfnull"}, "in_scope": {"demo.test"}}
+
+	// Token di FIELD body (bukan header) + Origin: null + same-origin -> 303.
+	req := httptest.NewRequest("POST", "/programs", strings.NewReader(addField(form, "csrf", tok).Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: csrfCookie, Value: tok})
+	req.Header.Set("Origin", "null")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("form POST sah (Origin: null) harus 303, dapat %d", rec.Code)
+	}
+	if _, err := st.GetProgram(context.Background(), "csrfnull"); err != nil {
+		t.Fatalf("program harus tersimpan setelah POST diterima: %v", err)
+	}
+
+	// Token SALAH + Origin: null -> tetap 403 (token tetap wajib).
+	bad := httptest.NewRequest("POST", "/programs", strings.NewReader(addField(form, "csrf", "salah").Encode()))
+	bad.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	bad.AddCookie(&http.Cookie{Name: csrfCookie, Value: tok})
+	bad.Header.Set("Origin", "null")
+	badRec := httptest.NewRecorder()
+	srv.ServeHTTP(badRec, bad)
+	if badRec.Code != http.StatusForbidden {
+		t.Fatalf("token salah (Origin: null) harus tetap 403, dapat %d", badRec.Code)
+	}
+
+	// Origin: null + Sec-Fetch-Site: cross-site -> tetap 403 (lintas-situs ditolak).
+	xs := httptest.NewRequest("POST", "/programs", strings.NewReader(addField(form, "csrf", tok).Encode()))
+	xs.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	xs.AddCookie(&http.Cookie{Name: csrfCookie, Value: tok})
+	xs.Header.Set("Origin", "null")
+	xs.Header.Set("Sec-Fetch-Site", "cross-site")
+	xsRec := httptest.NewRecorder()
+	srv.ServeHTTP(xsRec, xs)
+	if xsRec.Code != http.StatusForbidden {
+		t.Fatalf("lintas-situs (Origin: null) harus 403, dapat %d", xsRec.Code)
+	}
+}
+
+// addField mengembalikan salinan v dengan satu field tambahan.
+func addField(v url.Values, k, val string) url.Values {
+	out := url.Values{}
+	for kk, vv := range v {
+		out[kk] = append([]string(nil), vv...)
+	}
+	out.Set(k, val)
+	return out
+}
+
 // Remediasi BH-F01: HTTP Basic auth saat AuthSecret diset.
 func TestAudit_BasicAuthEnforced(t *testing.T) {
 	st := store.NewMem()

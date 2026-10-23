@@ -178,7 +178,13 @@ func validCSRF(r *http.Request, cookieTok string) bool {
 	if r.Header.Get("Sec-Fetch-Site") == "cross-site" { // browser modern: tolak lintas-situs
 		return false
 	}
-	if o := r.Header.Get("Origin"); o != "" {
+	// Origin "null" diperlakukan seperti tak ada Origin: di bawah
+	// Referrer-Policy: no-referrer, Chromium mengirim `Origin: null` untuk POST
+	// form navigasi same-origin yang SAH. Menolaknya akan mematahkan semua form
+	// non-HTMX. Pertahanan tetap utuh: token double-submit (di bawah) tak bisa
+	// dipalsukan lintas-situs, dan POST lintas-situs sudah ditolak oleh
+	// Sec-Fetch-Site di atas.
+	if o := r.Header.Get("Origin"); o != "" && o != "null" {
 		if u, err := url.Parse(o); err != nil || u.Host != r.Host {
 			return false
 		}
