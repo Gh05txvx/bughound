@@ -5,8 +5,9 @@
 // ada Delete/Update, sehingga append-only secara kontrak.
 //
 // Kunci HMAC diturunkan dari master key (secret.Keyring.Subkey), jadi rantai
-// tak bisa dihitung ulang tanpa kunci. (Penghapusan SELURUH log — di luar
-// aplikasi — memerlukan anchoring eksternal; di luar lingkup M2.)
+// tak bisa dihitung ulang tanpa kunci. Penghapusan/trunkasi SELURUH log (di
+// luar aplikasi) menghasilkan rantai pendek yang masih valid internal; itu
+// ditutup oleh anchoring eksternal opsional (lihat anchor.go, BH-F06).
 package audit
 
 import (
@@ -77,6 +78,7 @@ type Result struct {
 	Count    int64
 	BrokenAt int64  // seq entri pertama yang rusak (0 bila OK)
 	Reason   string // alasan kerusakan (kosong bila OK)
+	Anchors  int64  // jumlah anchor eksternal yang dicek (0 bila tak ada anchorer)
 }
 
 // Log adalah audit trail append-only.

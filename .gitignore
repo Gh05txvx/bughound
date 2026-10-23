@@ -19,6 +19,9 @@
 *.db-shm
 *.db-wal
 
+# Attestation audit (anchor head rantai) — data runtime, bukan sumber
+*.anchor
+
 # Kunci master enkripsi secret — JANGAN PERNAH commit
 *.key
 bughound.key

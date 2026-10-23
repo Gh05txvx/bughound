@@ -143,13 +143,14 @@ func main() {
 		auditLog = audit.NewMemLog(auditKey)
 	} else {
 		apath := strings.TrimSuffix(*dbPath, ".db") + "-audit.db"
-		al, aerr := audit.OpenSQLiteLog(apath, auditKey)
+		anchorPath := strings.TrimSuffix(*dbPath, ".db") + "-audit.anchor"
+		al, aerr := audit.OpenSQLiteLog(apath, auditKey, audit.WithAnchorer(audit.NewFileAnchorer(anchorPath, auditKey)))
 		if aerr != nil {
 			log.Fatalf("bughound: audit log: %v", aerr)
 		}
 		defer al.Close()
 		auditLog = al
-		log.Printf("audit: trail %s (append-only, rantai HMAC)", apath)
+		log.Printf("audit: trail %s + anchor %s (append-only, rantai HMAC + attestation eksternal)", apath, anchorPath)
 	}
 
 	// Catat akses secret (Reveal) ke audit trail (tanpa nilai).

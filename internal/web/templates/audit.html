@@ -5,11 +5,11 @@
 <div class="report-head">
   <div>
     <h2>Audit trail</h2>
-    <p class="muted small">Append-only · rantai HMAC — penghapusan/perubahan entri terdeteksi.</p>
+    <p class="muted small">Append-only · rantai HMAC + attestation eksternal — perubahan, penghapusan entri, maupun trunkasi/rollback seluruh log terdeteksi.</p>
   </div>
   <div>
     {{if .Integrity.OK}}
-      <span class="badge st-confirmed">integritas OK · {{.Integrity.Count}} entri</span>
+      <span class="badge st-confirmed">integritas OK · {{.Integrity.Count}} entri{{if .Integrity.Anchors}} · {{.Integrity.Anchors}} anchor{{end}}</span>
     {{else}}
       <span class="badge sev-critical">INTEGRITAS RUSAK</span>
       <div class="muted small">seq {{.Integrity.BrokenAt}}: {{.Integrity.Reason}}</div>

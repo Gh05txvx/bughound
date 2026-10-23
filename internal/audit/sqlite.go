@@ -14,20 +14,34 @@ import (
 // SQLiteLog adalah Log berbasis SQLite (persisten, append-only secara kontrak:
 // tak ada metode hapus/ubah). Integritas dijaga rantai HMAC + Verify.
 type SQLiteLog struct {
-	db  *sql.DB
-	key []byte
-	now func() time.Time
-	mu  sync.Mutex // atomisitas seq + prev_hash
+	db       *sql.DB
+	key      []byte
+	now      func() time.Time
+	mu       sync.Mutex // atomisitas seq + prev_hash
+	anchorer Anchorer   // opsional: attestation eksternal (BH-F06)
+}
+
+// Option mengonfigurasi SQLiteLog saat dibuka.
+type Option func(*SQLiteLog)
+
+// WithAnchorer memasang attestation eksternal: head rantai di-anchor tiap
+// Append, dan Verify memeriksa store konsisten dengan anchor (deteksi
+// trunkasi/rollback/penghapusan total store — BH-F06).
+func WithAnchorer(a Anchorer) Option {
+	return func(l *SQLiteLog) { l.anchorer = a }
 }
 
 // OpenSQLiteLog membuka/membuat log pada path dengan kunci HMAC key.
-func OpenSQLiteLog(path string, key []byte) (*SQLiteLog, error) {
+func OpenSQLiteLog(path string, key []byte, opts ...Option) (*SQLiteLog, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("audit: buka log: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	l := &SQLiteLog{db: db, key: key, now: time.Now}
+	for _, o := range opts {
+		o(l)
+	}
 	if err := l.init(); err != nil {
 		db.Close()
 		return nil, err
@@ -88,6 +102,11 @@ func (l *SQLiteLog) Append(ctx context.Context, e Event) (Event, error) {
 	if err != nil {
 		return Event{}, fmt.Errorf("audit: simpan: %w", err)
 	}
+	// Attestation eksternal (best-effort): entri sudah tersimpan; kegagalan
+	// anchor tak membatalkan entri (rantai HMAC di store tetap utuh).
+	if l.anchorer != nil {
+		_ = l.anchorer.WriteAnchor(Anchor{Seq: e.Seq, Hash: e.Hash, At: e.Time})
+	}
 	return e, nil
 }
 
@@ -133,7 +152,23 @@ func (l *SQLiteLog) Verify(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return verifyChain(l.key, events), nil
+	res := verifyChain(l.key, events)
+	if !res.OK {
+		return res, nil
+	}
+	// Cross-check attestation eksternal: tangkap trunkasi/rollback/penghapusan
+	// total store yang tak terlihat oleh rantai internal (BH-F06).
+	if l.anchorer != nil {
+		anchors, aerr := l.anchorer.Anchors()
+		if aerr != nil {
+			return Result{}, fmt.Errorf("audit: baca anchor: %w", aerr)
+		}
+		if ares := verifyAnchors(l.key, events, anchors); !ares.OK {
+			return ares, nil
+		}
+		res.Anchors = int64(len(anchors))
+	}
+	return res, nil
 }
 
 func (l *SQLiteLog) Close() error { return l.db.Close() }
