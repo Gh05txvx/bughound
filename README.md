@@ -69,6 +69,29 @@ git tag -a v0.1.0 -m "bughound v0.1.0"
 git push origin v0.1.0
 ```
 
+## Engine yang didukung & cara pasang
+
+bughound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak di-bundle** ke dalam binary. Untuk scan nyata, pasang sendiri tool-nya, lalu bughound memanggilnya sebagai subprocess dan menegakkan scope guard, rate limiter, serta egress (koneksi keluar engine dipaksa lewat proxy scope-guard bughound). **Default `-engine mock`** tak butuh tool apa pun dan tak menyentuh jaringan.
+
+| Engine | Peran | Adapter | Pasang |
+| --- | --- | --- | --- |
+| **nuclei** | DAST (template) | mock + nyata | `go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest` |
+| **subfinder → httpx → katana** | recon | mock + nyata | `go install github.com/projectdiscovery/{subfinder/v2/cmd/subfinder,httpx/cmd/httpx,katana/cmd/katana}@latest` |
+| **ffuf** | DAST (content discovery) | mock + nyata | `go install github.com/ffuf/ffuf/v2@latest` · butuh `-ffuf-wordlist` |
+| **ZAP** | DAST (proxy scanner) | mock + nyata | [OWASP ZAP](https://www.zaproxy.org/download/) (`zap.sh` di PATH) |
+| **semgrep** | SAST | mock + nyata | `pipx install semgrep` · aktif via `-sast-root` |
+
+Mengaktifkan engine nyata lewat flag `-engine` (daftar dipisah koma):
+
+```bash
+go run ./cmd/bughound -engine real                       # nuclei + recon nyata
+go run ./cmd/bughound -engine nuclei,ffuf -ffuf-wordlist /path/wordlist.txt
+go run ./cmd/bughound -engine nuclei,zap                 # + OWASP ZAP
+go run ./cmd/bughound -sast-root /path/ke/repo           # aktifkan SAST (semgrep)
+```
+
+`mock` (default) menjalankan versi mock semua engine (tanpa jaringan). Menambah engine baru = menulis **satu adapter** (bangun argumen → subprocess `ProxyAware` → `Parse` ke skema temuan), lihat `internal/engine/*` dan `internal/sast`.
+
 ## Struktur
 
 ```

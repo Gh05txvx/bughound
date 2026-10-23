@@ -6,10 +6,15 @@ Berkas Markdown di folder ini adalah hasil ekspor dari Claude Docs, disusun agar
 
 ```
 docs/
-  specs/      — spesifikasi teknis fondasi (dirujuk semua komponen)
-  product/    — PRD produk & design spec
-  personas/   — 8 mode kerja (persona) yang bisa diminta pengguna
+  specs/            — spesifikasi teknis fondasi (dirujuk semua komponen)
+  product/          — PRD produk & design spec
+  personas/         — 8 mode kerja (persona) yang bisa diminta pengguna
+  audit/            — laporan audit keamanan pre-launch (BH-P03)
+  adr/              — architecture decision records
+  BH-CHANGELOG.md   — catatan perkembangan implementasi (apa yang sudah dibangun)
 ```
+
+> **Perkembangan implementasi:** lihat [`BH-CHANGELOG.md`](BH-CHANGELOG.md) untuk ringkasan apa saja yang sudah dibangun (M0–M3, rilis, keamanan, engine, dll).
 
 ## Daftar berkas
 
