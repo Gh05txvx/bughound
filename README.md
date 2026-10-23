@@ -95,6 +95,26 @@ go run ./cmd/bughound -sast-root /path/ke/repo           # aktifkan SAST (semgre
 
 `mock` (default) menjalankan versi mock semua engine (tanpa jaringan). Menambah engine baru = menulis **satu adapter** (bangun argumen → subprocess `ProxyAware` → `Parse` ke skema temuan), lihat `internal/engine/*` dan `internal/sast`.
 
+## Docker (engine ikut di dalam image)
+
+Karena engine nyata tidak di-bundle ke binary, cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan bughound + engine (nuclei, subfinder, httpx, katana, ffuf, semgrep; ZAP opsional). Di dalam container semua engine ada di `PATH`, jadi `-engine real`/`nuclei,ffuf,zap` langsung jalan.
+
+```bash
+docker build -t bughound .                                 # lean (tanpa ZAP)
+docker build --build-arg WITH_ZAP=true -t bughound:zap .   # + OWASP ZAP (berat, +JRE)
+
+# default: engine mock (aman), UI di http://127.0.0.1:8787
+docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data bughound
+
+# scan nyata (engine sudah ada di image) + auth
+docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data -e BUGHOUND_AUTH=rahasia \
+  bughound -addr 0.0.0.0:8787 -db /data/bughound.db -engine nuclei,ffuf -auth rahasia
+```
+
+Atau `docker compose up --build` (lihat `docker-compose.yml`; port sudah ke localhost, data di volume).
+
+**Keamanan:** petakan port ke `127.0.0.1` saja dan set `-auth`/`BUGHOUND_AUTH` bila diakses dari luar localhost. Default container tetap `-engine mock` (tak ada scan nyata) sampai engine dipilih eksplisit.
+
 ## Struktur
 
 ```

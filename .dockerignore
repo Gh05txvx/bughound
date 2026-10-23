@@ -1,0 +1,17 @@
+.git
+.github
+e2e/node_modules
+e2e/test-results
+e2e/playwright-report
+e2e/playwright/.cache
+dist
+bin
+*.exe
+bughound
+bughound-e2e
+*.db
+*.db-shm
+*.db-wal
+*.key
+*.anchor
+docs

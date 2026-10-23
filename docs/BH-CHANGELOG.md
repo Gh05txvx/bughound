@@ -83,6 +83,10 @@ Halaman landing `/dashboard`: KPI lintas-program (program/temuan/terkonfirmasi/r
 
 Pemilihan engine: `-engine mock` (default, semua mock, tanpa jaringan) · `-engine real` (nuclei + recon nyata) · daftar koma `-engine nuclei,ffuf,zap`. Semua engine nyata = subprocess tool eksternal yang **tidak di-bundle**; lihat README "Engine yang didukung & cara pasang".
 
+## Docker (engine ikut di image)
+
+`Dockerfile` multi-stage + `docker-compose.yml` + `.dockerignore`: image gabungan **bughound + engine** (nuclei/subfinder/httpx/katana/ffuf via `go install`, semgrep via pip; **ZAP opsional** `--build-arg WITH_ZAP=true`). Di dalam container engine ada di `PATH` → `-engine real` jalan tanpa pasang tool di host. Non-root, data di `/data`, default `-engine mock` (aman); port dipetakan ke localhost + `-auth` untuk akses non-lokal. Divalidasi `docker build --check` (bersih; base image resolve). Cocok untuk mesin tanpa engine terpasang tapi punya Docker. Lihat README "Docker".
+
 ## Catatan pola
 
 Menambah engine = menulis **satu adapter**: bangun argumen → subprocess (`ProxyAware` agar egress ditegakkan) → `Parse` output ke skema temuan. Contoh: `internal/engine/{nuclei,ffuf,zap}`, `internal/sast`. Triase/report/store/dashboard tak perlu disentuh.

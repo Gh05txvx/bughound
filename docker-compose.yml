@@ -1,0 +1,24 @@
+# bughound + engine dalam satu image. Port dipetakan ke localhost saja.
+#
+#   docker compose up --build          # default: engine mock (aman)
+#   BUGHOUND_AUTH=rahasia docker compose up --build
+#
+# Untuk scan nyata, hilangkan komentar `command:` di bawah (engine sudah ada di
+# dalam image) dan set BUGHOUND_AUTH.
+services:
+  bughound:
+    build:
+      context: .
+      args:
+        WITH_ZAP: "false" # set "true" untuk menyertakan OWASP ZAP (berat)
+    image: bughound:local
+    ports:
+      - "127.0.0.1:8787:8787" # localhost host saja; ganti bila sadar risikonya
+    volumes:
+      - bughound-data:/data
+    environment:
+      - BUGHOUND_AUTH=${BUGHOUND_AUTH:-}
+    # command: ["-addr","0.0.0.0:8787","-db","/data/bughound.db","-engine","nuclei,ffuf","-sast-root","/data/src"]
+
+volumes:
+  bughound-data:
