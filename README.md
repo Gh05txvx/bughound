@@ -6,9 +6,9 @@
 
 ## Status
 
-**M0 — Fondasi: selesai.** Pipeline inti berjalan ujung-ke-ujung dengan engine mock (tanpa koneksi jaringan). Roadmap M1–M3 (recon penuh, rate limiter, multi-engine, report) ada di PRD.
+**M0 — Fondasi: selesai.** Gate M0 terpenuhi: satu temuan mengalir *scan → normalisasi → tersimpan*; scope guard menolak target di luar scope (lapis input **dan** egress); nol koneksi ke aset nyata.
 
-Gate M0 terpenuhi: satu temuan mengalir *scan → normalisasi → tersimpan*; scope guard menolak target di luar scope (lapis input **dan** egress); nol koneksi ke aset nyata.
+**M1 & M2 berjalan** (dengan engine mock/target dummy): rate limiter di jalur eksekusi, pipeline recon, multi-engine (nuclei + ffuf), modul report (draft), job queue, vault secret terenkripsi, audit trail berantai, serta triase (aksi massal + filter) dan scope per-program yang persisten. Roadmap M3 ada di PRD.
 
 ## Prinsip yang mengikat
 
@@ -44,6 +44,29 @@ Flag:
 
 - `-addr` — alamat bind (default `127.0.0.1:8787`, localhost saja).
 - `-db` — path file SQLite (default `bughound.db`; kosongkan untuk in-memory).
+- `-engine` — `mock` (default, tanpa jaringan) atau `real` (engine nyata via proxy scope guard).
+- `-auth` — password HTTP Basic (atau env `BUGHOUND_AUTH`); kosong = tanpa auth (hanya aman di localhost).
+- `-key` — path kunci master enkripsi secret (atau env `BUGHOUND_MASTER_KEY`); `-rotate-key` merotasinya.
+- `-version` — cetak versi build lalu keluar.
+
+## Rilis (single binary)
+
+Seluruh aset (template + static + HTMX) di-embed lewat `go:embed` dan SQLite-nya pure-Go, jadi tiap rilis adalah **satu binary** tanpa dependensi runtime (CGO off, cross-compile bersih).
+
+```bash
+make build                    # binary lokal -> bin/bughound (versi dari git describe)
+make release                  # cross-compile semua target -> dist/ (+ checksum)
+make release VERSION=v0.1.0   # override versi yang di-embed
+```
+
+`make release` menghasilkan arsip untuk `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, dan `windows/amd64` beserta `SHA256SUMS.txt`. Versi di-inject ke binary (`-ldflags -X main.version`) dan tampil di footer UI serta `bughound -version`.
+
+**Tag & GitHub Release.** Push tag `vX.Y.Z` memicu workflow [`release.yml`](.github/workflows/release.yml) yang menjalankan test, membangun semua target, lalu membuat GitHub Release berisi arsip + checksum:
+
+```bash
+git tag -a v0.1.0 -m "bughound v0.1.0"
+git push origin v0.1.0
+```
 
 ## Struktur
 

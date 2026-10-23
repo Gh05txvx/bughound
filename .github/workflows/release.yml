@@ -1,0 +1,43 @@
+name: release
+
+# Rilis dipicu oleh tag versi (vX.Y.Z). Membangun single binary untuk semua
+# target, lalu membuat GitHub Release berisi arsip + checksum.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Test
+        run: go test ./... -count=1
+
+      - name: Build release artifacts
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: bash scripts/build-release.sh
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/*.tar.gz dist/*.zip dist/SHA256SUMS.txt \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

@@ -4,6 +4,8 @@
 *.exe
 *.test
 *.out
+/bin/
+/dist/
 
 # Database lokal (SQLite + WAL)
 *.db

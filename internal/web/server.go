@@ -50,6 +50,7 @@ type Server struct {
 	audit   audit.Log
 	authSecret string
 	queue   *jobs.Queue
+	version string
 
 	pages map[string]*template.Template
 }
@@ -65,6 +66,9 @@ type Config struct {
 	// AuthSecret, username diabaikan). Kosong = tanpa auth (hanya aman untuk
 	// bind localhost tepercaya).
 	AuthSecret string
+	// Version adalah versi build (di-inject lewat ldflags); kosong = "dev".
+	// Ditampilkan di footer UI agar rilis mudah dikenali.
+	Version string
 }
 
 // NewServer menyiapkan server dengan store dan engine yang diberikan.
@@ -72,7 +76,11 @@ func NewServer(cfg Config) (*Server, error) {
 	if len(cfg.Engines) == 0 {
 		return nil, fmt.Errorf("web: minimal satu engine DAST")
 	}
-	pages, err := parseTemplates()
+	version := cfg.Version
+	if version == "" {
+		version = "dev"
+	}
+	pages, err := parseTemplates(version)
 	if err != nil {
 		return nil, err
 	}
@@ -85,6 +93,7 @@ func NewServer(cfg Config) (*Server, error) {
 		audit:    cfg.Audit,
 		authSecret: cfg.AuthSecret,
 		queue:    jobs.New(4),
+		version:  version,
 		pages:    pages,
 	}
 	s.routes()
@@ -856,13 +865,14 @@ func safeFilename(s string) string {
 	return b.String()
 }
 
-func parseTemplates() (map[string]*template.Template, error) {
+func parseTemplates(version string) (map[string]*template.Template, error) {
 	funcs := template.FuncMap{
 		"sevClass":    func(s finding.Severity) string { return "sev-" + strings.ToLower(string(s)) },
 		"statusClass": func(s finding.Status) string { return "st-" + strings.ToLower(string(s)) },
 		"join":        func(v []string, sep string) string { return strings.Join(v, sep) },
 		"add":         func(a, b int) int { return a + b },
 		"strs":        func(v ...string) []string { return v },
+		"appVersion":  func() string { return version },
 	}
 	sets := map[string][]string{
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},

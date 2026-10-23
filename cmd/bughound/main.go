@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -23,14 +24,24 @@ import (
 	"bughound/internal/web"
 )
 
+// version di-inject saat build lewat -ldflags "-X main.version=...".
+// Default "dev" untuk build lokal (go build/go run).
+var version = "dev"
+
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8787", "alamat bind (default localhost saja)")
+	showVersion := flag.Bool("version", false, "cetak versi lalu keluar")
 	dbPath := flag.String("db", "bughound.db", "path file SQLite (kosongkan untuk in-memory/ephemeral)")
 	engineMode := flag.String("engine", "mock", "set engine: mock (nuclei+ffuf mock, tanpa jaringan) | real (nuclei + subfinder/httpx/katana nyata lewat proxy egress)")
 	keyPath := flag.String("key", "bughound.key", "path file kunci master untuk enkripsi secret (atau set env BUGHOUND_MASTER_KEY)")
 	authFlag := flag.String("auth", "", "password HTTP Basic auth (atau env BUGHOUND_AUTH); kosong = tanpa auth (hanya aman untuk localhost)")
 	rotateKey := flag.Bool("rotate-key", false, "rotasi kunci master: re-enkripsi semua secret ke kunci baru lalu keluar")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("bughound", version)
+		return
+	}
 
 	authSecret := *authFlag
 	if authSecret == "" {
@@ -160,7 +171,7 @@ func main() {
 		log.Printf("engine: mock (nuclei + ffuf) — tanpa koneksi jaringan")
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, AuthSecret: authSecret})
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, AuthSecret: authSecret, Version: version})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}
