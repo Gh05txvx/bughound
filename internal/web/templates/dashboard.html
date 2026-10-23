@@ -1,0 +1,46 @@
+{{define "content"}}
+<div class="report-head">
+  <div>
+    <h2>Dashboard</h2>
+    <p class="muted small">Ringkasan lintas-program. Hitungan mengecualikan duplikat.</p>
+  </div>
+</div>
+
+<div class="result-summary">
+  <span class="chip">{{.TotalPrograms}} program</span>
+  <span class="chip">{{.TotalFindings}} temuan</span>
+  <span class="chip good">{{.TotalConfirmed}} terkonfirmasi</span>
+  <span class="chip">{{.TotalRuns}} run</span>
+</div>
+
+{{if .Rows}}
+<table class="tbl">
+  <thead><tr>
+    <th>Program</th><th>Temuan</th><th>Konfirmasi</th>
+    <th title="critical">C</th><th title="high">H</th><th title="medium">M</th><th title="low">L</th><th title="info">I</th>
+    <th>Run</th><th>Terakhir</th><th></th>
+  </tr></thead>
+  <tbody>
+  {{range .Rows}}
+  <tr>
+    <td class="mono">{{.Program}}</td>
+    <td>{{.Total}}</td>
+    <td>{{if .Confirmed}}<span class="pill st-confirmed">{{.Confirmed}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
+    {{range .Severities}}<td>{{if .Count}}<span class="badge {{sevClass .Severity}}">{{.Count}}</span>{{else}}<span class="muted">·</span>{{end}}</td>{{end}}
+    <td class="muted">{{.Runs}}</td>
+    <td class="mono muted">{{if .HasActivity}}{{.LastAt.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
+    <td class="actions">
+      <a class="btn ghost" href="/findings?program={{.Program}}">findings</a>
+      <a class="btn ghost" href="/report?program={{.Program}}">report</a>
+      <a class="btn ghost" href="/scan?program={{.Program}}">scan</a>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty">
+  <p class="muted">Belum ada program atau temuan. <a href="/programs/edit">Buat program →</a> atau <a href="/scan">jalankan scan pertama →</a></p>
+</div>
+{{end}}
+{{end}}

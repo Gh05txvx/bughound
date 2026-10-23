@@ -12,6 +12,7 @@
     <aside class="sidebar">
       <div class="brand"><span class="logo">🐾</span> bughound</div>
       <nav>
+        <a href="/dashboard" class="{{if eq .Nav "dashboard"}}active{{end}}">Dashboard</a>
         <a href="/programs" class="{{if eq .Nav "programs"}}active{{end}}">Programs</a>
         <a href="/scan{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "scan"}}active{{end}}">Scan</a>
         <a href="/findings{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "findings"}}active{{end}}">Findings</a>

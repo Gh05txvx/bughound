@@ -207,8 +207,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticSub)))
 
 	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/scan", http.StatusFound)
+		http.Redirect(w, r, "/dashboard", http.StatusFound)
 	})
+	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /programs", s.handlePrograms)
 	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
@@ -759,6 +760,100 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "audit", "base", page)
 }
 
+// ---- Dashboard ----
+
+type dashSev struct {
+	Severity finding.Severity
+	Count    int
+}
+
+type dashRow struct {
+	Program     string
+	Total       int
+	Confirmed   int
+	New         int
+	Severities  []dashSev // urut critical..info (termasuk 0 untuk penjajaran kolom)
+	Runs        int
+	LastRun     string
+	LastAt      time.Time
+	HasActivity bool
+}
+
+type dashboardPage struct {
+	Nav            string
+	Title          string
+	Program        string
+	CSRF           string
+	Rows           []dashRow
+	TotalPrograms  int
+	TotalFindings  int
+	TotalConfirmed int
+	TotalRuns      int
+}
+
+var dashSevOrder = []finding.Severity{
+	finding.SeverityCritical, finding.SeverityHigh, finding.SeverityMedium,
+	finding.SeverityLow, finding.SeverityInfo,
+}
+
+// handleDashboard menampilkan ringkasan lintas-program (hitungan dari store;
+// read-only, tanpa jaringan). Duplikat dikecualikan (List default).
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	page := dashboardPage{Nav: "dashboard", Title: "Dashboard", CSRF: s.csrfToken(r)}
+
+	for _, name := range s.programNames(ctx) {
+		fs, _ := s.store.List(ctx, store.Query{Program: name})
+		row := dashRow{Program: name}
+		sevc := map[finding.Severity]int{}
+		runs := map[string]bool{}
+		for _, f := range fs {
+			row.Total++
+			sevc[f.Severity]++
+			switch f.Status {
+			case finding.StatusConfirmed:
+				row.Confirmed++
+			case finding.StatusNew:
+				row.New++
+			}
+			if f.RunID != "" {
+				runs[f.RunID] = true
+			}
+			if t := f.CreatedAt.Time; t.After(row.LastAt) {
+				row.LastAt = t
+				if f.RunID != "" {
+					row.LastRun = f.RunID
+				}
+			}
+		}
+		for _, sev := range dashSevOrder {
+			row.Severities = append(row.Severities, dashSev{Severity: sev, Count: sevc[sev]})
+		}
+		row.Runs = len(runs)
+		row.HasActivity = !row.LastAt.IsZero()
+
+		page.Rows = append(page.Rows, row)
+		page.TotalFindings += row.Total
+		page.TotalConfirmed += row.Confirmed
+		page.TotalRuns += row.Runs
+	}
+	page.TotalPrograms = len(page.Rows)
+
+	// Paling baru aktif di atas; tanpa aktivitas di bawah (urut nama).
+	sort.SliceStable(page.Rows, func(i, j int) bool {
+		a, b := page.Rows[i], page.Rows[j]
+		if a.HasActivity != b.HasActivity {
+			return a.HasActivity
+		}
+		if a.HasActivity && !a.LastAt.Equal(b.LastAt) {
+			return a.LastAt.After(b.LastAt)
+		}
+		return a.Program < b.Program
+	})
+
+	s.render(w, "dashboard", "base", page)
+}
+
 // ---- Settings / secrets ----
 
 type settingsPage struct {
@@ -921,6 +1016,7 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 		"appVersion":  func() string { return version },
 	}
 	sets := map[string][]string{
+		"dashboard":    {"templates/base.html", "templates/dashboard.html"},
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
 		"report":       {"templates/base.html", "templates/report.html"},
