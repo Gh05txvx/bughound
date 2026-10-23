@@ -80,9 +80,10 @@ type ScanRequest struct {
 	RunID   string   // dibuat otomatis bila kosong
 	Seeds   []string // domain awal untuk recon (opsional)
 	Targets []string // target eksplisit
-	// UpstreamProxy (opsional): koneksi keluar engine diteruskan lewat proxy ini
-	// SETELAH lolos scope guard (http/https/socks5). Kosong = dial langsung.
-	UpstreamProxy string
+	// ProxyChain (opsional): koneksi keluar engine diteruskan lewat rantai proxy
+	// ini (urut hop) SETELAH lolos scope guard (http/https/socks5). Kosong =
+	// dial langsung.
+	ProxyChain []string
 }
 
 // ScanResult meringkas hasil satu run.
@@ -125,9 +126,9 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 			egressDenied = append(egressDenied, ev)
 			egressMu.Unlock()
 		})
-		if req.UpstreamProxy != "" {
-			if err := px.SetUpstream(req.UpstreamProxy); err != nil {
-				return res, fmt.Errorf("orchestrator: proxy upstream tak valid (fail closed): %w", err)
+		if len(req.ProxyChain) > 0 {
+			if err := px.SetUpstream(req.ProxyChain...); err != nil {
+				return res, fmt.Errorf("orchestrator: rantai proxy tak valid (fail closed): %w", err)
 			}
 		}
 		addr, stop, err := px.Listen("127.0.0.1:0")

@@ -115,15 +115,22 @@ func isSpecialIP(a netip.Addr) bool {
 }
 
 // SetUpstream mengarahkan koneksi akhir (ke IP yang sudah di-scope-check &
-// di-pin) lewat proxy upstream. Skema: http/https (CONNECT), socks5/socks5h.
-// URL kosong mengembalikan ke dial langsung. Scope guard & IP-pinning TETAP di
-// hulu — upstream hanya mengganti jalur, bukan memintas keamanan.
-func (p *Proxy) SetUpstream(proxyURL string) error {
-	if strings.TrimSpace(proxyURL) == "" {
+// di-pin) lewat satu atau beberapa proxy (RANTAI, urut hop pertama→terakhir).
+// Skema tiap hop: http/https (CONNECT), socks5/socks5h. Tanpa URL (atau semua
+// kosong) kembali ke dial langsung. Scope guard & IP-pinning TETAP di hulu —
+// rantai hanya mengganti jalur, bukan memintas keamanan.
+func (p *Proxy) SetUpstream(proxyURLs ...string) error {
+	var chain []string
+	for _, u := range proxyURLs {
+		if strings.TrimSpace(u) != "" {
+			chain = append(chain, u)
+		}
+	}
+	if len(chain) == 0 {
 		p.finalDial = nil
 		return nil
 	}
-	d, err := upstreamDialer(proxyURL, p.dialer)
+	d, err := buildChainDialer(chain, p.dialer)
 	if err != nil {
 		return err
 	}

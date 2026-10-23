@@ -71,7 +71,7 @@ func TestUpstreamHTTPConnectTunnels(t *testing.T) {
 	target, stopT := echoServer(t)
 	defer stopT()
 
-	dial, err := upstreamDialer("http://"+proxyAddr, &net.Dialer{Timeout: 5 * time.Second})
+	dial, err := buildChainDialer([]string{"http://" + proxyAddr}, &net.Dialer{Timeout: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,17 +93,51 @@ func TestUpstreamHTTPConnectTunnels(t *testing.T) {
 	}
 }
 
-func TestUpstreamBadScheme(t *testing.T) {
-	if _, err := upstreamDialer("ftp://x:1", &net.Dialer{}); err == nil {
-		t.Error("skema tak didukung harus error")
+func TestChainTwoHops(t *testing.T) {
+	hop1, stop1 := fakeConnectProxy(t)
+	defer stop1()
+	hop2, stop2 := fakeConnectProxy(t)
+	defer stop2()
+	target, stopT := echoServer(t)
+	defer stopT()
+
+	dial, err := buildChainDialer([]string{"http://" + hop1, "http://" + hop2}, &net.Dialer{Timeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := upstreamDialer("::bad::", &net.Dialer{}); err == nil {
-		t.Error("URL tak valid harus error")
+	conn, err := dial(context.Background(), "tcp", target)
+	if err != nil {
+		t.Fatalf("dial via rantai 2-hop: %v", err)
+	}
+	defer conn.Close()
+	conn.Write([]byte("pong"))
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("baca echo via rantai: %v", err)
+	}
+	if string(buf) != "pong" {
+		t.Errorf("echo via rantai = %q, ingin pong", buf)
 	}
 }
 
-func TestUpstreamSOCKS5Constructs(t *testing.T) {
-	if _, err := upstreamDialer("socks5://127.0.0.1:9050", &net.Dialer{}); err != nil {
+func TestChainBadScheme(t *testing.T) {
+	if _, err := buildChainDialer([]string{"ftp://x:1"}, &net.Dialer{}); err == nil {
+		t.Error("skema tak didukung harus error")
+	}
+	if _, err := buildChainDialer([]string{"::bad::"}, &net.Dialer{}); err == nil {
+		t.Error("URL tak valid harus error")
+	}
+	if _, err := buildChainDialer([]string{"http://ok:1", "ftp://bad:2"}, &net.Dialer{}); err == nil {
+		t.Error("hop kedua tak valid harus menggagalkan rantai")
+	}
+	if _, err := buildChainDialer(nil, &net.Dialer{}); err == nil {
+		t.Error("rantai kosong harus error")
+	}
+}
+
+func TestChainSOCKS5Constructs(t *testing.T) {
+	if _, err := buildChainDialer([]string{"socks5://127.0.0.1:9050"}, &net.Dialer{}); err != nil {
 		t.Errorf("socks5 harus terbentuk: %v", err)
 	}
 }

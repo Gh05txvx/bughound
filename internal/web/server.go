@@ -322,7 +322,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	outScope := splitLines(r.FormValue("out_scope"))
 	targets := splitLines(r.FormValue("targets"))
 	rps := parseRPS(r.FormValue("rps"))
-	upstreamProxy := strings.TrimSpace(r.FormValue("upstream_proxy"))
+	proxyChain := splitLines(r.FormValue("upstream_proxy")) // satu hop per baris
 
 	page := scanPage{
 		Nav: "scan", Title: "Scan", Program: program,
@@ -331,7 +331,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		OutScope:      r.FormValue("out_scope"),
 		Targets:       r.FormValue("targets"),
 		OpenAPI:       r.FormValue("openapi"),
-		UpstreamProxy: upstreamProxy,
+		UpstreamProxy: r.FormValue("upstream_proxy"),
 		RPS:           r.FormValue("rps"),
 	}
 
@@ -392,7 +392,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		if len(seeds) > 0 && s.recon != nil {
 			o.UseRecon(s.recon)
 		}
-		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, UpstreamProxy: upstreamProxy})
+		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: proxyChain})
 		if err != nil {
 			s.auditAppend(ctx, audit.Event{Kind: "run.finish", Program: program, RunID: runID, Message: "gagal: " + err.Error()})
 			return jobs.Summary{}, err
