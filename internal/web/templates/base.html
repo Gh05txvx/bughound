@@ -15,6 +15,7 @@
         <a href="/dashboard" class="{{if eq .Nav "dashboard"}}active{{end}}">Dashboard</a>
         <a href="/programs" class="{{if eq .Nav "programs"}}active{{end}}">Programs</a>
         <a href="/scan{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "scan"}}active{{end}}">Scan</a>
+        <a href="/sast{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "sast"}}active{{end}}">SAST</a>
         <a href="/findings{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "findings"}}active{{end}}">Findings</a>
         <a href="/report{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "report"}}active{{end}}">Reports</a>
         <a href="/audit{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "audit"}}active{{end}}">Audit</a>

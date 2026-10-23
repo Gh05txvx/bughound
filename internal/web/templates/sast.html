@@ -1,0 +1,57 @@
+{{define "content"}}
+<div class="report-head">
+  <div>
+    <h2>SAST <span class="muted small">(analisis statis · plugin)</span></h2>
+    <p class="muted small">Membaca kode lokal, bukan URL. Analisis dikurung ke satu root (default-deny, tanpa jaringan). Temuan masuk ke skema yang sama &amp; muncul di Findings.</p>
+  </div>
+</div>
+
+{{if not .Enabled}}
+<div class="empty">
+  <p class="muted">SAST dinonaktifkan. Jalankan server dengan <code>-sast-root &lt;dir&gt;</code> untuk mengaktifkan dan mengurung analisis ke direktori itu.</p>
+</div>
+{{else}}
+
+{{if .Error}}<div class="errors"><p>{{.Error}}</p></div>{{end}}
+
+<div class="grid-2">
+  <form class="card" method="post" action="/sast/run">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <p class="muted small">Root in-scope: <span class="mono">{{.Root}}</span></p>
+
+    <label>Program</label>
+    <input type="text" name="program" value="{{.Program}}" autocomplete="off" required>
+
+    <label>Subpath <span class="muted small">(relatif terhadap root; kosong = seluruh root)</span></label>
+    <input type="text" name="subpath" value="{{.Subpath}}" autocomplete="off" placeholder=".">
+
+    <label>Adapter</label>
+    <select name="engine">
+      {{range .Engines}}<option value="{{.}}" {{if eq . $.Engine}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+
+    <div class="actions">
+      <button type="submit" class="btn primary">Jalankan SAST</button>
+      <span class="muted small">lokal · tanpa jaringan · tanpa auto-submit</span>
+    </div>
+  </form>
+
+  <div class="card">
+    <h2>Hasil</h2>
+    {{if .Result}}
+    <div class="result-summary">
+      <span class="chip ok">{{.Result.Engine}}</span>
+      <span class="chip">path: {{if .Result.Path}}{{.Result.Path}}{{else}}(root){{end}}</span>
+      <span class="chip good">{{.Result.Saved}} temuan baru</span>
+      <span class="chip">{{.Result.Duplicates}} duplikat</span>
+    </div>
+    <div class="actions">
+      <a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a>
+    </div>
+    {{else}}
+    <p class="muted">Pilih program, subpath, dan adapter lalu jalankan. Path di luar root ditolak (dicatat ke audit).</p>
+    {{end}}
+  </div>
+</div>
+{{end}}
+{{end}}

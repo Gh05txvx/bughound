@@ -29,6 +29,7 @@ import (
 	"bughound/internal/ratelimit"
 	"bughound/internal/recon"
 	"bughound/internal/report"
+	"bughound/internal/sast"
 	"bughound/internal/scope"
 	"bughound/internal/secret"
 	"bughound/internal/store"
@@ -51,6 +52,7 @@ type Server struct {
 	authSecret string
 	queue   *jobs.Queue
 	version string
+	sastRoot string // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
 
 	pages map[string]*template.Template
 }
@@ -69,6 +71,9 @@ type Config struct {
 	// Version adalah versi build (di-inject lewat ldflags); kosong = "dev".
 	// Ditampilkan di footer UI agar rilis mudah dikenali.
 	Version string
+	// SASTRoot, bila diset, mengaktifkan SAST dan MENGURUNG analisis ke dalam
+	// direktori ini (path scope, default-deny). Kosong = SAST nonaktif.
+	SASTRoot string
 }
 
 // NewServer menyiapkan server dengan store dan engine yang diberikan.
@@ -94,6 +99,7 @@ func NewServer(cfg Config) (*Server, error) {
 		authSecret: cfg.AuthSecret,
 		queue:    jobs.New(4),
 		version:  version,
+		sastRoot: strings.TrimSpace(cfg.SASTRoot),
 		pages:    pages,
 	}
 	s.routes()
@@ -210,6 +216,8 @@ func (s *Server) routes() {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 	})
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
+	s.mux.HandleFunc("GET /sast", s.handleSAST)
+	s.mux.HandleFunc("POST /sast/run", s.handleSASTRun)
 	s.mux.HandleFunc("GET /programs", s.handlePrograms)
 	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
@@ -854,6 +862,99 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "dashboard", "base", page)
 }
 
+// ---- SAST (plugin) ----
+
+type sastResult struct {
+	Engine     string
+	Path       string
+	Saved      int
+	Duplicates int
+}
+
+type sastPage struct {
+	Nav     string
+	Title   string
+	Program string
+	CSRF    string
+	Enabled bool
+	Root    string
+	Engines []string
+	Subpath string
+	Engine  string
+	Result  *sastResult
+	Error   string
+}
+
+func (s *Server) sastBasePage() sastPage {
+	return sastPage{
+		Nav: "sast", Title: "SAST", Enabled: s.sastRoot != "",
+		Root: s.sastRoot, Engines: sast.Names(), Engine: "mock",
+	}
+}
+
+func (s *Server) handleSAST(w http.ResponseWriter, r *http.Request) {
+	page := s.sastBasePage()
+	page.Program = strings.TrimSpace(r.URL.Query().Get("program"))
+	page.CSRF = s.csrfToken(r)
+	s.render(w, "sast", "base", page)
+}
+
+// handleSASTRun menjalankan satu adapter SAST pada subpath DI DALAM sastRoot.
+// Path scope ditegakkan oleh sast.Resolve (default-deny); analisis lokal, tak
+// menyentuh jaringan. Temuan masuk ke store & Findings seperti engine lain.
+func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	page := s.sastBasePage()
+	page.CSRF = s.csrfToken(r)
+	page.Program = strings.TrimSpace(r.FormValue("program"))
+	page.Subpath = strings.TrimSpace(r.FormValue("subpath"))
+	page.Engine = strings.TrimSpace(r.FormValue("engine"))
+
+	if !page.Enabled {
+		page.Error = "SAST dinonaktifkan. Jalankan server dengan -sast-root <dir>."
+		s.render(w, "sast", "base", page)
+		return
+	}
+	if page.Program == "" {
+		page.Error = "Program wajib diisi."
+		s.render(w, "sast", "base", page)
+		return
+	}
+	eng, ok := sast.Lookup(page.Engine)
+	if !ok {
+		page.Error = "Adapter SAST tidak dikenal: " + page.Engine
+		s.render(w, "sast", "base", page)
+		return
+	}
+
+	dir, err := sast.Resolve(s.sastRoot, page.Subpath)
+	if err != nil {
+		// Boundary ditolak — catat ke audit (seperti penolakan scope DAST).
+		if s.audit != nil {
+			_, _ = s.audit.Append(r.Context(), audit.Event{
+				Kind: "sast.scope", Program: page.Program, Target: page.Subpath,
+				Allowed: false, Reason: err.Error(), Layer: "path",
+			})
+		}
+		page.Error = "Path ditolak: " + err.Error()
+		s.render(w, "sast", "base", page)
+		return
+	}
+
+	runID := fmt.Sprintf("sast-%d", time.Now().UnixNano())
+	res, err := sast.Run(r.Context(), dir, page.Subpath, page.Program, runID, []sast.Engine{eng}, s.store, s.audit)
+	if err != nil {
+		page.Error = "Analisis gagal: " + err.Error()
+		s.render(w, "sast", "base", page)
+		return
+	}
+	page.Result = &sastResult{Engine: eng.Name(), Path: page.Subpath, Saved: res.Saved, Duplicates: res.Duplicates}
+	s.render(w, "sast", "base", page)
+}
+
 // ---- Settings / secrets ----
 
 type settingsPage struct {
@@ -1017,6 +1118,7 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 	}
 	sets := map[string][]string{
 		"dashboard":    {"templates/base.html", "templates/dashboard.html"},
+		"sast":         {"templates/base.html", "templates/sast.html"},
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
 		"report":       {"templates/base.html", "templates/report.html"},

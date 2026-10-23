@@ -47,6 +47,7 @@ Flag:
 - `-engine` — `mock` (default, tanpa jaringan) atau `real` (engine nyata via proxy scope guard).
 - `-auth` — password HTTP Basic (atau env `BUGHOUND_AUTH`); kosong = tanpa auth (hanya aman di localhost).
 - `-key` — path kunci master enkripsi secret (atau env `BUGHOUND_MASTER_KEY`); `-rotate-key` merotasinya.
+- `-sast-root` — root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini (path scope, default-deny).
 - `-version` — cetak versi build lalu keluar.
 
 ## Rilis (single binary)
@@ -77,6 +78,7 @@ internal/
   scope/             scope guard
   store/             persistensi (interface + Mem + SQLite)
   engine/            kontrak engine + adapter nuclei (+ mock)
+  sast/              analisis statis sebagai plugin (registry + mock + semgrep)
   orchestrator/      alur scan dengan penegakan scope dua lapis
   web/               UI (Go + HTMX + template, aset di-embed)
 docs/                spesifikasi, PRD, design spec, persona (lihat docs/README.md)

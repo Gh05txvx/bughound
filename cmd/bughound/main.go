@@ -36,6 +36,7 @@ func main() {
 	keyPath := flag.String("key", "bughound.key", "path file kunci master untuk enkripsi secret (atau set env BUGHOUND_MASTER_KEY)")
 	authFlag := flag.String("auth", "", "password HTTP Basic auth (atau env BUGHOUND_AUTH); kosong = tanpa auth (hanya aman untuk localhost)")
 	rotateKey := flag.Bool("rotate-key", false, "rotasi kunci master: re-enkripsi semua secret ke kunci baru lalu keluar")
+	sastRoot := flag.String("sast-root", "", "root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini")
 	flag.Parse()
 
 	if *showVersion {
@@ -172,7 +173,11 @@ func main() {
 		log.Printf("engine: mock (nuclei + ffuf) — tanpa koneksi jaringan")
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, AuthSecret: authSecret, Version: version})
+	if *sastRoot != "" {
+		log.Printf("sast: aktif, dikurung ke root %q (analisis statis lokal, tanpa jaringan)", *sastRoot)
+	}
+
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, AuthSecret: authSecret, Version: version, SASTRoot: *sastRoot})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}
