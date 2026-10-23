@@ -40,6 +40,8 @@ func main() {
 	sastRoot := flag.String("sast-root", "", "root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini")
 	ffufWordlist := flag.String("ffuf-wordlist", "", "path wordlist untuk engine ffuf nyata (kosong = wordlist bawaan)")
 	zapMode := flag.String("zap-mode", "quick", "mode engine ZAP nyata: quick | baseline | full (full = spider + active scan)")
+	grpcMode := flag.String("grpc", "mock", "engine enumerasi gRPC: mock | real (grpcurl, butuh binary)")
+	grpcPlaintext := flag.Bool("grpc-plaintext", false, "gRPC tanpa TLS (-plaintext) untuk engine gRPC nyata")
 	flag.Parse()
 
 	if *showVersion {
@@ -200,7 +202,12 @@ func main() {
 		log.Printf("sast: aktif, dikurung ke root %q (analisis statis lokal, tanpa jaringan)", *sastRoot)
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, AuthSecret: authSecret, Version: version, SASTRoot: *sastRoot})
+	grpcReal := strings.EqualFold(*grpcMode, "real") || strings.EqualFold(*grpcMode, "grpcurl")
+	if grpcReal {
+		log.Printf("grpc: enumerasi NYATA via grpcurl (plaintext=%t)", *grpcPlaintext)
+	}
+
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, AuthSecret: authSecret, Version: version, SASTRoot: *sastRoot, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}

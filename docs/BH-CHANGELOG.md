@@ -83,12 +83,17 @@ Halaman landing `/dashboard`: KPI lintas-program (program/temuan/terkonfirmasi/r
 | ffuf | DAST (content discovery) | mock + nyata (wordlist bawaan ter-embed; override `-ffuf-wordlist`) |
 | ZAP | DAST (proxy scanner) | mock + nyata (mode `-zap-mode` quick/baseline/full; full = spider + active scan via Automation Framework; upstream proxy config) |
 | semgrep | SAST | mock + nyata (opt-in via `-sast-root`) |
+| grpcurl | gRPC (enumerasi reflection) | mock + nyata (`-grpc real`) |
 
 Pemilihan engine: `-engine mock` (default, semua mock, tanpa jaringan) · `-engine real` (nuclei + recon nyata) · daftar koma `-engine nuclei,ffuf,zap`. Semua engine nyata = subprocess tool eksternal yang **tidak di-bundle**; lihat README "Engine yang didukung & cara pasang".
 
 ## Scan ter-arah OpenAPI/Swagger (API)
 
 `internal/openapi`: `Endpoints(spec, fallbackBase)` mem-parse OpenAPI 3 / Swagger 2 (JSON atau YAML via gopkg.in/yaml.v3, fallback encoding/json) → daftar URL endpoint absolut unik (base dari `servers`/`host`+`basePath`+`schemes` atau fallback target; param path `{id}`→`1`). Form Scan dapat kolom *OpenAPI/Swagger spec*: endpoint hasil ekspansi ditambahkan ke target dan **tetap lewat scope guard** (spec tak memintas batas). Menjangkau seluruh endpoint API terdokumentasi, bukan hanya crawling. Batas: belum fuzzing per-method/body (nuclei `-im openapi`) & belum gRPC. Uji `openapi/openapi_test.go` + `web/openapi_scan_test.go`.
+
+## gRPC — enumerasi via reflection
+
+`internal/engine/grpc`: `Mock` + `Runner` (grpcurl) + `buildFindings`. Memakai gRPC Server Reflection untuk mengenumerasi layanan & metode → temuan: `grpc-reflection-enabled` (Medium, CWE-200), `grpc-service-exposed`, `grpc-method-exposed` (Info); layanan infra (reflection/health/channelz) disaring. Halaman web **gRPC** (`GET /grpc`, `POST /grpc/run`): target `host:port`, tiap host **wajib lolos scope guard program** (grpcurl tak bisa diproxy → scope ditegakkan di hulu; penolakan dicatat audit `grpc.scope`). Engine: mock default, `-grpc real` (+ `-grpc-plaintext`) memakai grpcurl; ditambahkan ke image Docker. Cakupan = ENUMERASI; fuzzing invokasi metode belum. Uji `engine/grpc/grpc_test` + `web/grpc_test`.
 
 ## Docker (engine ikut di image)
 

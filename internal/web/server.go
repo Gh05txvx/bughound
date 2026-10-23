@@ -14,6 +14,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -23,6 +24,7 @@ import (
 
 	"bughound/internal/audit"
 	"bughound/internal/engine"
+	"bughound/internal/engine/grpc"
 	"bughound/internal/finding"
 	"bughound/internal/jobs"
 	"bughound/internal/orchestrator"
@@ -54,6 +56,7 @@ type Server struct {
 	queue   *jobs.Queue
 	version string
 	sastRoot string // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
+	grpcEngine engine.Engine // enumerasi gRPC (mock default; grpcurl bila -grpc real)
 
 	pages map[string]*template.Template
 }
@@ -75,6 +78,10 @@ type Config struct {
 	// SASTRoot, bila diset, mengaktifkan SAST dan MENGURUNG analisis ke dalam
 	// direktori ini (path scope, default-deny). Kosong = SAST nonaktif.
 	SASTRoot string
+	// GRPCReal memakai grpcurl nyata untuk enumerasi gRPC (butuh binary);
+	// default mock. GRPCPlaintext mengirim -plaintext (gRPC tanpa TLS).
+	GRPCReal      bool
+	GRPCPlaintext bool
 }
 
 // NewServer menyiapkan server dengan store dan engine yang diberikan.
@@ -102,6 +109,11 @@ func NewServer(cfg Config) (*Server, error) {
 		version:  version,
 		sastRoot: strings.TrimSpace(cfg.SASTRoot),
 		pages:    pages,
+	}
+	if cfg.GRPCReal {
+		s.grpcEngine = &grpc.Runner{Plaintext: cfg.GRPCPlaintext}
+	} else {
+		s.grpcEngine = grpc.Mock{}
 	}
 	s.routes()
 	return s, nil
@@ -219,6 +231,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /sast", s.handleSAST)
 	s.mux.HandleFunc("POST /sast/run", s.handleSASTRun)
+	s.mux.HandleFunc("GET /grpc", s.handleGRPC)
+	s.mux.HandleFunc("POST /grpc/run", s.handleGRPCRun)
 	s.mux.HandleFunc("GET /programs", s.handlePrograms)
 	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
@@ -973,6 +987,97 @@ func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "sast", "base", page)
 }
 
+// ---- gRPC (enumerasi) ----
+
+type grpcResult struct {
+	Scanned int
+	Saved   int
+	Denied  []string
+}
+
+type grpcPage struct {
+	Nav        string
+	Title      string
+	Program    string
+	CSRF       string
+	Programs   []string
+	EngineName string
+	Targets    string
+	Result     *grpcResult
+	Error      string
+}
+
+func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
+	page := grpcPage{
+		Nav: "grpc", Title: "gRPC", CSRF: s.csrfToken(r),
+		Program: strings.TrimSpace(r.URL.Query().Get("program")),
+		Programs: s.programNames(r.Context()), EngineName: s.grpcEngine.Name(),
+	}
+	s.render(w, "grpc", "base", page)
+}
+
+// handleGRPCRun mengenumerasi target gRPC (host:port) via reflection. Tiap host
+// WAJIB lolos scope guard program (grpcurl tak bisa diproxy; scope ditegakkan di
+// hulu). Temuan masuk store & Findings seperti engine lain.
+func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	page := grpcPage{
+		Nav: "grpc", Title: "gRPC", CSRF: s.csrfToken(r),
+		Program: strings.TrimSpace(r.FormValue("program")),
+		Targets: r.FormValue("targets"), Programs: s.programNames(r.Context()),
+		EngineName: s.grpcEngine.Name(),
+	}
+	targets := splitLines(r.FormValue("targets"))
+	if page.Program == "" || len(targets) == 0 {
+		page.Error = "Program dan minimal satu target host:port wajib diisi."
+		s.render(w, "grpc", "base", page)
+		return
+	}
+	prog, err := s.store.GetProgram(r.Context(), page.Program)
+	if err != nil {
+		page.Error = "Program belum punya scope tersimpan — simpan scope-nya dulu di halaman Programs."
+		s.render(w, "grpc", "base", page)
+		return
+	}
+	guard, errs := scope.New(prog.InScope, prog.OutScope)
+	if len(errs) > 0 {
+		page.Error = "Scope program tak valid: " + errs[0].Error()
+		s.render(w, "grpc", "base", page)
+		return
+	}
+
+	runID := fmt.Sprintf("grpc-%d", time.Now().UnixNano())
+	res := &grpcResult{}
+	for _, tgt := range targets {
+		host := tgt
+		if h, _, e := net.SplitHostPort(tgt); e == nil {
+			host = h
+		}
+		if d := guard.Evaluate(host); !d.Allowed {
+			res.Denied = append(res.Denied, tgt)
+			s.auditAppend(r.Context(), audit.Event{Kind: "grpc.scope", Program: page.Program, RunID: runID, Target: tgt, Allowed: false, Reason: string(d.Reason), Layer: "input"})
+			continue
+		}
+		s.auditAppend(r.Context(), audit.Event{Kind: "grpc.scope", Program: page.Program, RunID: runID, Target: tgt, Allowed: true, Layer: "input"})
+		fs, serr := s.grpcEngine.Scan(r.Context(), tgt, page.Program, runID)
+		if serr != nil {
+			page.Error = "Enumerasi gagal untuk " + tgt + ": " + serr.Error()
+			continue
+		}
+		res.Scanned++
+		for _, f := range fs {
+			if sr, e := s.store.Save(r.Context(), f); e == nil && !sr.Deduplicated {
+				res.Saved++
+			}
+		}
+	}
+	page.Result = res
+	s.render(w, "grpc", "base", page)
+}
+
 // ---- Settings / secrets ----
 
 type settingsPage struct {
@@ -1137,6 +1242,7 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 	sets := map[string][]string{
 		"dashboard":    {"templates/base.html", "templates/dashboard.html"},
 		"sast":         {"templates/base.html", "templates/sast.html"},
+		"grpc":         {"templates/base.html", "templates/grpc.html"},
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
 		"report":       {"templates/base.html", "templates/report.html"},

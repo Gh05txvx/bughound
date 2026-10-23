@@ -1,0 +1,45 @@
+{{define "content"}}
+<div class="report-head">
+  <div>
+    <h2>gRPC <span class="muted small">(enumerasi via reflection)</span></h2>
+    <p class="muted small">Enumerasi layanan/metode gRPC lewat Server Reflection. Tiap target host:port wajib lolos scope guard program. Engine: <b>{{.EngineName}}</b>.</p>
+  </div>
+</div>
+
+{{if .Error}}<div class="errors"><p>{{.Error}}</p></div>{{end}}
+
+<div class="grid-2">
+  <form class="card" method="post" action="/grpc/run">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Program <span class="muted small">(scope-nya dipakai untuk mengecek target)</span></label>
+    <input type="text" name="program" value="{{.Program}}" autocomplete="off" required list="grpc-progs">
+    <datalist id="grpc-progs">{{range .Programs}}<option value="{{.}}">{{end}}</datalist>
+
+    <label>Target gRPC <span class="muted small">(host:port, satu per baris)</span></label>
+    <textarea name="targets" rows="4" spellcheck="false" placeholder="api.demo.test:9090">{{.Targets}}</textarea>
+
+    <div class="actions">
+      <button type="submit" class="btn primary">Enumerasi gRPC</button>
+      <span class="muted small">reflection · tanpa auto-submit</span>
+    </div>
+  </form>
+
+  <div class="card">
+    <h2>Hasil</h2>
+    {{if .Result}}
+    <div class="result-summary">
+      <span class="chip ok">{{.Result.Scanned}} target discan</span>
+      <span class="chip good">{{.Result.Saved}} temuan baru</span>
+      <span class="chip warn">{{len .Result.Denied}} ditolak</span>
+    </div>
+    {{if .Result.Denied}}
+    <h3>Ditolak scope guard</h3>
+    <ul class="list">{{range .Result.Denied}}<li class="mono">{{.}}</li>{{end}}</ul>
+    {{end}}
+    {{if .Program}}<div class="actions"><a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a></div>{{end}}
+    {{else}}
+    <p class="muted">Masukkan program + target host:port, lalu enumerasi. Butuh server dengan gRPC reflection aktif (mode nyata); mode mock menghasilkan contoh.</p>
+    {{end}}
+  </div>
+</div>
+{{end}}
