@@ -13,11 +13,11 @@
   --fg: #dde3ee;
   --fg-dim: #8b93a7;
   --fg-mute: #5f6678;
-  /* Aksen tunggal: aksi primer & elemen terpilih */
-  --accent: #4f8cff;
-  --accent-2: #6ba1ff;
-  --accent-dim: #1c2b49;
-  --accent-ring: rgba(79, 140, 255, .32);
+  /* Aksen: indigo-violet (ala Inspectiv/HackerOne) untuk aksi primer & elemen terpilih */
+  --accent: #7c6cff;
+  --accent-2: #9a8dff;
+  --accent-dim: #241f46;
+  --accent-ring: rgba(124, 108, 255, .34);
   /* Status */
   --ok: #37b36b;
   --ok-dim: #112d1c;
@@ -77,7 +77,7 @@ a:hover { color: var(--accent); text-decoration: underline; }
 }
 .brand { font-weight: 600; font-size: 15px; letter-spacing: .2px; display: flex; align-items: center; gap: 9px; padding: 0 4px; }
 .brand .logo { filter: grayscale(.2); }
-.brand .logo-img { border-radius: 50%; object-fit: cover; flex: 0 0 auto; box-shadow: 0 0 0 1px var(--line-2), 0 0 14px rgba(79, 140, 255, .14); }
+.brand .logo-img { border-radius: 50%; object-fit: cover; flex: 0 0 auto; box-shadow: 0 0 0 1px var(--line-2), 0 0 14px rgba(124, 108, 255, .16); }
 
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
 .sidebar nav a {
@@ -87,7 +87,7 @@ a:hover { color: var(--accent); text-decoration: underline; }
   transition: background var(--tr), color var(--tr);
 }
 .sidebar nav a:hover { background: var(--bg-2); color: var(--fg); }
-.sidebar nav a.active { background: var(--accent-dim); color: #cfe0ff; }
+.sidebar nav a.active { background: var(--accent-dim); color: #d8d2ff; }
 .sidebar nav a.active::before {
   content: ""; position: absolute; left: -12px; top: 7px; bottom: 7px; width: 3px;
   background: var(--accent); border-radius: 0 3px 3px 0;
@@ -114,7 +114,7 @@ a:hover { color: var(--accent); text-decoration: underline; }
 
 /* ---- layout ---- */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
-.card { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+.card { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-1); }
 .card h2 { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
 
 /* ---- form ---- */
@@ -141,7 +141,7 @@ input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; c
 }
 .btn:hover { border-color: var(--accent); background: var(--bg-elev); }
 .btn:active { transform: translateY(1px); }
-.btn.primary { background: linear-gradient(180deg, var(--accent-2), var(--accent)); border-color: var(--accent); color: #06122b; font-weight: 600; }
+.btn.primary { background: linear-gradient(180deg, var(--accent-2), var(--accent)); border-color: var(--accent); color: #1b1442; font-weight: 600; }
 .btn.primary:hover { filter: brightness(1.07); }
 .btn.good { background: var(--ok-dim); border-color: #2c5a3c; color: #9be3b6; }
 .btn.good:hover { border-color: var(--ok); }
@@ -154,7 +154,7 @@ a.btn:hover { text-decoration: none; }
 /* ---- result / chips ---- */
 .result-summary { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; align-items: center; }
 .chip { background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--radius-pill); padding: 2px 10px; font-size: 11px; color: var(--fg-dim); }
-.chip.ok { color: #cfe0ff; border-color: #30466e; background: var(--accent-dim); }
+.chip.ok { color: #d8d2ff; border-color: #3b3576; background: var(--accent-dim); }
 .chip.good { background: var(--ok-dim); border-color: #2c5a3c; color: #9be3b6; }
 .chip.warn { background: var(--warn-dim); border-color: #5d4a1f; color: #e6c877; }
 .errors { border-left: 3px solid var(--danger); background: var(--danger-dim); padding: 8px 12px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin: 10px 0; }
@@ -199,10 +199,10 @@ a.btn:hover { text-decoration: none; }
 .prog-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 .tab { text-decoration: none; color: var(--fg-dim); padding: 5px 11px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); font-size: 12px; transition: background var(--tr), color var(--tr); }
 .tab:hover { color: var(--fg); background: var(--bg-2); text-decoration: none; }
-.tab.active { background: var(--accent-dim); color: #cfe0ff; border-color: #30466e; }
+.tab.active { background: var(--accent-dim); color: #d8d2ff; border-color: #3b3576; }
 .master-detail { display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; align-items: start; }
-.master { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.detail { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; min-height: 220px; }
+.master { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-1); }
+.detail { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px; min-height: 220px; box-shadow: var(--shadow-1); }
 .empty { padding: 40px 24px; text-align: center; color: var(--fg-dim); }
 
 .detail-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -225,9 +225,9 @@ details.card summary { cursor: pointer; color: var(--fg-dim); }
 details.card summary:hover { color: var(--fg); }
 
 /* ---- login (saat -auth diset) ---- */
-.login-body { display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: radial-gradient(1100px 560px at 50% -12%, #16203a 0%, var(--bg) 58%); }
+.login-body { display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background: radial-gradient(1100px 560px at 50% -12%, #1c1838 0%, var(--bg) 58%); }
 .login-card { width: 340px; max-width: 90vw; background: linear-gradient(180deg, var(--bg-1), var(--bg)); border: 1px solid var(--line-2); border-radius: 14px; padding: 32px 28px; text-align: center; box-shadow: var(--shadow-2); }
-.login-logo { border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1px var(--line-2), 0 0 30px rgba(79, 140, 255, .25); margin-bottom: 10px; }
+.login-logo { border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1px var(--line-2), 0 0 30px rgba(124, 108, 255, .28); margin-bottom: 10px; }
 .login-card h1 { margin: 8px 0 2px; font-size: 21px; letter-spacing: .2px; }
 .login-card form { text-align: left; margin-top: 18px; }
 .login-submit { width: 100%; margin-top: 12px; }
@@ -256,4 +256,109 @@ details.card summary:hover { color: var(--fg); }
 .inline-form input[type=password] { width: 150px; padding: 4px 8px; font-size: 12px; }
 .btn.ghost.danger { color: var(--danger); }
 .btn.ghost.danger:hover { color: #fff; border-color: var(--danger); background: var(--danger-dim); }
-.chip.user { color: #cfe0ff; border-color: #30466e; background: var(--accent-dim); font-family: var(--mono); }
+.chip.user { color: #d8d2ff; border-color: #3b3576; background: var(--accent-dim); font-family: var(--mono); }
+
+/* ============================================================
+   UI uplift — KPI stat cards, severity bars, grouped icon sidebar,
+   panels. Referensi: Inspectiv DAST / HackerOne / exon. Komponen
+   BARU; kelas lama tidak diubah agar halaman lain tetap konsisten.
+   ============================================================ */
+:root {
+  --radius-lg: 14px;
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, .02), 0 10px 26px rgba(0, 0, 0, .38);
+  --violet: #8a93ff;
+  --high: #ff7a52;
+  --low: #6ea8ff;
+  --info: #58627c;
+}
+
+/* ikon inline (sprite SVG di base.html) */
+.ico { width: 16px; height: 16px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* tombol: dukung ikon + teks */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; }
+a.btn { display: inline-flex; }
+
+/* sidebar: ikon per item + kelompok bagian */
+.sidebar nav { gap: 0; }
+.sidebar nav a { display: flex; align-items: center; gap: 10px; }
+.sidebar nav a .ico { opacity: .72; transition: opacity var(--tr); }
+.sidebar nav a:hover .ico, .sidebar nav a.active .ico { opacity: 1; }
+.nav-group { display: flex; flex-direction: column; gap: 2px; }
+.nav-group + .nav-group { margin-top: 11px; }
+.ng-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--fg-mute); padding: 6px 11px 3px; }
+
+/* ---- KPI stat cards ---- */
+.statrow { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.statcard {
+  position: relative; overflow: hidden;
+  background: linear-gradient(162deg, var(--bg-elev), var(--bg-1) 72%);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  padding: 15px 16px; box-shadow: var(--shadow-1);
+  transition: border-color var(--tr), transform var(--tr);
+}
+.statcard::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0; transition: opacity var(--tr); }
+.statcard:hover { border-color: var(--line-2); transform: translateY(-1px); }
+.statcard:hover::after { opacity: .75; }
+.sc-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.sc-label { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-dim); }
+.sc-ico { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--accent-dim); color: var(--accent-2); }
+.sc-ico.ok { background: var(--ok-dim); color: #7fd8a4; }
+.sc-ico.violet { background: #221f3e; color: var(--violet); }
+.sc-kpi { font-family: var(--mono); font-feature-settings: "tnum" 1; font-size: 30px; font-weight: 600; line-height: 1; margin-top: 12px; }
+.sc-sub { margin-top: 6px; font-size: 11px; color: var(--fg-dim); }
+
+/* ---- panel (kartu dengan header + aksi) ---- */
+.panel { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-1); overflow: hidden; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.panel-head h2, .panel-head h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.panel-body { padding: 15px 16px; }
+.panel-body.flush { padding: 0; }
+.panel .tbl th { background: var(--bg-1); }
+.grid-dash { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px; align-items: start; }
+
+/* ---- severity bar (stacked, proporsional lewat flex-grow) ---- */
+.sevbar { display: flex; height: 10px; border-radius: var(--radius-pill); overflow: hidden; background: var(--bg-2); border: 1px solid var(--line); }
+.sevbar.lg { height: 16px; }
+.sevbar.sevmini { display: inline-flex; width: 118px; vertical-align: middle; height: 8px; }
+.sevbar .seg { min-width: 0; }
+.seg.sev-critical, .lg-dot.sev-critical { background: var(--crit); }
+.seg.sev-high,     .lg-dot.sev-high     { background: var(--high); }
+.seg.sev-medium,   .lg-dot.sev-medium   { background: var(--warn); }
+.seg.sev-low,      .lg-dot.sev-low       { background: var(--low); }
+.seg.sev-info,     .lg-dot.sev-info     { background: var(--info); }
+.sevlegend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px; }
+.lg-item { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--fg-dim); text-transform: capitalize; }
+.lg-dot { width: 9px; height: 9px; border-radius: 3px; flex: 0 0 auto; }
+.lg-item b { color: var(--fg); font-family: var(--mono); font-feature-settings: "tnum" 1; }
+.lg-item.zero { opacity: .4; }
+
+/* aksi ringkas di baris tabel */
+.row-actions { display: flex; gap: 6px; }
+.prog { font-weight: 600; color: var(--fg); }
+
+@media (max-width: 1100px) { .grid-dash { grid-template-columns: 1fr; } }
+@media (max-width: 620px) { .statrow { grid-template-columns: 1fr; } }
+
+/* ---- chip filter severity (quick-jump ke Findings) ---- */
+.fchips { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.fchip { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: var(--radius-pill); border: 1px solid var(--line-2); background: var(--bg-2); color: var(--fg-dim); font-size: 11.5px; text-transform: capitalize; transition: border-color var(--tr), color var(--tr); }
+.fchip:hover { color: var(--fg); border-color: var(--accent); text-decoration: none; }
+.fchip b { color: var(--fg); font-family: var(--mono); font-feature-settings: "tnum" 1; }
+.fchip.zero { opacity: .4; }
+
+/* ---- donut komposisi severity (conic-gradient) ---- */
+.donutwrap { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.donut { width: 128px; height: 128px; border-radius: 50%; flex: 0 0 auto; display: grid; place-items: center; position: relative; }
+.donut::before { content: ""; position: absolute; inset: 15px; border-radius: 50%; background: var(--bg-1); box-shadow: inset 0 0 0 1px var(--line); }
+.donut-mid { position: relative; text-align: center; }
+.donut-mid .n { font-family: var(--mono); font-feature-settings: "tnum" 1; font-size: 25px; font-weight: 600; line-height: 1; }
+.donut-mid .l { font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-dim); margin-top: 3px; }
+.donutwrap .sevlegend { margin-top: 0; flex-direction: column; gap: 8px; }
+
+/* ---- responsif: auto-fit + anti-tabrakan (monitor besar & laptop) ---- */
+.bodywrap { max-width: 1680px; margin-inline: auto; }
+.grid-dash > .panel { min-width: 0; }            /* panel boleh menyusut; tabel scroll sendiri */
+.panel-body.flush { overflow-x: auto; }          /* tabel lebar scroll di dalam panel, tak dorong halaman */
+.topbar { height: auto; min-height: 54px; flex-wrap: wrap; row-gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+.tbl { min-width: max-content; }                 /* kolom tak gepeng; container yang scroll */

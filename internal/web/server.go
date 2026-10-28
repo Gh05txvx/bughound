@@ -1251,7 +1251,10 @@ type dashboardPage struct {
 	TotalPrograms  int
 	TotalFindings  int
 	TotalConfirmed int
+	TotalNew       int
 	TotalRuns      int
+	SevTotals      []dashSev    // total per severity lintas-program (untuk bar ringkasan)
+	SevDonut       template.CSS // conic-gradient komposisi severity (aman: template.CSS)
 }
 
 var dashSevOrder = []finding.Severity{
@@ -1264,6 +1267,7 @@ var dashSevOrder = []finding.Severity{
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	page := dashboardPage{Nav: "dashboard", Title: "Dashboard", CSRF: s.csrfToken(r)}
+	sevTotal := map[finding.Severity]int{}
 
 	for _, name := range s.programNames(ctx) {
 		fs, _ := s.store.List(ctx, store.Query{Program: name})
@@ -1291,6 +1295,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, sev := range dashSevOrder {
 			row.Severities = append(row.Severities, dashSev{Severity: sev, Count: sevc[sev]})
+			sevTotal[sev] += sevc[sev]
 		}
 		row.Runs = len(runs)
 		row.HasActivity = !row.LastAt.IsZero()
@@ -1298,9 +1303,34 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		page.Rows = append(page.Rows, row)
 		page.TotalFindings += row.Total
 		page.TotalConfirmed += row.Confirmed
+		page.TotalNew += row.New
 		page.TotalRuns += row.Runs
 	}
 	page.TotalPrograms = len(page.Rows)
+	for _, sev := range dashSevOrder {
+		page.SevTotals = append(page.SevTotals, dashSev{Severity: sev, Count: sevTotal[sev]})
+	}
+	if page.TotalFindings > 0 {
+		sevVar := map[finding.Severity]string{
+			finding.SeverityCritical: "var(--crit)",
+			finding.SeverityHigh:     "var(--high)",
+			finding.SeverityMedium:   "var(--warn)",
+			finding.SeverityLow:      "var(--low)",
+			finding.SeverityInfo:     "var(--info)",
+		}
+		acc := 0
+		parts := make([]string, 0, len(page.SevTotals))
+		for _, sv := range page.SevTotals {
+			if sv.Count == 0 {
+				continue
+			}
+			start := float64(acc) / float64(page.TotalFindings) * 360
+			acc += sv.Count
+			end := float64(acc) / float64(page.TotalFindings) * 360
+			parts = append(parts, fmt.Sprintf("%s %.2fdeg %.2fdeg", sevVar[sv.Severity], start, end))
+		}
+		page.SevDonut = template.CSS("conic-gradient(" + strings.Join(parts, ", ") + ")")
+	}
 
 	// Paling baru aktif di atas; tanpa aktivitas di bawah (urut nama).
 	sort.SliceStable(page.Rows, func(i, j int) bool {

@@ -31,3 +31,6 @@ bughound.key
 Thumbs.db
 .idea/
 .vscode/
+
+# Gambar referensi UI (konsumsi internal sebagai acuan desain — jangan commit)
+ref/

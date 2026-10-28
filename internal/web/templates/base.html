@@ -9,21 +9,51 @@
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body hx-headers='{"X-CSRF-Token": "{{.Body.CSRF}}"}'>
+  <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+    <symbol id="i-radio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+  </defs></svg>
   <div class="shell">
     <aside class="sidebar">
       <div class="brand"><img class="logo-img" src="/static/bughound-logo.png" alt="bughound" width="30" height="30"> bughound</div>
       <nav>
-        <a href="/dashboard" class="{{if eq .Body.Nav "dashboard"}}active{{end}}">Dashboard</a>
-        <a href="/programs" class="{{if eq .Body.Nav "programs"}}active{{end}}">Programs</a>
-        <a href="/scan{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "scan"}}active{{end}}">Scan</a>
-        <a href="/sast{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "sast"}}active{{end}}">SAST</a>
-        <a href="/grpc{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "grpc"}}active{{end}}">gRPC</a>
-        <a href="/capture{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "capture"}}active{{end}}">Capture</a>
-        <a href="/findings{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "findings"}}active{{end}}">Findings</a>
-        <a href="/report{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "report"}}active{{end}}">Reports</a>
-        <a href="/audit{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "audit"}}active{{end}}">Audit</a>
-        {{if eq .Role "admin"}}<a href="/users" class="{{if eq .Body.Nav "users"}}active{{end}}">Users</a>{{end}}
-        <a href="/settings" class="{{if eq .Body.Nav "settings"}}active{{end}}">Settings</a>
+        <div class="nav-group">
+          <div class="ng-label">Overview</div>
+          <a href="/dashboard" class="{{if eq .Body.Nav "dashboard"}}active{{end}}"><svg class="ico"><use href="#i-grid"/></svg>Dashboard</a>
+        </div>
+        <div class="nav-group">
+          <div class="ng-label">Program</div>
+          <a href="/programs" class="{{if eq .Body.Nav "programs"}}active{{end}}"><svg class="ico"><use href="#i-target"/></svg>Programs</a>
+        </div>
+        <div class="nav-group">
+          <div class="ng-label">Pengujian</div>
+          <a href="/scan{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "scan"}}active{{end}}"><svg class="ico"><use href="#i-radio"/></svg>Scan</a>
+          <a href="/sast{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "sast"}}active{{end}}"><svg class="ico"><use href="#i-code"/></svg>SAST</a>
+          <a href="/grpc{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "grpc"}}active{{end}}"><svg class="ico"><use href="#i-share"/></svg>gRPC</a>
+          <a href="/capture{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "capture"}}active{{end}}"><svg class="ico"><use href="#i-activity"/></svg>Capture</a>
+        </div>
+        <div class="nav-group">
+          <div class="ng-label">Triase</div>
+          <a href="/findings{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "findings"}}active{{end}}"><svg class="ico"><use href="#i-alert"/></svg>Findings</a>
+          <a href="/report{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "report"}}active{{end}}"><svg class="ico"><use href="#i-file"/></svg>Reports</a>
+        </div>
+        <div class="nav-group">
+          <div class="ng-label">Sistem</div>
+          <a href="/audit{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "audit"}}active{{end}}"><svg class="ico"><use href="#i-shield"/></svg>Audit</a>
+          {{if eq .Role "admin"}}<a href="/users" class="{{if eq .Body.Nav "users"}}active{{end}}"><svg class="ico"><use href="#i-users"/></svg>Users</a>{{end}}
+          <a href="/settings" class="{{if eq .Body.Nav "settings"}}active{{end}}"><svg class="ico"><use href="#i-sliders"/></svg>Settings</a>
+        </div>
       </nav>
       <div class="sidebar-foot">
         <div class="pill st-confirmed small">scope guard aktif</div>
@@ -39,6 +69,7 @@
           {{if .Body.Program}}<span class="chip ok">program: {{.Body.Program}}</span>{{end}}
         </div>
         <div class="topbar-right">
+          <a class="btn primary" href="/scan{{if .Body.Program}}?program={{.Body.Program}}{{end}}"><svg class="ico"><use href="#i-plus"/></svg>New scan</a>
           <span class="pill st-confirmed small"><span class="dot ok"></span>scope guard: default-deny</span>
           {{if .User}}<span class="chip user" title="pengguna masuk">{{.User}} · {{.Role}}</span>{{end}}
         </div>

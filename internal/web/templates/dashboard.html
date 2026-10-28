@@ -1,46 +1,91 @@
 {{define "content"}}
-<div class="report-head">
-  <div>
-    <h2>Dashboard</h2>
-    <p class="muted small">Ringkasan lintas-program. Hitungan mengecualikan duplikat.</p>
+<div class="statrow">
+  <div class="statcard">
+    <div class="sc-top"><span class="sc-label">Programs</span><span class="sc-ico"><svg class="ico"><use href="#i-target"/></svg></span></div>
+    <div class="sc-kpi">{{.TotalPrograms}}</div>
+    <div class="sc-sub">cakupan scope aktif</div>
+  </div>
+  <div class="statcard">
+    <div class="sc-top"><span class="sc-label">Temuan</span><span class="sc-ico violet"><svg class="ico"><use href="#i-alert"/></svg></span></div>
+    <div class="sc-kpi">{{.TotalFindings}}</div>
+    <div class="sc-sub">{{.TotalNew}} baru · tanpa duplikat</div>
+  </div>
+  <div class="statcard">
+    <div class="sc-top"><span class="sc-label">Terkonfirmasi</span><span class="sc-ico ok"><svg class="ico"><use href="#i-shield-check"/></svg></span></div>
+    <div class="sc-kpi">{{.TotalConfirmed}}</div>
+    <div class="sc-sub">dari {{.TotalFindings}} temuan</div>
+  </div>
+  <div class="statcard">
+    <div class="sc-top"><span class="sc-label">Run</span><span class="sc-ico"><svg class="ico"><use href="#i-radio"/></svg></span></div>
+    <div class="sc-kpi">{{.TotalRuns}}</div>
+    <div class="sc-sub">eksekusi engine</div>
   </div>
 </div>
 
-<div class="result-summary">
-  <span class="chip">{{.TotalPrograms}} program</span>
-  <span class="chip">{{.TotalFindings}} temuan</span>
-  <span class="chip good">{{.TotalConfirmed}} terkonfirmasi</span>
-  <span class="chip">{{.TotalRuns}} run</span>
-</div>
+<div class="grid-dash">
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Temuan per program</h2>
+      <span class="muted small">hitungan mengecualikan duplikat</span>
+    </div>
+    {{if .TotalFindings}}
+    <div class="fchips">
+      <a class="fchip" href="/findings">semua temuan <b>{{.TotalFindings}}</b></a>
+      {{range .SevTotals}}<a class="fchip {{if not .Count}}zero{{end}}" href="/findings?severity={{.Severity}}"><span class="lg-dot {{sevClass .Severity}}"></span>{{.Severity}} <b>{{.Count}}</b></a>{{end}}
+    </div>
+    {{end}}
+    {{if .Rows}}
+    <div class="panel-body flush">
+      <table class="tbl">
+        <thead><tr>
+          <th>Program</th><th>Distribusi severity</th><th>Temuan</th><th>Konfirmasi</th><th>Run</th><th>Terakhir</th><th></th>
+        </tr></thead>
+        <tbody>
+        {{range .Rows}}
+        <tr>
+          <td class="prog mono">{{.Program}}</td>
+          <td>
+            {{if .Total}}<span class="sevbar sevmini" title="distribusi severity">{{range .Severities}}<span class="seg {{sevClass .Severity}}" style="flex-grow:{{.Count}}"></span>{{end}}</span>
+            {{else}}<span class="muted">—</span>{{end}}
+          </td>
+          <td class="mono">{{.Total}}</td>
+          <td>{{if .Confirmed}}<span class="pill st-confirmed">{{.Confirmed}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
+          <td class="muted mono">{{.Runs}}</td>
+          <td class="muted mono">{{if .HasActivity}}{{.LastAt.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
+          <td>
+            <span class="row-actions">
+              <a class="btn ghost" href="/findings?program={{.Program}}">findings</a>
+              <a class="btn ghost" href="/report?program={{.Program}}">report</a>
+            </span>
+          </td>
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="empty">
+      <p class="muted">Belum ada program atau temuan. <a href="/programs/edit">Buat program →</a> atau <a href="/scan">jalankan scan pertama →</a></p>
+    </div>
+    {{end}}
+  </div>
 
-{{if .Rows}}
-<table class="tbl">
-  <thead><tr>
-    <th>Program</th><th>Temuan</th><th>Konfirmasi</th>
-    <th title="critical">C</th><th title="high">H</th><th title="medium">M</th><th title="low">L</th><th title="info">I</th>
-    <th>Run</th><th>Terakhir</th><th></th>
-  </tr></thead>
-  <tbody>
-  {{range .Rows}}
-  <tr>
-    <td class="mono">{{.Program}}</td>
-    <td>{{.Total}}</td>
-    <td>{{if .Confirmed}}<span class="pill st-confirmed">{{.Confirmed}}</span>{{else}}<span class="muted">0</span>{{end}}</td>
-    {{range .Severities}}<td>{{if .Count}}<span class="badge {{sevClass .Severity}}">{{.Count}}</span>{{else}}<span class="muted">·</span>{{end}}</td>{{end}}
-    <td class="muted">{{.Runs}}</td>
-    <td class="mono muted">{{if .HasActivity}}{{.LastAt.Format "2006-01-02 15:04"}}{{else}}—{{end}}</td>
-    <td class="actions">
-      <a class="btn ghost" href="/findings?program={{.Program}}">findings</a>
-      <a class="btn ghost" href="/report?program={{.Program}}">report</a>
-      <a class="btn ghost" href="/scan?program={{.Program}}">scan</a>
-    </td>
-  </tr>
-  {{end}}
-  </tbody>
-</table>
-{{else}}
-<div class="empty">
-  <p class="muted">Belum ada program atau temuan. <a href="/programs/edit">Buat program →</a> atau <a href="/scan">jalankan scan pertama →</a></p>
+  <div class="panel">
+    <div class="panel-head"><h3>Komposisi severity</h3><span class="muted small">lintas-program</span></div>
+    <div class="panel-body">
+      {{if .TotalFindings}}
+      <div class="donutwrap">
+        <div class="donut" style="background: {{.SevDonut}}">
+          <div class="donut-mid"><div class="n">{{.TotalFindings}}</div><div class="l">temuan</div></div>
+        </div>
+        <div class="sevlegend">
+          {{range .SevTotals}}<span class="lg-item {{if not .Count}}zero{{end}}"><span class="lg-dot {{sevClass .Severity}}"></span>{{.Severity}} <b>{{.Count}}</b></span>{{end}}
+        </div>
+      </div>
+      {{else}}
+      <p class="muted">Belum ada temuan untuk dirangkum.</p>
+      {{end}}
+    </div>
+  </div>
 </div>
-{{end}}
 {{end}}
