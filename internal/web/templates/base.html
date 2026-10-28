@@ -33,8 +33,13 @@
     </aside>
     <main class="content">
       <header class="topbar">
-        <div class="title">{{.Title}}</div>
-        {{if .Program}}<div class="muted small">program: <b>{{.Program}}</b></div>{{end}}
+        <div class="topbar-left">
+          <div class="title">{{.Title}}</div>
+          {{if .Program}}<span class="chip ok">program: {{.Program}}</span>{{end}}
+        </div>
+        <div class="topbar-right">
+          <span class="pill st-confirmed small"><span class="dot ok"></span>scope guard: default-deny</span>
+        </div>
       </header>
       <section class="bodywrap">
         {{template "content" .}}
