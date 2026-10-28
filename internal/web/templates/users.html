@@ -1,0 +1,69 @@
+{{define "content"}}
+<div class="report-head">
+  <div>
+    <h2>Users</h2>
+    <p class="muted small">Akun &amp; peran RBAC. <strong>admin</strong> kelola pengguna · <strong>operator</strong> jalankan scan &amp; triase · <strong>viewer</strong> hanya baca.</p>
+  </div>
+</div>
+
+{{if .Error}}<div class="errors"><p>{{.Error}}</p></div>{{end}}
+{{if .Note}}<div class="pill st-confirmed small" style="margin-bottom:12px"><span class="dot ok"></span>{{.Note}}</div>{{end}}
+
+<div class="card">
+  <h3 class="card-title">Tambah pengguna</h3>
+  <form method="post" action="/users" class="form-grid">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div class="field">
+      <label>Username</label>
+      <input type="text" name="username" autocomplete="off" required>
+    </div>
+    <div class="field">
+      <label>Kata sandi</label>
+      <input type="password" name="password" autocomplete="new-password" required>
+    </div>
+    <div class="field">
+      <label>Peran</label>
+      <select name="role">
+        {{range .Roles}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+    </div>
+    <div class="field field-action">
+      <button type="submit" class="btn primary">+ Buat pengguna</button>
+    </div>
+  </form>
+</div>
+
+{{if .Users}}
+<table class="tbl">
+  <thead><tr><th>Username</th><th>Peran</th><th>Dibuat</th><th>Reset kata sandi</th><th></th></tr></thead>
+  <tbody>
+  {{range .Users}}
+  <tr>
+    <td class="mono">{{.Username}}{{if .IsSelf}} <span class="muted small">(Anda)</span>{{end}}</td>
+    <td><span class="pill st-{{if eq .Role "admin"}}confirmed{{else if eq .Role "operator"}}new{{else}}ignored{{end}} small">{{.Role}}</span></td>
+    <td class="mono muted">{{.Created}}</td>
+    <td>
+      <form method="post" action="/users/password" class="inline-form">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <input type="password" name="password" placeholder="kata sandi baru" autocomplete="new-password" required>
+        <button type="submit" class="btn ghost">set</button>
+      </form>
+    </td>
+    <td>
+      {{if .IsSelf}}<span class="muted small">—</span>{{else}}
+      <form method="post" action="/users/delete" class="inline-form" onsubmit="return confirm('Hapus pengguna {{.Username}}?')">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="username" value="{{.Username}}">
+        <button type="submit" class="btn ghost danger">hapus</button>
+      </form>
+      {{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty"><p class="muted">Belum ada pengguna.</p></div>
+{{end}}
+{{end}}

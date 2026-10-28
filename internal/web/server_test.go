@@ -25,11 +25,12 @@ func newTestServer(t *testing.T) (*Server, *store.Mem) {
 	st := store.NewMem()
 	k, _ := secret.NewRandomKey()
 	srv, err := NewServer(Config{
-		Store:   st,
-		Engines: []engine.Engine{nuclei.Mock{}, ffuf.Mock{}},
-		Recon:   recon.MockPipeline{},
-		Vault:   secret.NewMemVault(secret.NewKeyring(k)),
-		Audit:   audit.NewMemLog([]byte("test-audit-key")),
+		Store:        st,
+		Engines:      []engine.Engine{nuclei.Mock{}, ffuf.Mock{}},
+		Recon:        recon.MockPipeline{},
+		Vault:        secret.NewMemVault(secret.NewKeyring(k)),
+		Audit:        audit.NewMemLog([]byte("test-audit-key")),
+		AuthDisabled: true, // fitur diuji tanpa gate login; RBAC diuji terpisah
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -207,8 +208,9 @@ func TestFindingsListsProgramFromStore(t *testing.T) {
 	}
 
 	srv, err := NewServer(Config{ // registry in-memory kosong
-		Store:   st,
-		Engines: []engine.Engine{nuclei.Mock{}},
+		Store:        st,
+		Engines:      []engine.Engine{nuclei.Mock{}},
+		AuthDisabled: true,
 	})
 	if err != nil {
 		t.Fatal(err)

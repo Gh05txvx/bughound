@@ -40,14 +40,32 @@ go run ./cmd/bughound         # jalankan (simpan ke ./bughound.db)
 go run ./cmd/bughound -db ""  # mode in-memory (ephemeral)
 ```
 
-Buka http://127.0.0.1:8787 — isi scope & target, jalankan scan, lalu triase di halaman **Findings**. Form sudah terisi contoh (`demo.test` in-scope, `evil.test` di luar scope) untuk mendemokan scope guard.
+Buka http://127.0.0.1:8787 — **login dulu** (lihat di bawah), isi scope & target, jalankan scan, lalu triase di halaman **Findings**. Form sudah terisi contoh (`demo.test` in-scope, `evil.test` di luar scope) untuk mendemokan scope guard.
+
+### Login & peran (RBAC)
+
+Login **wajib secara default**. Saat pertama dijalankan (belum ada akun), bughound membuat akun **admin** dan **mencetak kata sandinya ke konsol satu kali** — simpan, lalu ganti via halaman **Users**:
+
+```
+auth: admin "admin" dibuat — kata sandi: qCn1QHMZFboyml_C
+auth: SIMPAN kata sandi di atas; tak akan ditampilkan lagi. Ganti via halaman Users.
+```
+
+Browser mendapat **halaman login ber-logo** (sesi cookie `HttpOnly`+`SameSite=Strict`, tombol **Keluar**); otomasi/CLI boleh pakai **HTTP Basic** (username+password akun). Tiga peran:
+
+| Peran | Hak |
+| --- | --- |
+| **admin** | Semua, termasuk kelola pengguna (halaman **Users**). |
+| **operator** | Jalankan scan, triase, kelola program & capture (tak bisa kelola user). |
+| **viewer** | Hanya baca (dashboard, findings, report, audit). |
 
 Flag:
 
 - `-addr` — alamat bind (default `127.0.0.1:8787`, localhost saja).
 - `-db` — path file SQLite (default `bughound.db`; kosongkan untuk in-memory).
 - `-engine` — `mock` (default, tanpa jaringan) atau `real` (engine nyata via proxy scope guard).
-- `-auth` — aktifkan autentikasi (password; atau env `BUGHOUND_AUTH`). Browser mendapat **halaman login ber-logo** (sesi cookie `HttpOnly`+`SameSite=Strict`, ada tombol **Keluar**); otomasi/CLI boleh tetap pakai **HTTP Basic**. Kosong = tanpa auth (hanya aman di localhost).
+- `-admin-user` / `-admin-password` — akun admin awal saat bootstrap (atau env `BUGHOUND_ADMIN_USER` / `BUGHOUND_ADMIN_PASSWORD`). Password kosong = dibuat acak & dicetak ke konsol sekali.
+- `-no-auth` — **nonaktifkan** login & RBAC (akses terbuka). Hanya untuk localhost tepercaya / test.
 - `-key` — path kunci master enkripsi secret (atau env `BUGHOUND_MASTER_KEY`); `-rotate-key` merotasinya.
 - `-sast-root` — root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini (path scope, default-deny).
 - `-ffuf-wordlist` — wordlist untuk engine ffuf nyata (kosong = wordlist bawaan).
@@ -57,7 +75,7 @@ Flag:
 
 ## Cara pakai (alur kerja)
 
-1. **Jalankan** `go run ./cmd/bughound` → buka http://127.0.0.1:8787 (default engine **mock**: tanpa jaringan, aman dicoba).
+1. **Jalankan** `go run ./cmd/bughound` → **login** dengan akun admin yang kata sandinya tercetak di konsol saat pertama jalan → buka http://127.0.0.1:8787 (default engine **mock**: tanpa jaringan, aman dicoba).
 2. **Programs** → buat program & isi **scope** (in-scope + out-of-scope). Wajib: semua target dicek scope guard (default-deny).
 3. **Scan** → pilih program, isi target/seed (atau tempel spec **OpenAPI/Swagger**, atau isi **upstream proxy / rantai** bila target mewajibkan) → jalankan. Scan jalan di latar belakang; pantau statusnya di tempat.
 4. **Capture** (opsional) → bughound jadi reverse proxy ke satu target in-scope; browsing manual lewat listener lokal, lalu **promote** endpoint terekam jadi scan.
@@ -156,9 +174,9 @@ docker build --build-arg WITH_ZAP=true -t bughound:zap .   # + OWASP ZAP (berat,
 # default: engine mock (aman), UI di http://127.0.0.1:8787
 docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data bughound
 
-# scan nyata (engine sudah ada di image) + auth
-docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data -e BUGHOUND_AUTH=rahasia \
-  bughound -addr 0.0.0.0:8787 -db /data/bughound.db -engine nuclei,ffuf -auth rahasia
+# scan nyata (engine sudah ada di image); login WAJIB — set kata sandi admin awal
+docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data -e BUGHOUND_ADMIN_PASSWORD=rahasia \
+  bughound -addr 0.0.0.0:8787 -db /data/bughound.db -engine nuclei,ffuf
 ```
 
 Atau `docker compose up --build` (lihat `docker-compose.yml`; port sudah ke localhost, data di volume).
@@ -174,7 +192,7 @@ docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data ghcr.io/gh05txvx/b
 
 > **Visibilitas:** paket GHCR default **privat** saat pertama terbit. Agar bisa `docker pull` tanpa login, set paket `bughound` ke **Public** di GitHub → Packages → bughound → *Package settings* → *Change visibility*. Atau tetap privat dan `docker login ghcr.io` dulu.
 
-**Keamanan:** petakan port ke `127.0.0.1` saja dan set `-auth`/`BUGHOUND_AUTH` bila diakses dari luar localhost. Default container tetap `-engine mock` (tak ada scan nyata) sampai engine dipilih eksplisit.
+**Keamanan:** petakan port ke `127.0.0.1` saja. Login **wajib** secara default (set kata sandi admin via `BUGHOUND_ADMIN_PASSWORD`/`-admin-password`, atau baca yang dicetak ke konsol); jangan pakai `-no-auth` bila diakses dari luar localhost. Default container tetap `-engine mock` (tak ada scan nyata) sampai engine dipilih eksplisit.
 
 ## Struktur
 

@@ -62,12 +62,41 @@ type Query struct {
 // ErrNotFound dikembalikan Get/SetStatus bila id tak ada.
 var ErrNotFound = errors.New("store: temuan tidak ditemukan")
 
+// ErrUserExists dikembalikan CreateUser bila username sudah dipakai.
+var ErrUserExists = errors.New("store: username sudah ada")
+
 // Program menyimpan definisi scope sebuah program bounty (persisten).
 type Program struct {
 	Name      string
 	InScope   []string
 	OutScope  []string
 	UpdatedAt time.Time
+}
+
+// User adalah akun RBAC (lihat internal/auth untuk peran & hashing). PassHash
+// berisi hash PBKDF2 ber-salt; kata sandi mentah TIDAK pernah disimpan.
+type User struct {
+	Username string
+	Role     string // "admin" | "operator" | "viewer" (auth.Role)
+	PassHash string
+	Created  time.Time
+}
+
+// UserStore mengelola akun RBAC. Mem dan SQLite keduanya mengimplementasikannya,
+// jadi objek store tunggal menyediakan temuan sekaligus pengguna.
+type UserStore interface {
+	// CreateUser menyimpan user baru; ErrUserExists bila username sudah ada.
+	CreateUser(ctx context.Context, u User) error
+	// GetUser mengambil user; ErrNotFound bila tak ada.
+	GetUser(ctx context.Context, username string) (*User, error)
+	// ListUsers mengembalikan semua user, terurut username.
+	ListUsers(ctx context.Context) ([]*User, error)
+	// DeleteUser menghapus user; ErrNotFound bila tak ada.
+	DeleteUser(ctx context.Context, username string) error
+	// SetPassword memperbarui hash kata sandi user; ErrNotFound bila tak ada.
+	SetPassword(ctx context.Context, username, passHash string) error
+	// CountUsers mengembalikan jumlah user (untuk bootstrap admin awal).
+	CountUsers(ctx context.Context) (int, error)
 }
 
 // prepare mengisi field turunan (id, schema_version, dedup_key, created_at)

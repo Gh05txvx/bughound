@@ -8,10 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"bughound/internal/audit"
-	"bughound/internal/engine"
-	"bughound/internal/engine/nuclei"
-	"bughound/internal/secret"
 	"bughound/internal/store"
 )
 
@@ -181,21 +177,9 @@ func addField(v url.Values, k, val string) url.Values {
 	return out
 }
 
-// Remediasi BH-F01: HTTP Basic auth saat AuthSecret diset.
+// Remediasi BH-F01: HTTP Basic auth (otomasi/CLI) terhadap UserStore.
 func TestAudit_BasicAuthEnforced(t *testing.T) {
-	st := store.NewMem()
-	k, _ := secret.NewRandomKey()
-	srv, err := NewServer(Config{
-		Store:      st,
-		Engines:    []engine.Engine{nuclei.Mock{}},
-		Vault:      secret.NewMemVault(secret.NewKeyring(k)),
-		Audit:      audit.NewMemLog([]byte("k")),
-		AuthSecret: "s3kret",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { srv.Close() })
+	srv, _ := newAuthServer(t, "ops", "s3kret")
 
 	// Tanpa kredensial (browser) -> redirect ke halaman login ber-sesi.
 	rec := httptest.NewRecorder()
@@ -203,9 +187,9 @@ func TestAudit_BasicAuthEnforced(t *testing.T) {
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login" {
 		t.Fatalf("tanpa auth harus redirect ke /login, dapat %d (loc=%q)", rec.Code, rec.Header().Get("Location"))
 	}
-	// Password benar -> 200.
+	// Username + password benar -> 200.
 	req := httptest.NewRequest("GET", "/scan", nil)
-	req.SetBasicAuth("x", "s3kret")
+	req.SetBasicAuth("ops", "s3kret")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -213,10 +197,18 @@ func TestAudit_BasicAuthEnforced(t *testing.T) {
 	}
 	// Password salah -> 401.
 	req = httptest.NewRequest("GET", "/scan", nil)
-	req.SetBasicAuth("x", "salah")
+	req.SetBasicAuth("ops", "salah")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("password salah harus 401, dapat %d", rec.Code)
+	}
+	// Username tak dikenal -> 401.
+	req = httptest.NewRequest("GET", "/scan", nil)
+	req.SetBasicAuth("ghost", "s3kret")
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("username tak dikenal harus 401, dapat %d", rec.Code)
 	}
 }

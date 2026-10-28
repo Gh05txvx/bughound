@@ -6,6 +6,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -15,6 +17,7 @@ import (
 	"strings"
 
 	"bughound/internal/audit"
+	"bughound/internal/auth"
 	"bughound/internal/engine"
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
@@ -35,7 +38,9 @@ func main() {
 	dbPath := flag.String("db", "bughound.db", "path file SQLite (kosongkan untuk in-memory/ephemeral)")
 	engineMode := flag.String("engine", "mock", "set engine: mock (nuclei+ffuf mock, tanpa jaringan) | real (nuclei + subfinder/httpx/katana nyata lewat proxy egress)")
 	keyPath := flag.String("key", "bughound.key", "path file kunci master untuk enkripsi secret (atau set env BUGHOUND_MASTER_KEY)")
-	authFlag := flag.String("auth", "", "password HTTP Basic auth (atau env BUGHOUND_AUTH); kosong = tanpa auth (hanya aman untuk localhost)")
+	adminUser := flag.String("admin-user", "", "username admin awal saat bootstrap (atau env BUGHOUND_ADMIN_USER; default \"admin\")")
+	adminPass := flag.String("admin-password", "", "kata sandi admin awal (atau env BUGHOUND_ADMIN_PASSWORD); kosong = dibuat acak & dicetak ke konsol sekali")
+	noAuth := flag.Bool("no-auth", false, "NONAKTIFKAN login & RBAC (akses terbuka) — hanya untuk localhost tepercaya / test")
 	rotateKey := flag.Bool("rotate-key", false, "rotasi kunci master: re-enkripsi semua secret ke kunci baru lalu keluar")
 	sastRoot := flag.String("sast-root", "", "root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini")
 	ffufWordlist := flag.String("ffuf-wordlist", "", "path wordlist untuk engine ffuf nyata (kosong = wordlist bawaan)")
@@ -49,12 +54,8 @@ func main() {
 		return
 	}
 
-	authSecret := *authFlag
-	if authSecret == "" {
-		authSecret = strings.TrimSpace(os.Getenv("BUGHOUND_AUTH"))
-	}
-	if authSecret == "" && !isLocalhost(*addr) {
-		log.Printf("PERINGATAN: bind non-localhost (%s) TANPA -auth — UI terbuka tanpa kredensial. Set -auth atau BUGHOUND_AUTH.", *addr)
+	if *noAuth && !isLocalhost(*addr) {
+		log.Printf("PERINGATAN: -no-auth + bind non-localhost (%s) — UI TERBUKA tanpa kredensial. Jangan ekspos ke jaringan.", *addr)
 	}
 
 	var st store.Store
@@ -207,7 +208,33 @@ func main() {
 		log.Printf("grpc: enumerasi NYATA via grpcurl (plaintext=%t)", *grpcPlaintext)
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, AuthSecret: authSecret, Version: version, SASTRoot: *sastRoot, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext})
+	// RBAC: store menyediakan akun pengguna. Login WAJIB secara default; -no-auth
+	// membukanya (hanya untuk localhost tepercaya / test).
+	webUsers, ok := st.(store.UserStore)
+	if !ok {
+		log.Fatalf("bughound: store tidak mendukung manajemen pengguna")
+	}
+	if *noAuth {
+		log.Printf("auth: DINONAKTIFKAN (-no-auth) — akses terbuka tanpa login & tanpa RBAC")
+	} else {
+		au := firstNonEmpty(*adminUser, os.Getenv("BUGHOUND_ADMIN_USER"), "admin")
+		ap := firstNonEmpty(*adminPass, os.Getenv("BUGHOUND_ADMIN_PASSWORD"))
+		created, generated, pw, berr := bootstrapAdmin(context.Background(), webUsers, au, ap)
+		if berr != nil {
+			log.Fatalf("bughound: bootstrap admin: %v", berr)
+		}
+		switch {
+		case created && generated:
+			log.Printf("auth: admin %q dibuat — kata sandi: %s", au, pw)
+			log.Printf("auth: SIMPAN kata sandi di atas; tak akan ditampilkan lagi. Ganti via halaman Users.")
+		case created:
+			log.Printf("auth: admin %q dibuat dari -admin-password/env", au)
+		default:
+			log.Printf("auth: login WAJIB (akun sudah ada; kelola via halaman Users)")
+		}
+	}
+
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: *sastRoot, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}
@@ -220,6 +247,56 @@ func main() {
 	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("bughound: server berhenti: %v", err)
 	}
+}
+
+// bootstrapAdmin membuat akun admin pertama bila store belum punya pengguna.
+// Mengembalikan apakah user dibuat, apakah kata sandinya dibuat acak, dan kata
+// sandi tersebut (hanya terisi bila acak — agar bisa dicetak sekali ke konsol).
+func bootstrapAdmin(ctx context.Context, users store.UserStore, user, pass string) (created, generated bool, pw string, err error) {
+	n, err := users.CountUsers(ctx)
+	if err != nil {
+		return false, false, "", err
+	}
+	if n > 0 {
+		return false, false, "", nil // sudah ada akun; jangan bootstrap ulang
+	}
+	if user == "" {
+		user = "admin"
+	}
+	pw = pass
+	if pw == "" {
+		if pw, err = randomPassword(); err != nil {
+			return false, false, "", err
+		}
+		generated = true
+	}
+	hash, err := auth.HashPassword(pw)
+	if err != nil {
+		return false, false, "", err
+	}
+	if err := users.CreateUser(ctx, store.User{Username: user, Role: string(auth.RoleAdmin), PassHash: hash}); err != nil {
+		return false, false, "", err
+	}
+	return true, generated, pw, nil
+}
+
+// randomPassword menghasilkan kata sandi acak url-safe (~16 karakter).
+func randomPassword() (string, error) {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// firstNonEmpty mengembalikan argumen non-kosong (ter-trim) pertama.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if s := strings.TrimSpace(v); s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 // parseEngineMode menafsirkan flag -engine. "" / "mock" -> engine mock (mock

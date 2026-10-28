@@ -42,9 +42,12 @@ export default defineConfig({
     // modul dihangatkan lebih dulu (.github/workflows/e2e.yml).
     // Engine MOCK, store & kunci in-memory ephemeral, bind localhost → tak ada
     // file (db/kunci) tersisa & tak pernah menyentuh jaringan.
+    // -no-auth: E2E memverifikasi alur produk langsung di halaman; login & RBAC
+    // diuji oleh unit test Go (internal/web). Tetap engine mock + localhost → tak
+    // ada jaringan tersentuh.
     command:
       `go build -trimpath -o "${BIN_ABS}" ./cmd/bughound && ` +
-      `"${BIN_ABS}" -addr 127.0.0.1:${PORT} -db "" -key "" -engine mock`,
+      `"${BIN_ABS}" -addr 127.0.0.1:${PORT} -db "" -key "" -engine mock -no-auth`,
     cwd: ROOT,
     url: `${BASE_URL}/scan`,
     reuseExistingServer: !process.env.CI,

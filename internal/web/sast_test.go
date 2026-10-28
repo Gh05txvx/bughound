@@ -24,12 +24,13 @@ func newSASTServer(t *testing.T, root string) (*Server, *store.Mem, *audit.MemLo
 	k, _ := secret.NewRandomKey()
 	al := audit.NewMemLog([]byte("sast-test"))
 	srv, err := NewServer(Config{
-		Store:    st,
-		Engines:  []engine.Engine{nuclei.Mock{}, ffuf.Mock{}},
-		Recon:    recon.MockPipeline{},
-		Vault:    secret.NewMemVault(secret.NewKeyring(k)),
-		Audit:    al,
-		SASTRoot: root,
+		Store:        st,
+		Engines:      []engine.Engine{nuclei.Mock{}, ffuf.Mock{}},
+		Recon:        recon.MockPipeline{},
+		Vault:        secret.NewMemVault(secret.NewKeyring(k)),
+		Audit:        al,
+		SASTRoot:     root,
+		AuthDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

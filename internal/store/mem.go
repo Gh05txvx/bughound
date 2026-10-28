@@ -20,6 +20,7 @@ type Mem struct {
 	// primary: program -> dedup_key -> id temuan utama.
 	primary  map[string]map[string]string
 	programs map[string]*Program
+	users    map[string]*User
 }
 
 // NewMem membuat store in-memory kosong.
@@ -29,6 +30,7 @@ func NewMem() *Mem {
 		byID:     map[string]*finding.Finding{},
 		primary:  map[string]map[string]string{},
 		programs: map[string]*Program{},
+		users:    map[string]*User{},
 	}
 }
 
@@ -196,6 +198,81 @@ func (m *Mem) SetStatus(ctx context.Context, id string, status finding.Status, v
 	now := finding.NewTime(m.now())
 	f.UpdatedAt = &now
 	return nil
+}
+
+// ---- UserStore (RBAC) ----
+
+// CreateUser: lihat UserStore.CreateUser.
+func (m *Mem) CreateUser(ctx context.Context, u User) error {
+	if strings.TrimSpace(u.Username) == "" {
+		return fmt.Errorf("store: username wajib")
+	}
+	if u.Created.IsZero() {
+		u.Created = m.now().UTC()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[u.Username]; ok {
+		return ErrUserExists
+	}
+	cp := u
+	m.users[u.Username] = &cp
+	return nil
+}
+
+// GetUser: lihat UserStore.GetUser.
+func (m *Mem) GetUser(ctx context.Context, username string) (*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	u, ok := m.users[username]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	cp := *u
+	return &cp, nil
+}
+
+// ListUsers: lihat UserStore.ListUsers.
+func (m *Mem) ListUsers(ctx context.Context) ([]*User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*User, 0, len(m.users))
+	for _, u := range m.users {
+		cp := *u
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	return out, nil
+}
+
+// DeleteUser: lihat UserStore.DeleteUser.
+func (m *Mem) DeleteUser(ctx context.Context, username string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[username]; !ok {
+		return ErrNotFound
+	}
+	delete(m.users, username)
+	return nil
+}
+
+// SetPassword: lihat UserStore.SetPassword.
+func (m *Mem) SetPassword(ctx context.Context, username, passHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[username]
+	if !ok {
+		return ErrNotFound
+	}
+	u.PassHash = passHash
+	return nil
+}
+
+// CountUsers: lihat UserStore.CountUsers.
+func (m *Mem) CountUsers(ctx context.Context) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.users), nil
 }
 
 // Close no-op.

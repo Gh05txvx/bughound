@@ -15,8 +15,10 @@
     {{if .Error}}<div class="errors"><p>{{.Error}}</p></div>{{end}}
     <form method="post" action="/login">
       <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label>Username</label>
+      <input type="text" name="username" autocomplete="username" autofocus required>
       <label>Password</label>
-      <input type="password" name="password" autocomplete="current-password" autofocus required>
+      <input type="password" name="password" autocomplete="current-password" required>
       <button type="submit" class="btn primary login-submit">Masuk</button>
     </form>
     <p class="muted small login-foot">bughound {{.Version}} &middot; scope guard aktif &middot; tanpa auto-submit</p>

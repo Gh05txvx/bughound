@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -24,14 +25,15 @@ import (
 	"time"
 
 	"bughound/internal/audit"
+	"bughound/internal/auth"
 	"bughound/internal/egress"
 	"bughound/internal/engine"
 	"bughound/internal/engine/grpc"
 	"bughound/internal/finding"
 	"bughound/internal/jobs"
+	"bughound/internal/openapi"
 	"bughound/internal/orchestrator"
 	"bughound/internal/ratelimit"
-	"bughound/internal/openapi"
 	"bughound/internal/recon"
 	"bughound/internal/report"
 	"bughound/internal/sast"
@@ -48,23 +50,24 @@ var staticFS embed.FS
 
 // Server adalah handler HTTP utama bughound.
 type Server struct {
-	mux     *http.ServeMux
-	store   store.Store
-	engines []engine.Engine
-	recon   recon.Engine
-	vault   secret.Vault
-	audit   audit.Log
-	authSecret string
-	queue   *jobs.Queue
-	version string
-	sastRoot string // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
-	grpcEngine grpc.Scanner // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
+	mux          *http.ServeMux
+	store        store.Store
+	users        store.UserStore // akun RBAC (nil bila authDisabled)
+	engines      []engine.Engine
+	recon        recon.Engine
+	vault        secret.Vault
+	audit        audit.Log
+	authDisabled bool // true = akses terbuka tanpa login (hanya -no-auth / test)
+	queue        *jobs.Queue
+	version      string
+	sastRoot     string       // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
+	grpcEngine   grpc.Scanner // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
 
 	captureMu sync.Mutex
 	captures  map[string]*captureSession // sesi capture reverse-proxy aktif per program
 
 	sessMu   sync.Mutex
-	sessions map[string]time.Time // token sesi login → waktu dibuat (bila AuthSecret diset)
+	sessions map[string]sessionInfo // token sesi login → pengguna+peran
 
 	pages map[string]*template.Template
 }
@@ -76,10 +79,14 @@ type Config struct {
 	Recon   recon.Engine
 	Vault   secret.Vault
 	Audit   audit.Log
-	// AuthSecret, bila tidak kosong, mewajibkan HTTP Basic auth (password =
-	// AuthSecret, username diabaikan). Kosong = tanpa auth (hanya aman untuk
-	// bind localhost tepercaya).
-	AuthSecret string
+	// Users adalah store akun RBAC. Wajib kecuali AuthDisabled=true. Login
+	// (sesi) & HTTP Basic (otomasi) diverifikasi terhadapnya; peran menentukan
+	// hak (viewer baca, operator ubah, admin kelola user).
+	Users store.UserStore
+	// AuthDisabled membuka akses tanpa autentikasi (TANPA login, TANPA RBAC).
+	// Hanya untuk test dan flag eksplisit -no-auth di localhost tepercaya.
+	// Default false: login WAJIB.
+	AuthDisabled bool
 	// Version adalah versi build (di-inject lewat ldflags); kosong = "dev".
 	// Ditampilkan di footer UI agar rilis mudah dikenali.
 	Version string
@@ -97,28 +104,32 @@ func NewServer(cfg Config) (*Server, error) {
 	if len(cfg.Engines) == 0 {
 		return nil, fmt.Errorf("web: minimal satu engine DAST")
 	}
+	if !cfg.AuthDisabled && cfg.Users == nil {
+		return nil, fmt.Errorf("web: Users wajib kecuali AuthDisabled=true")
+	}
 	version := cfg.Version
 	if version == "" {
 		version = "dev"
 	}
-	pages, err := parseTemplates(version, cfg.AuthSecret != "")
+	pages, err := parseTemplates(version)
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{
-		mux:      http.NewServeMux(),
-		store:    cfg.Store,
-		engines:  cfg.Engines,
-		recon:    cfg.Recon,
-		vault:    cfg.Vault,
-		audit:    cfg.Audit,
-		authSecret: cfg.AuthSecret,
-		queue:    jobs.New(4),
-		version:  version,
-		sastRoot: strings.TrimSpace(cfg.SASTRoot),
-		captures: map[string]*captureSession{},
-		sessions: map[string]time.Time{},
-		pages:    pages,
+		mux:          http.NewServeMux(),
+		store:        cfg.Store,
+		users:        cfg.Users,
+		engines:      cfg.Engines,
+		recon:        cfg.Recon,
+		vault:        cfg.Vault,
+		audit:        cfg.Audit,
+		authDisabled: cfg.AuthDisabled,
+		queue:        jobs.New(4),
+		version:      version,
+		sastRoot:     strings.TrimSpace(cfg.SASTRoot),
+		captures:     map[string]*captureSession{},
+		sessions:     map[string]sessionInfo{},
+		pages:        pages,
 	}
 	if cfg.GRPCReal {
 		s.grpcEngine = &grpc.Runner{Plaintext: cfg.GRPCPlaintext}
@@ -148,6 +159,9 @@ const csrfCookie = "bh_csrf"
 
 type csrfCtxKey struct{}
 
+type userCtxKey struct{}
+type roleCtxKey struct{}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -157,9 +171,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := s.ensureCSRFCookie(w, r)
 	r = r.WithContext(context.WithValue(r.Context(), csrfCtxKey{}, token))
 
-	// Auth: bila AuthSecret diset, wajib sesi login (atau Basic auth untuk otomasi).
-	if !s.requireAuth(w, r) {
-		return
+	// Auth: login WAJIB (kecuali AuthDisabled). Manusia memakai sesi login;
+	// otomasi/CLI boleh HTTP Basic. Peran pengguna dibawa lewat context.
+	if !s.authDisabled && !authExempt(r) {
+		user, role, ok := s.authUser(r)
+		if !ok {
+			// Kredensial Basic eksplisit yang gagal → 401 untuk otomasi/CLI.
+			if r.Header.Get("Authorization") != "" {
+				http.Error(w, "autentikasi gagal", http.StatusUnauthorized)
+				return
+			}
+			// Browser tanpa sesi: arahkan ke halaman login untuk GET; tolak selain itu.
+			if r.Method == http.MethodGet {
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
+			http.Error(w, "sesi tidak valid — silakan login", http.StatusUnauthorized)
+			return
+		}
+		r = r.WithContext(context.WithValue(
+			context.WithValue(r.Context(), userCtxKey{}, user), roleCtxKey{}, role))
 	}
 
 	// Tiap permintaan state-changing wajib mengirim token yang cocok (double-submit)
@@ -169,29 +200,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mux.ServeHTTP(w, r)
-}
+	// Otorisasi RBAC: peran menentukan apa yang boleh diakses (default-deny bila
+	// peran tak cukup). Dilewati saat auth dinonaktifkan atau path dikecualikan.
+	if !s.authDisabled && !authExempt(r) {
+		if !authorize(s.roleOf(r), r) {
+			http.Error(w, "akses ditolak: peran tidak cukup untuk aksi ini", http.StatusForbidden)
+			return
+		}
+	}
 
-// requireAuth menegakkan autentikasi bila AuthSecret diset. Manusia memakai
-// halaman login ber-sesi (cookie); otomasi/CLI boleh memakai HTTP Basic. Tanpa
-// AuthSecret, akses terbuka (hanya aman di localhost). Mengembalikan false bila
-// respons sudah ditulis (ditolak/redirect).
-func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) bool {
-	if s.authSecret == "" || authExempt(r) || s.authed(r) {
-		return true
-	}
-	// Upaya kredensial eksplisit yang gagal (Basic) → 401 untuk otomasi/CLI.
-	if r.Header.Get("Authorization") != "" {
-		http.Error(w, "autentikasi gagal", http.StatusUnauthorized)
-		return false
-	}
-	// Browser tanpa sesi: arahkan ke halaman login untuk GET; tolak selain itu.
-	if r.Method == http.MethodGet {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return false
-	}
-	http.Error(w, "sesi tidak valid — silakan login", http.StatusUnauthorized)
-	return false
+	s.mux.ServeHTTP(w, r)
 }
 
 // authExempt: halaman login & aset statis boleh diakses tanpa sesi.
@@ -199,25 +217,74 @@ func authExempt(r *http.Request) bool {
 	return r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/static/")
 }
 
-// authed: sesi login valid ATAU Basic auth cocok (constant-time). Username Basic
-// diabaikan.
-func (s *Server) authed(r *http.Request) bool {
-	if s.validSession(r) {
-		return true
+// authUser mengautentikasi permintaan lewat sesi login ATAU HTTP Basic
+// (username+password diverifikasi terhadap UserStore). Mengembalikan pengguna,
+// peran, dan apakah berhasil.
+func (s *Server) authUser(r *http.Request) (string, auth.Role, bool) {
+	if info, ok := s.validSession(r); ok {
+		return info.User, info.Role, true
 	}
-	if _, pass, ok := r.BasicAuth(); ok && subtle.ConstantTimeCompare([]byte(pass), []byte(s.authSecret)) == 1 {
-		return true
+	if user, pass, ok := r.BasicAuth(); ok {
+		if u, err := s.users.GetUser(r.Context(), user); err == nil {
+			if auth.VerifyPassword(u.PassHash, pass) {
+				return u.Username, auth.Role(u.Role), true
+			}
+		} else {
+			auth.VerifyPassword(dummyHash, pass) // seragamkan waktu utk user tak dikenal
+		}
 	}
-	return false
+	return "", auth.Role(""), false
 }
+
+// authorize menegakkan RBAC: area /users hanya admin; aksi state-changing (selain
+// logout) butuh operator ke atas; GET boleh untuk semua peran valid (default-deny).
+func authorize(role auth.Role, r *http.Request) bool {
+	switch {
+	case r.URL.Path == "/users" || strings.HasPrefix(r.URL.Path, "/users/"):
+		return auth.CanAdmin(role)
+	case r.URL.Path == "/logout":
+		return role.Valid()
+	case isStateChanging(r.Method):
+		return auth.CanWrite(role)
+	default:
+		return auth.CanRead(role)
+	}
+}
+
+// currentUser mengembalikan pengguna & peran dari context (kosong bila auth
+// nonaktif atau belum terautentikasi).
+func (s *Server) currentUser(r *http.Request) (string, auth.Role) {
+	user, _ := r.Context().Value(userCtxKey{}).(string)
+	role, _ := r.Context().Value(roleCtxKey{}).(auth.Role)
+	return user, role
+}
+
+func (s *Server) roleOf(r *http.Request) auth.Role {
+	role, _ := r.Context().Value(roleCtxKey{}).(auth.Role)
+	return role
+}
+
+// dummyHash menyeragamkan waktu verifikasi saat username tak dikenal (lawan
+// enumerasi via timing). Dihitung sekali; tak pernah cocok kata sandi apa pun.
+var dummyHash = func() string {
+	h, _ := auth.HashPassword(randToken())
+	return h
+}()
 
 const sessionCookie = "bh_session"
 const sessionTTL = 12 * time.Hour
 
-func (s *Server) newSession(w http.ResponseWriter, r *http.Request) {
+// sessionInfo adalah state satu sesi login: pengguna, peran, waktu dibuat.
+type sessionInfo struct {
+	User    string
+	Role    auth.Role
+	Created time.Time
+}
+
+func (s *Server) newSession(w http.ResponseWriter, r *http.Request, user string, role auth.Role) {
 	tok := randToken()
 	s.sessMu.Lock()
-	s.sessions[tok] = time.Now()
+	s.sessions[tok] = sessionInfo{User: user, Role: role, Created: time.Now()}
 	s.sessMu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookie, Value: tok, Path: "/",
@@ -225,22 +292,22 @@ func (s *Server) newSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) validSession(r *http.Request) bool {
+func (s *Server) validSession(r *http.Request) (sessionInfo, bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil || c.Value == "" {
-		return false
+		return sessionInfo{}, false
 	}
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
-	created, ok := s.sessions[c.Value]
+	info, ok := s.sessions[c.Value]
 	if !ok {
-		return false
+		return sessionInfo{}, false
 	}
-	if time.Since(created) > sessionTTL {
+	if time.Since(info.Created) > sessionTTL {
 		delete(s.sessions, c.Value)
-		return false
+		return sessionInfo{}, false
 	}
-	return true
+	return info, true
 }
 
 func (s *Server) destroySession(w http.ResponseWriter, r *http.Request) {
@@ -261,15 +328,19 @@ type loginPage struct {
 }
 
 func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
-	if s.authSecret == "" || s.validSession(r) {
+	if s.authDisabled {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 		return
 	}
-	s.render(w, "login", "login", loginPage{CSRF: s.csrfToken(r), Version: s.version})
+	if _, ok := s.validSession(r); ok {
+		http.Redirect(w, r, "/dashboard", http.StatusFound)
+		return
+	}
+	s.render(w, r, "login", "login", loginPage{CSRF: s.csrfToken(r), Version: s.version})
 }
 
 func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
-	if s.authSecret == "" {
+	if s.authDisabled {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 		return
 	}
@@ -277,22 +348,222 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "form tidak valid", http.StatusBadRequest)
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(s.authSecret)) == 1 {
-		s.newSession(w, r)
-		s.auditAppend(r.Context(), audit.Event{Kind: "auth.login", Allowed: true})
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+	u, err := s.users.GetUser(r.Context(), username)
+	if err == nil && auth.VerifyPassword(u.PassHash, password) {
+		s.newSession(w, r, u.Username, auth.Role(u.Role))
+		s.auditAppend(r.Context(), audit.Event{Kind: "auth.login", Allowed: true, Message: u.Username})
 		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 		return
 	}
-	s.auditAppend(r.Context(), audit.Event{Kind: "auth.login", Allowed: false, Message: "password salah"})
+	if err != nil {
+		auth.VerifyPassword(dummyHash, password) // seragamkan waktu utk user tak dikenal
+	}
+	s.auditAppend(r.Context(), audit.Event{Kind: "auth.login", Allowed: false, Message: username})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusUnauthorized)
-	_ = s.pages["login"].ExecuteTemplate(w, "login", loginPage{CSRF: s.csrfToken(r), Error: "Password salah.", Version: s.version})
+	_ = s.pages["login"].ExecuteTemplate(w, "login", loginPage{CSRF: s.csrfToken(r), Error: "Username atau password salah.", Version: s.version})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	user, _ := s.currentUser(r)
 	s.destroySession(w, r)
-	s.auditAppend(r.Context(), audit.Event{Kind: "auth.logout", Allowed: true})
+	s.auditAppend(r.Context(), audit.Event{Kind: "auth.logout", Allowed: true, Message: user})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// ---- Users (RBAC admin) ----
+
+type userRow struct {
+	Username string
+	Role     string
+	Created  string
+	IsSelf   bool
+}
+
+type usersPage struct {
+	Nav     string
+	Title   string
+	Program string
+	CSRF    string
+	Me      string
+	Users   []userRow
+	Roles   []auth.Role
+	Error   string
+	Note    string
+}
+
+func (s *Server) usersPageFor(r *http.Request) usersPage {
+	me, _ := s.currentUser(r)
+	page := usersPage{Nav: "users", Title: "Users", CSRF: s.csrfToken(r), Me: me, Roles: auth.Roles()}
+	if s.users != nil {
+		list, _ := s.users.ListUsers(r.Context())
+		for _, u := range list {
+			page.Users = append(page.Users, userRow{
+				Username: u.Username, Role: u.Role,
+				Created: u.Created.Format("2006-01-02"), IsSelf: u.Username == me,
+			})
+		}
+	}
+	return page
+}
+
+func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
+	if s.users == nil {
+		http.Error(w, "manajemen user nonaktif (auth dinonaktifkan)", http.StatusServiceUnavailable)
+		return
+	}
+	page := s.usersPageFor(r)
+	switch r.URL.Query().Get("ok") {
+	case "created":
+		page.Note = "Pengguna dibuat."
+	case "deleted":
+		page.Note = "Pengguna dihapus."
+	case "password":
+		page.Note = "Kata sandi diperbarui."
+	}
+	s.render(w, r, "users", "base", page)
+}
+
+func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
+	if s.users == nil {
+		http.Error(w, "manajemen user nonaktif", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+	role := auth.Role(strings.TrimSpace(r.FormValue("role")))
+
+	page := s.usersPageFor(r)
+	if username == "" || password == "" {
+		page.Error = "Username dan kata sandi wajib diisi."
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	if !role.Valid() {
+		page.Error = "Peran tidak dikenal."
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		page.Error = "Gagal meng-hash kata sandi: " + err.Error()
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	if err := s.users.CreateUser(r.Context(), store.User{Username: username, Role: string(role), PassHash: hash}); err != nil {
+		if errors.Is(err, store.ErrUserExists) {
+			page.Error = "Username sudah dipakai."
+		} else {
+			page.Error = "Gagal membuat pengguna: " + err.Error()
+		}
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	actor, _ := s.currentUser(r)
+	s.auditAppend(r.Context(), audit.Event{Kind: "user.create", Allowed: true, Message: fmt.Sprintf("%s membuat %s (%s)", actor, username, role)})
+	http.Redirect(w, r, "/users?ok=created", http.StatusSeeOther)
+}
+
+func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
+	if s.users == nil {
+		http.Error(w, "manajemen user nonaktif", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	username := strings.TrimSpace(r.FormValue("username"))
+	me, _ := s.currentUser(r)
+
+	page := s.usersPageFor(r)
+	if username == me {
+		page.Error = "Tidak bisa menghapus akun yang sedang login."
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	// Jangan sampai sistem kehilangan admin terakhir (anti kunci-diri).
+	if s.isLastAdmin(r, username) {
+		page.Error = "Tidak bisa menghapus admin terakhir."
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	if err := s.users.DeleteUser(r.Context(), username); err != nil {
+		page.Error = "Gagal menghapus: " + err.Error()
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	s.auditAppend(r.Context(), audit.Event{Kind: "user.delete", Allowed: true, Message: fmt.Sprintf("%s menghapus %s", me, username)})
+	http.Redirect(w, r, "/users?ok=deleted", http.StatusSeeOther)
+}
+
+func (s *Server) handleUserPassword(w http.ResponseWriter, r *http.Request) {
+	if s.users == nil {
+		http.Error(w, "manajemen user nonaktif", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+
+	page := s.usersPageFor(r)
+	if username == "" || password == "" {
+		page.Error = "Username dan kata sandi baru wajib diisi."
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		page.Error = "Gagal meng-hash kata sandi: " + err.Error()
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	if err := s.users.SetPassword(r.Context(), username, hash); err != nil {
+		page.Error = "Gagal memperbarui kata sandi: " + err.Error()
+		s.renderUsers(w, r, page, http.StatusBadRequest)
+		return
+	}
+	me, _ := s.currentUser(r)
+	s.auditAppend(r.Context(), audit.Event{Kind: "user.password", Allowed: true, Message: fmt.Sprintf("%s mereset kata sandi %s", me, username)})
+	http.Redirect(w, r, "/users?ok=password", http.StatusSeeOther)
+}
+
+// renderUsers merender halaman Users dengan kode status tertentu (mis. 400 saat
+// validasi gagal) tanpa mengganggu pembungkus chrome base.
+func (s *Server) renderUsers(w http.ResponseWriter, r *http.Request, page usersPage, code int) {
+	user, role := s.currentUser(r)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
+	_ = s.pages["users"].ExecuteTemplate(w, "base", shellData{
+		User: user, Role: string(role), AuthOn: !s.authDisabled, Body: page,
+	})
+}
+
+// isLastAdmin melaporkan apakah username adalah satu-satunya admin tersisa.
+func (s *Server) isLastAdmin(r *http.Request, username string) bool {
+	list, err := s.users.ListUsers(r.Context())
+	if err != nil {
+		return true // fail closed: bila ragu, jangan izinkan penghapusan
+	}
+	admins, isAdmin := 0, false
+	for _, u := range list {
+		if auth.Role(u.Role) == auth.RoleAdmin {
+			admins++
+			if u.Username == username {
+				isAdmin = true
+			}
+		}
+	}
+	return isAdmin && admins <= 1
 }
 
 func (s *Server) ensureCSRFCookie(w http.ResponseWriter, r *http.Request) string {
@@ -360,6 +631,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /login", s.handleLoginForm)
 	s.mux.HandleFunc("POST /login", s.handleLoginSubmit)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
+	s.mux.HandleFunc("GET /users", s.handleUsers)
+	s.mux.HandleFunc("POST /users", s.handleUserCreate)
+	s.mux.HandleFunc("POST /users/delete", s.handleUserDelete)
+	s.mux.HandleFunc("POST /users/password", s.handleUserPassword)
 	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 	})
@@ -396,13 +671,13 @@ func (s *Server) routes() {
 // ---- Scan ----
 
 type scanPage struct {
-	Nav      string
-	Title    string
-	Program  string
-	CSRF     string
-	Seeds    string
-	InScope  string
-	OutScope string
+	Nav           string
+	Title         string
+	Program       string
+	CSRF          string
+	Seeds         string
+	InScope       string
+	OutScope      string
 	Targets       string
 	OpenAPI       string
 	UpstreamProxy string
@@ -447,7 +722,7 @@ func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 		page.OutScope = "admin.demo.test"
 		page.Targets = "demo.test\nevil.test"
 	}
-	s.render(w, "scan", "base", page)
+	s.render(w, r, "scan", "base", page)
 }
 
 func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
@@ -502,7 +777,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		page.Errors = append(page.Errors, "Scope tak valid: "+e.Error())
 	}
 	if len(page.Errors) > 0 {
-		s.renderPartial(w, "scan", "scan_result_errors", page)
+		s.renderPartial(w, r, "scan", "scan_result_errors", page)
 		return
 	}
 
@@ -513,7 +788,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	runID := s.enqueueScan(program, guard, seeds, targets, rps, proxyChain)
 
 	if run, ok := s.queue.Get(runID); ok {
-		s.renderPartial(w, "scan", "run_status", toRunView(run))
+		s.renderPartial(w, r, "scan", "run_status", toRunView(run))
 	}
 }
 
@@ -568,7 +843,7 @@ func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "run tidak ditemukan", http.StatusNotFound)
 		return
 	}
-	s.renderPartial(w, "scan", "run_status", toRunView(run))
+	s.renderPartial(w, r, "scan", "run_status", toRunView(run))
 }
 
 type runView struct {
@@ -665,7 +940,7 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 			page.Selected = f
 		}
 	}
-	s.render(w, "findings", "base", page)
+	s.render(w, r, "findings", "base", page)
 }
 
 func (s *Server) handleBulkTriage(w http.ResponseWriter, r *http.Request) {
@@ -692,7 +967,7 @@ func (s *Server) handleFindingDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
 		return
 	}
-	s.renderPartial(w, "findings", "finding_detail", f)
+	s.renderPartial(w, r, "findings", "finding_detail", f)
 }
 
 func (s *Server) handleTriage(w http.ResponseWriter, r *http.Request) {
@@ -721,7 +996,7 @@ func (s *Server) handleTriage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
 		return
 	}
-	s.renderPartial(w, "findings", "finding_detail", f)
+	s.renderPartial(w, r, "findings", "finding_detail", f)
 }
 
 // ---- Report ----
@@ -744,7 +1019,7 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 		findings, _ := s.store.List(r.Context(), store.Query{Program: program})
 		page.Report = report.Build(program, findings, time.Now())
 	}
-	s.render(w, "report", "base", page)
+	s.render(w, r, "report", "base", page)
 }
 
 func (s *Server) handleReportDownload(w http.ResponseWriter, r *http.Request) {
@@ -768,7 +1043,7 @@ func (s *Server) handleReportPrint(w http.ResponseWriter, r *http.Request) {
 	}
 	findings, _ := s.store.List(r.Context(), store.Query{Program: program})
 	rep := report.Build(program, findings, time.Now())
-	s.render(w, "report_print", "report_print", rep)
+	s.render(w, r, "report_print", "report_print", rep)
 }
 
 // handleReportExport mengunduh draft terformat template platform (HackerOne /
@@ -822,7 +1097,7 @@ type programsPage struct {
 
 func (s *Server) handlePrograms(w http.ResponseWriter, r *http.Request) {
 	progs, _ := s.store.ListPrograms(r.Context())
-	s.render(w, "programs", "base", programsPage{
+	s.render(w, r, "programs", "base", programsPage{
 		Nav: "programs", Title: "Programs", CSRF: s.csrfToken(r), Programs: progs,
 	})
 }
@@ -850,7 +1125,7 @@ func (s *Server) handleProgramEdit(w http.ResponseWriter, r *http.Request) {
 			page.IsNew = false
 		}
 	}
-	s.render(w, "program_edit", "base", page)
+	s.render(w, r, "program_edit", "base", page)
 }
 
 func (s *Server) handleProgramSave(w http.ResponseWriter, r *http.Request) {
@@ -877,7 +1152,7 @@ func (s *Server) handleProgramSave(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(page.Errors) > 0 {
-		s.render(w, "program_edit", "base", page)
+		s.render(w, r, "program_edit", "base", page)
 		return
 	}
 	if err := s.store.SaveProgram(r.Context(), store.Program{Name: name, InScope: inScope, OutScope: outScope}); err != nil {
@@ -912,7 +1187,7 @@ func (s *Server) handleProgramPreview(w http.ResponseWriter, r *http.Request) {
 		d := guard.Evaluate(t)
 		res.Rows = append(res.Rows, previewRow{Target: d.Target, Allowed: d.Allowed, Reason: string(d.Reason)})
 	}
-	s.renderPartial(w, "program_edit", "program_preview", res)
+	s.renderPartial(w, r, "program_edit", "program_preview", res)
 }
 
 // ---- Audit ----
@@ -945,7 +1220,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		page.Events, _ = s.audit.List(r.Context(), audit.Filter{Program: program, Limit: 200})
 		page.Integrity, _ = s.audit.Verify(r.Context())
 	}
-	s.render(w, "audit", "base", page)
+	s.render(w, r, "audit", "base", page)
 }
 
 // ---- Dashboard ----
@@ -1039,7 +1314,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return a.Program < b.Program
 	})
 
-	s.render(w, "dashboard", "base", page)
+	s.render(w, r, "dashboard", "base", page)
 }
 
 // ---- SAST (plugin) ----
@@ -1076,7 +1351,7 @@ func (s *Server) handleSAST(w http.ResponseWriter, r *http.Request) {
 	page := s.sastBasePage()
 	page.Program = strings.TrimSpace(r.URL.Query().Get("program"))
 	page.CSRF = s.csrfToken(r)
-	s.render(w, "sast", "base", page)
+	s.render(w, r, "sast", "base", page)
 }
 
 // handleSASTRun menjalankan satu adapter SAST pada subpath DI DALAM sastRoot.
@@ -1095,18 +1370,18 @@ func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
 
 	if !page.Enabled {
 		page.Error = "SAST dinonaktifkan. Jalankan server dengan -sast-root <dir>."
-		s.render(w, "sast", "base", page)
+		s.render(w, r, "sast", "base", page)
 		return
 	}
 	if page.Program == "" {
 		page.Error = "Program wajib diisi."
-		s.render(w, "sast", "base", page)
+		s.render(w, r, "sast", "base", page)
 		return
 	}
 	eng, ok := sast.Lookup(page.Engine)
 	if !ok {
 		page.Error = "Adapter SAST tidak dikenal: " + page.Engine
-		s.render(w, "sast", "base", page)
+		s.render(w, r, "sast", "base", page)
 		return
 	}
 
@@ -1120,7 +1395,7 @@ func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		page.Error = "Path ditolak: " + err.Error()
-		s.render(w, "sast", "base", page)
+		s.render(w, r, "sast", "base", page)
 		return
 	}
 
@@ -1128,11 +1403,11 @@ func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
 	res, err := sast.Run(r.Context(), dir, page.Subpath, page.Program, runID, []sast.Engine{eng}, s.store, s.audit)
 	if err != nil {
 		page.Error = "Analisis gagal: " + err.Error()
-		s.render(w, "sast", "base", page)
+		s.render(w, r, "sast", "base", page)
 		return
 	}
 	page.Result = &sastResult{Engine: eng.Name(), Path: page.Subpath, Saved: res.Saved, Duplicates: res.Duplicates}
-	s.render(w, "sast", "base", page)
+	s.render(w, r, "sast", "base", page)
 }
 
 // ---- gRPC (enumerasi) ----
@@ -1159,10 +1434,10 @@ type grpcPage struct {
 func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	page := grpcPage{
 		Nav: "grpc", Title: "gRPC", CSRF: s.csrfToken(r),
-		Program: strings.TrimSpace(r.URL.Query().Get("program")),
+		Program:  strings.TrimSpace(r.URL.Query().Get("program")),
 		Programs: s.programNames(r.Context()), EngineName: s.grpcEngine.Name(),
 	}
-	s.render(w, "grpc", "base", page)
+	s.render(w, r, "grpc", "base", page)
 }
 
 // handleGRPCRun mengenumerasi target gRPC (host:port) via reflection. Tiap host
@@ -1182,19 +1457,19 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 	targets := splitLines(r.FormValue("targets"))
 	if page.Program == "" || len(targets) == 0 {
 		page.Error = "Program dan minimal satu target host:port wajib diisi."
-		s.render(w, "grpc", "base", page)
+		s.render(w, r, "grpc", "base", page)
 		return
 	}
 	prog, err := s.store.GetProgram(r.Context(), page.Program)
 	if err != nil {
 		page.Error = "Program belum punya scope tersimpan — simpan scope-nya dulu di halaman Programs."
-		s.render(w, "grpc", "base", page)
+		s.render(w, r, "grpc", "base", page)
 		return
 	}
 	guard, errs := scope.New(prog.InScope, prog.OutScope)
 	if len(errs) > 0 {
 		page.Error = "Scope program tak valid: " + errs[0].Error()
-		s.render(w, "grpc", "base", page)
+		s.render(w, r, "grpc", "base", page)
 		return
 	}
 
@@ -1228,7 +1503,7 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	page.Result = res
-	s.render(w, "grpc", "base", page)
+	s.render(w, r, "grpc", "base", page)
 }
 
 // ---- Capture (reverse proxy perekam) ----
@@ -1309,7 +1584,7 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 	if run := strings.TrimSpace(r.URL.Query().Get("run")); run != "" {
 		page.Note = fmt.Sprintf("%s endpoint dipromosikan jadi scan %s — lihat Findings/Audit.", r.URL.Query().Get("n"), run)
 	}
-	s.render(w, "capture", "base", page)
+	s.render(w, r, "capture", "base", page)
 }
 
 // handleCaptureStart membuka gateway reverse-proxy ke satu target in-scope. Target
@@ -1330,24 +1605,24 @@ func (s *Server) handleCaptureStart(w http.ResponseWriter, r *http.Request) {
 
 	if program == "" || target == "" {
 		page.Error = "Program dan target wajib diisi."
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 	if s.getCapture(program) != nil {
 		page.Error = "Sesi capture untuk program ini sudah berjalan — hentikan dulu."
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 	prog, err := s.store.GetProgram(r.Context(), program)
 	if err != nil {
 		page.Error = "Program belum punya scope tersimpan — simpan scope-nya dulu di halaman Programs."
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 	guard, errs := scope.New(prog.InScope, prog.OutScope)
 	if len(errs) > 0 {
 		page.Error = "Scope program tak valid: " + errs[0].Error()
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 
@@ -1368,13 +1643,13 @@ func (s *Server) handleCaptureStart(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.auditAppend(r.Context(), audit.Event{Kind: "capture.start", Program: program, Target: target, Allowed: false, Reason: "out-of-scope", Message: err.Error()})
 		page.Error = "Tidak bisa memulai gateway: " + err.Error()
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 	addr, stop, err := gw.Listen("127.0.0.1:0")
 	if err != nil {
 		page.Error = "Gagal membuka listener: " + err.Error()
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 	s.setCapture(program, &captureSession{
@@ -1414,21 +1689,21 @@ func (s *Server) handleCapturePromote(w http.ResponseWriter, r *http.Request) {
 	if program == "" || len(targets) == 0 {
 		page := s.capturePageFor(r, program)
 		page.Error = "Pilih minimal satu endpoint untuk di-promote."
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 	prog, err := s.store.GetProgram(r.Context(), program)
 	if err != nil {
 		page := s.capturePageFor(r, program)
 		page.Error = "Program belum punya scope tersimpan."
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 	guard, errs := scope.New(prog.InScope, prog.OutScope)
 	if len(errs) > 0 {
 		page := s.capturePageFor(r, program)
 		page.Error = "Scope program tak valid: " + errs[0].Error()
-		s.render(w, "capture", "base", page)
+		s.render(w, r, "capture", "base", page)
 		return
 	}
 	runID := s.enqueueScan(program, guard, nil, targets, rps, nil)
@@ -1459,7 +1734,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	if s.vault != nil {
 		page.Secrets, _ = s.vault.List(r.Context(), scope)
 	}
-	s.render(w, "settings", "base", page)
+	s.render(w, r, "settings", "base", page)
 }
 
 func (s *Server) handleAddSecret(w http.ResponseWriter, r *http.Request) {
@@ -1531,11 +1806,28 @@ func (s *Server) programNames(ctx context.Context) []string {
 	return out
 }
 
-func (s *Server) render(w http.ResponseWriter, page, name string, data any) {
+// shellData membungkus data halaman penuh (yang dirender lewat "base") dengan
+// konteks chrome: pengguna & peran saat ini untuk topbar + menu admin. Template
+// isi tetap menerima data aslinya lewat .Body, jadi tak ada struct halaman yang
+// perlu tahu soal auth.
+type shellData struct {
+	User   string
+	Role   string
+	AuthOn bool
+	Body   any
+}
+
+func (s *Server) render(w http.ResponseWriter, r *http.Request, page, name string, data any) {
 	t := s.pages[page]
 	if t == nil {
 		http.Error(w, "template tidak ada: "+page, http.StatusInternalServerError)
 		return
+	}
+	// Hanya halaman penuh (base) dibungkus; partial HTMX & halaman mandiri
+	// (login, report_print) menerima datanya langsung.
+	if name == "base" {
+		user, role := s.currentUser(r)
+		data = shellData{User: user, Role: string(role), AuthOn: !s.authDisabled, Body: data}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, name, data); err != nil {
@@ -1543,8 +1835,8 @@ func (s *Server) render(w http.ResponseWriter, page, name string, data any) {
 	}
 }
 
-func (s *Server) renderPartial(w http.ResponseWriter, page, name string, data any) {
-	s.render(w, page, name, data)
+func (s *Server) renderPartial(w http.ResponseWriter, r *http.Request, page, name string, data any) {
+	s.render(w, r, page, name, data)
 }
 
 // splitLines memecah textarea jadi daftar entri: trim, buang baris kosong dan
@@ -1588,7 +1880,7 @@ func safeFilename(s string) string {
 	return b.String()
 }
 
-func parseTemplates(version string, authOn bool) (map[string]*template.Template, error) {
+func parseTemplates(version string) (map[string]*template.Template, error) {
 	funcs := template.FuncMap{
 		"sevClass":    func(s finding.Severity) string { return "sev-" + strings.ToLower(string(s)) },
 		"statusClass": func(s finding.Status) string { return "st-" + strings.ToLower(string(s)) },
@@ -1596,11 +1888,11 @@ func parseTemplates(version string, authOn bool) (map[string]*template.Template,
 		"add":         func(a, b int) int { return a + b },
 		"strs":        func(v ...string) []string { return v },
 		"appVersion":  func() string { return version },
-		"authOn":      func() bool { return authOn },
 	}
 	sets := map[string][]string{
 		"dashboard":    {"templates/base.html", "templates/dashboard.html"},
 		"login":        {"templates/login.html"},
+		"users":        {"templates/base.html", "templates/users.html"},
 		"sast":         {"templates/base.html", "templates/sast.html"},
 		"grpc":         {"templates/base.html", "templates/grpc.html"},
 		"capture":      {"templates/base.html", "templates/capture.html"},

@@ -3,46 +3,48 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>bughound · {{.Title}}</title>
+  <title>bughound · {{.Body.Title}}</title>
   <link rel="icon" type="image/png" href="/static/bughound-logo.png">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
 </head>
-<body hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<body hx-headers='{"X-CSRF-Token": "{{.Body.CSRF}}"}'>
   <div class="shell">
     <aside class="sidebar">
       <div class="brand"><img class="logo-img" src="/static/bughound-logo.png" alt="bughound" width="30" height="30"> bughound</div>
       <nav>
-        <a href="/dashboard" class="{{if eq .Nav "dashboard"}}active{{end}}">Dashboard</a>
-        <a href="/programs" class="{{if eq .Nav "programs"}}active{{end}}">Programs</a>
-        <a href="/scan{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "scan"}}active{{end}}">Scan</a>
-        <a href="/sast{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "sast"}}active{{end}}">SAST</a>
-        <a href="/grpc{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "grpc"}}active{{end}}">gRPC</a>
-        <a href="/capture{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "capture"}}active{{end}}">Capture</a>
-        <a href="/findings{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "findings"}}active{{end}}">Findings</a>
-        <a href="/report{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "report"}}active{{end}}">Reports</a>
-        <a href="/audit{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "audit"}}active{{end}}">Audit</a>
-        <a href="/settings" class="{{if eq .Nav "settings"}}active{{end}}">Settings</a>
+        <a href="/dashboard" class="{{if eq .Body.Nav "dashboard"}}active{{end}}">Dashboard</a>
+        <a href="/programs" class="{{if eq .Body.Nav "programs"}}active{{end}}">Programs</a>
+        <a href="/scan{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "scan"}}active{{end}}">Scan</a>
+        <a href="/sast{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "sast"}}active{{end}}">SAST</a>
+        <a href="/grpc{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "grpc"}}active{{end}}">gRPC</a>
+        <a href="/capture{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "capture"}}active{{end}}">Capture</a>
+        <a href="/findings{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "findings"}}active{{end}}">Findings</a>
+        <a href="/report{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "report"}}active{{end}}">Reports</a>
+        <a href="/audit{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "audit"}}active{{end}}">Audit</a>
+        {{if eq .Role "admin"}}<a href="/users" class="{{if eq .Body.Nav "users"}}active{{end}}">Users</a>{{end}}
+        <a href="/settings" class="{{if eq .Body.Nav "settings"}}active{{end}}">Settings</a>
       </nav>
       <div class="sidebar-foot">
         <div class="pill st-confirmed small">scope guard aktif</div>
         <div class="muted small">engine: mock (tanpa jaringan)</div>
         <div class="muted small">bughound {{appVersion}}</div>
-        {{if authOn}}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="linklike">Keluar</button></form>{{end}}
+        {{if .User}}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf" value="{{.Body.CSRF}}"><button type="submit" class="linklike">Keluar</button></form>{{end}}
       </div>
     </aside>
     <main class="content">
       <header class="topbar">
         <div class="topbar-left">
-          <div class="title">{{.Title}}</div>
-          {{if .Program}}<span class="chip ok">program: {{.Program}}</span>{{end}}
+          <div class="title">{{.Body.Title}}</div>
+          {{if .Body.Program}}<span class="chip ok">program: {{.Body.Program}}</span>{{end}}
         </div>
         <div class="topbar-right">
           <span class="pill st-confirmed small"><span class="dot ok"></span>scope guard: default-deny</span>
+          {{if .User}}<span class="chip user" title="pengguna masuk">{{.User}} · {{.Role}}</span>{{end}}
         </div>
       </header>
       <section class="bodywrap">
-        {{template "content" .}}
+        {{template "content" .Body}}
       </section>
     </main>
   </div>

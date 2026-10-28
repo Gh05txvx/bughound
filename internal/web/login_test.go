@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -8,27 +9,43 @@ import (
 	"testing"
 
 	"bughound/internal/audit"
+	"bughound/internal/auth"
 	"bughound/internal/engine"
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/secret"
 	"bughound/internal/store"
 )
 
-func newAuthServer(t *testing.T, pass string) *Server {
+// mkUser membuat satu akun di store (helper test RBAC).
+func mkUser(t *testing.T, us store.UserStore, username, password string, role auth.Role) {
 	t.Helper()
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		t.Fatalf("HashPassword: %v", err)
+	}
+	if err := us.CreateUser(context.Background(), store.User{Username: username, Role: string(role), PassHash: hash}); err != nil {
+		t.Fatalf("CreateUser %s: %v", username, err)
+	}
+}
+
+// newAuthServer membuat server dengan login WAJIB dan satu admin bootstrap.
+func newAuthServer(t *testing.T, adminUser, adminPass string) (*Server, *store.Mem) {
+	t.Helper()
+	st := store.NewMem()
+	mkUser(t, st, adminUser, adminPass, auth.RoleAdmin)
 	k, _ := secret.NewRandomKey()
 	srv, err := NewServer(Config{
-		Store:      store.NewMem(),
-		Engines:    []engine.Engine{nuclei.Mock{}},
-		Vault:      secret.NewMemVault(secret.NewKeyring(k)),
-		Audit:      audit.NewMemLog([]byte("k")),
-		AuthSecret: pass,
+		Store:   st,
+		Users:   st,
+		Engines: []engine.Engine{nuclei.Mock{}},
+		Vault:   secret.NewMemVault(secret.NewKeyring(k)),
+		Audit:   audit.NewMemLog([]byte("k")),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { srv.Close() })
-	return srv
+	return srv, st
 }
 
 // postForm mengirim POST state-changing dengan CSRF (dan opsional session cookie).
@@ -57,16 +74,16 @@ func cookieValue(rec *httptest.ResponseRecorder, name string) string {
 }
 
 func TestLoginSessionFlow(t *testing.T) {
-	srv := newAuthServer(t, "s3kret")
+	srv, _ := newAuthServer(t, "admin", "s3kret")
 
-	// GET /login → 200 + logo + form (tanpa perlu kredensial).
+	// GET /login → 200 + logo + form username/password (tanpa perlu kredensial).
 	gr := httptest.NewRecorder()
 	srv.ServeHTTP(gr, httptest.NewRequest("GET", "/login", nil))
 	if gr.Code != http.StatusOK {
 		t.Fatalf("GET /login = %d, ingin 200", gr.Code)
 	}
-	if b := gr.Body.String(); !strings.Contains(b, "Masuk") || !strings.Contains(b, "bughound-logo.png") {
-		t.Errorf("halaman login harus punya form + logo:\n%s", b)
+	if b := gr.Body.String(); !strings.Contains(b, "Masuk") || !strings.Contains(b, "bughound-logo.png") || !strings.Contains(b, "Username") {
+		t.Errorf("halaman login harus punya form username + logo:\n%s", b)
 	}
 	csrf := cookieValue(gr, csrfCookie)
 	if csrf == "" {
@@ -74,16 +91,22 @@ func TestLoginSessionFlow(t *testing.T) {
 	}
 
 	// Password salah → 401 + pesan.
-	rec := postForm(srv, "/login", url.Values{"password": {"salah"}, "csrf": {csrf}}, csrf, "")
-	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "Password salah") {
+	rec := postForm(srv, "/login", url.Values{"username": {"admin"}, "password": {"salah"}, "csrf": {csrf}}, csrf, "")
+	if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "salah") {
 		t.Fatalf("password salah = %d, ingin 401 + pesan:\n%s", rec.Code, rec.Body.String())
 	}
 	if cookieValue(rec, sessionCookie) != "" {
 		t.Error("password salah tak boleh memberi sesi")
 	}
 
-	// Password benar → 303 /dashboard + session cookie.
-	rec = postForm(srv, "/login", url.Values{"password": {"s3kret"}, "csrf": {csrf}}, csrf, "")
+	// Username tak dikenal → 401 (tak membocorkan bahwa user tak ada).
+	un := postForm(srv, "/login", url.Values{"username": {"nobody"}, "password": {"s3kret"}, "csrf": {csrf}}, csrf, "")
+	if un.Code != http.StatusUnauthorized {
+		t.Fatalf("username tak dikenal = %d, ingin 401", un.Code)
+	}
+
+	// Kredensial benar → 303 /dashboard + session cookie.
+	rec = postForm(srv, "/login", url.Values{"username": {"admin"}, "password": {"s3kret"}, "csrf": {csrf}}, csrf, "")
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/dashboard" {
 		t.Fatalf("login benar = %d loc=%q, ingin 303 /dashboard", rec.Code, rec.Header().Get("Location"))
 	}
@@ -116,9 +139,9 @@ func TestLoginSessionFlow(t *testing.T) {
 }
 
 func TestLoginCSRFRequired(t *testing.T) {
-	srv := newAuthServer(t, "s3kret")
-	// POST /login tanpa token CSRF → ditolak (403), meski password benar.
-	req := httptest.NewRequest("POST", "/login", strings.NewReader(url.Values{"password": {"s3kret"}}.Encode()))
+	srv, _ := newAuthServer(t, "admin", "s3kret")
+	// POST /login tanpa token CSRF → ditolak (403), meski kredensial benar.
+	req := httptest.NewRequest("POST", "/login", strings.NewReader(url.Values{"username": {"admin"}, "password": {"s3kret"}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
@@ -128,7 +151,7 @@ func TestLoginCSRFRequired(t *testing.T) {
 }
 
 func TestNoAuthSkipsLogin(t *testing.T) {
-	// Tanpa AuthSecret: tak ada login; /login mengalihkan ke /dashboard, akses bebas.
+	// AuthDisabled: tak ada login; /login mengalihkan ke /dashboard, akses bebas.
 	srv, _ := newTestServer(t)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/login", nil))

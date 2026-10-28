@@ -63,6 +63,12 @@ func (s *SQLite) init() error {
 			out_scope  TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS users (
+			username   TEXT PRIMARY KEY,
+			role       TEXT NOT NULL,
+			pass_hash  TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		);`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -310,6 +316,94 @@ func decodeProgram(name, in, out, upd string) *Program {
 	_ = json.Unmarshal([]byte(out), &p.OutScope)
 	p.UpdatedAt, _ = time.Parse(time.RFC3339, upd)
 	return p
+}
+
+// ---- UserStore (RBAC) ----
+
+// CreateUser: lihat UserStore.CreateUser.
+func (s *SQLite) CreateUser(ctx context.Context, u User) error {
+	if strings.TrimSpace(u.Username) == "" {
+		return fmt.Errorf("store: username wajib")
+	}
+	if u.Created.IsZero() {
+		u.Created = s.now().UTC()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO users (username, role, pass_hash, created_at) VALUES (?,?,?,?)`,
+		u.Username, u.Role, u.PassHash, u.Created.UTC().Format(time.RFC3339))
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			return ErrUserExists
+		}
+		return fmt.Errorf("store: buat user: %w", err)
+	}
+	return nil
+}
+
+// GetUser: lihat UserStore.GetUser.
+func (s *SQLite) GetUser(ctx context.Context, username string) (*User, error) {
+	var role, hash, created string
+	err := s.db.QueryRowContext(ctx, `SELECT role, pass_hash, created_at FROM users WHERE username=?`, username).Scan(&role, &hash, &created)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: ambil user: %w", err)
+	}
+	t, _ := time.Parse(time.RFC3339, created)
+	return &User{Username: username, Role: role, PassHash: hash, Created: t}, nil
+}
+
+// ListUsers: lihat UserStore.ListUsers.
+func (s *SQLite) ListUsers(ctx context.Context) ([]*User, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT username, role, pass_hash, created_at FROM users ORDER BY username`)
+	if err != nil {
+		return nil, fmt.Errorf("store: daftar user: %w", err)
+	}
+	defer rows.Close()
+	var out []*User
+	for rows.Next() {
+		var name, role, hash, created string
+		if err := rows.Scan(&name, &role, &hash, &created); err != nil {
+			return nil, err
+		}
+		t, _ := time.Parse(time.RFC3339, created)
+		out = append(out, &User{Username: name, Role: role, PassHash: hash, Created: t})
+	}
+	return out, rows.Err()
+}
+
+// DeleteUser: lihat UserStore.DeleteUser.
+func (s *SQLite) DeleteUser(ctx context.Context, username string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE username=?`, username)
+	if err != nil {
+		return fmt.Errorf("store: hapus user: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetPassword: lihat UserStore.SetPassword.
+func (s *SQLite) SetPassword(ctx context.Context, username, passHash string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET pass_hash=? WHERE username=?`, passHash, username)
+	if err != nil {
+		return fmt.Errorf("store: set password: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CountUsers: lihat UserStore.CountUsers.
+func (s *SQLite) CountUsers(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: hitung user: %w", err)
+	}
+	return n, nil
 }
 
 // Close menutup database.
