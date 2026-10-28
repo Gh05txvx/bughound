@@ -35,6 +35,10 @@ RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
 # --- Stage 3: runtime ---
 FROM debian:bookworm-slim AS runtime
 ARG WITH_ZAP=false
+# ZAP: versi di-pin + SHA-256 diverifikasi (unduhan pihak ketiga → fail-closed
+# bila checksum tak cocok). Bump versi: ganti keduanya (lihat rilis zaproxy).
+ARG ZAP_VERSION=2.17.0
+ARG ZAP_SHA256=efe799aaa3627db683b43f00c9c210aea0b75c00cc8f0a0f0434d12bb3ddde5a
 
 # semgrep (SAST) via pip + CA certs + libpcap0.8 (runtime naabu).
 RUN apt-get update \
@@ -46,9 +50,10 @@ RUN apt-get update \
 RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
       apt-get update; \
       apt-get install -y --no-install-recommends default-jre-headless curl; \
-      curl -fsSL https://github.com/zaproxy/zaproxy/releases/download/v2.15.0/ZAP_2.15.0_Linux.tar.gz -o /tmp/zap.tgz; \
+      curl -fsSL "https://github.com/zaproxy/zaproxy/releases/download/v${ZAP_VERSION}/ZAP_${ZAP_VERSION}_Linux.tar.gz" -o /tmp/zap.tgz; \
+      echo "${ZAP_SHA256}  /tmp/zap.tgz" | sha256sum -c -; \
       tar -xzf /tmp/zap.tgz -C /opt; rm /tmp/zap.tgz; \
-      ln -s /opt/ZAP_2.15.0/zap.sh /usr/local/bin/zap.sh; \
+      ln -s "/opt/ZAP_${ZAP_VERSION}/zap.sh" /usr/local/bin/zap.sh; \
       apt-get clean; rm -rf /var/lib/apt/lists/*; \
     fi
 
