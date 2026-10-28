@@ -63,6 +63,9 @@ type Server struct {
 	captureMu sync.Mutex
 	captures  map[string]*captureSession // sesi capture reverse-proxy aktif per program
 
+	sessMu   sync.Mutex
+	sessions map[string]time.Time // token sesi login → waktu dibuat (bila AuthSecret diset)
+
 	pages map[string]*template.Template
 }
 
@@ -98,7 +101,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if version == "" {
 		version = "dev"
 	}
-	pages, err := parseTemplates(version)
+	pages, err := parseTemplates(version, cfg.AuthSecret != "")
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +117,7 @@ func NewServer(cfg Config) (*Server, error) {
 		version:  version,
 		sastRoot: strings.TrimSpace(cfg.SASTRoot),
 		captures: map[string]*captureSession{},
+		sessions: map[string]time.Time{},
 		pages:    pages,
 	}
 	if cfg.GRPCReal {
@@ -148,15 +152,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 
-	if !s.checkAuth(w, r) {
+	// CSRF: pastikan cookie token ada lebih dulu (juga agar form login punya token),
+	// dan sediakan ke handler lewat context untuk di-render ke form/hx-headers.
+	token := s.ensureCSRFCookie(w, r)
+	r = r.WithContext(context.WithValue(r.Context(), csrfCtxKey{}, token))
+
+	// Auth: bila AuthSecret diset, wajib sesi login (atau Basic auth untuk otomasi).
+	if !s.requireAuth(w, r) {
 		return
 	}
 
-	// CSRF: pastikan cookie token ada; sediakan ke handler lewat context agar
-	// ter-render ke form/hx-headers. Tiap permintaan state-changing wajib
-	// mengirim token yang cocok (double-submit) — memblok CSRF lintas-situs.
-	token := s.ensureCSRFCookie(w, r)
-	r = r.WithContext(context.WithValue(r.Context(), csrfCtxKey{}, token))
+	// Tiap permintaan state-changing wajib mengirim token yang cocok (double-submit)
+	// — memblok CSRF lintas-situs. Berlaku juga untuk POST /login.
 	if isStateChanging(r.Method) && !validCSRF(r, token) {
 		http.Error(w, "CSRF: token tidak valid atau permintaan lintas-situs", http.StatusForbidden)
 		return
@@ -165,17 +172,127 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-// checkAuth menegakkan HTTP Basic bila authSecret diset (username diabaikan).
-func (s *Server) checkAuth(w http.ResponseWriter, r *http.Request) bool {
-	if s.authSecret == "" {
+// requireAuth menegakkan autentikasi bila AuthSecret diset. Manusia memakai
+// halaman login ber-sesi (cookie); otomasi/CLI boleh memakai HTTP Basic. Tanpa
+// AuthSecret, akses terbuka (hanya aman di localhost). Mengembalikan false bila
+// respons sudah ditulis (ditolak/redirect).
+func (s *Server) requireAuth(w http.ResponseWriter, r *http.Request) bool {
+	if s.authSecret == "" || authExempt(r) || s.authed(r) {
+		return true
+	}
+	// Upaya kredensial eksplisit yang gagal (Basic) → 401 untuk otomasi/CLI.
+	if r.Header.Get("Authorization") != "" {
+		http.Error(w, "autentikasi gagal", http.StatusUnauthorized)
+		return false
+	}
+	// Browser tanpa sesi: arahkan ke halaman login untuk GET; tolak selain itu.
+	if r.Method == http.MethodGet {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return false
+	}
+	http.Error(w, "sesi tidak valid — silakan login", http.StatusUnauthorized)
+	return false
+}
+
+// authExempt: halaman login & aset statis boleh diakses tanpa sesi.
+func authExempt(r *http.Request) bool {
+	return r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/static/")
+}
+
+// authed: sesi login valid ATAU Basic auth cocok (constant-time). Username Basic
+// diabaikan.
+func (s *Server) authed(r *http.Request) bool {
+	if s.validSession(r) {
 		return true
 	}
 	if _, pass, ok := r.BasicAuth(); ok && subtle.ConstantTimeCompare([]byte(pass), []byte(s.authSecret)) == 1 {
 		return true
 	}
-	w.Header().Set("WWW-Authenticate", `Basic realm="bughound"`)
-	http.Error(w, "autentikasi diperlukan", http.StatusUnauthorized)
 	return false
+}
+
+const sessionCookie = "bh_session"
+const sessionTTL = 12 * time.Hour
+
+func (s *Server) newSession(w http.ResponseWriter, r *http.Request) {
+	tok := randToken()
+	s.sessMu.Lock()
+	s.sessions[tok] = time.Now()
+	s.sessMu.Unlock()
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: tok, Path: "/",
+		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil,
+	})
+}
+
+func (s *Server) validSession(r *http.Request) bool {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil || c.Value == "" {
+		return false
+	}
+	s.sessMu.Lock()
+	defer s.sessMu.Unlock()
+	created, ok := s.sessions[c.Value]
+	if !ok {
+		return false
+	}
+	if time.Since(created) > sessionTTL {
+		delete(s.sessions, c.Value)
+		return false
+	}
+	return true
+}
+
+func (s *Server) destroySession(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
+		s.sessMu.Lock()
+		delete(s.sessions, c.Value)
+		s.sessMu.Unlock()
+	}
+	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+}
+
+// ---- Login ----
+
+type loginPage struct {
+	CSRF    string
+	Error   string
+	Version string
+}
+
+func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
+	if s.authSecret == "" || s.validSession(r) {
+		http.Redirect(w, r, "/dashboard", http.StatusFound)
+		return
+	}
+	s.render(w, "login", "login", loginPage{CSRF: s.csrfToken(r), Version: s.version})
+}
+
+func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	if s.authSecret == "" {
+		http.Redirect(w, r, "/dashboard", http.StatusFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(s.authSecret)) == 1 {
+		s.newSession(w, r)
+		s.auditAppend(r.Context(), audit.Event{Kind: "auth.login", Allowed: true})
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+	s.auditAppend(r.Context(), audit.Event{Kind: "auth.login", Allowed: false, Message: "password salah"})
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusUnauthorized)
+	_ = s.pages["login"].ExecuteTemplate(w, "login", loginPage{CSRF: s.csrfToken(r), Error: "Password salah.", Version: s.version})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	s.destroySession(w, r)
+	s.auditAppend(r.Context(), audit.Event{Kind: "auth.logout", Allowed: true})
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (s *Server) ensureCSRFCookie(w http.ResponseWriter, r *http.Request) string {
@@ -240,6 +357,9 @@ func (s *Server) routes() {
 	staticSub, _ := fs.Sub(staticFS, "static")
 	s.mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServerFS(staticSub)))
 
+	s.mux.HandleFunc("GET /login", s.handleLoginForm)
+	s.mux.HandleFunc("POST /login", s.handleLoginSubmit)
+	s.mux.HandleFunc("POST /logout", s.handleLogout)
 	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 	})
@@ -1468,7 +1588,7 @@ func safeFilename(s string) string {
 	return b.String()
 }
 
-func parseTemplates(version string) (map[string]*template.Template, error) {
+func parseTemplates(version string, authOn bool) (map[string]*template.Template, error) {
 	funcs := template.FuncMap{
 		"sevClass":    func(s finding.Severity) string { return "sev-" + strings.ToLower(string(s)) },
 		"statusClass": func(s finding.Status) string { return "st-" + strings.ToLower(string(s)) },
@@ -1476,9 +1596,11 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 		"add":         func(a, b int) int { return a + b },
 		"strs":        func(v ...string) []string { return v },
 		"appVersion":  func() string { return version },
+		"authOn":      func() bool { return authOn },
 	}
 	sets := map[string][]string{
 		"dashboard":    {"templates/base.html", "templates/dashboard.html"},
+		"login":        {"templates/login.html"},
 		"sast":         {"templates/base.html", "templates/sast.html"},
 		"grpc":         {"templates/base.html", "templates/grpc.html"},
 		"capture":      {"templates/base.html", "templates/capture.html"},

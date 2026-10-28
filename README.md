@@ -1,5 +1,7 @@
 # bughound
 
+<p align="center"><img src="assets/bughound-mascot.png" alt="bughound" width="180"></p>
+
 **Bug Bounty DAST Orchestrator** — bukan scanner, melainkan *orchestrator* yang menyatukan engine recon & DAST yang sudah matang (nuclei, httpx, subfinder, ZAP, dll), menormalkan hasilnya ke satu skema temuan seragam, lalu membantu triase dan menghasilkan draft report yang siap diverifikasi manual sebelum disubmit.
 
 > ⚠️ **Hanya untuk pengujian yang sah.** bughound adalah tool offensive (DAST). Gunakan hanya terhadap aset yang berada dalam scope program bounty, lab milik sendiri, atau sistem dengan izin eksplisit. **Scope guard default-deny** menolak target yang tidak terbukti in-scope, dan **tidak ada auto-submit** — report selalu berakhir sebagai draft.
@@ -45,13 +47,26 @@ Flag:
 - `-addr` — alamat bind (default `127.0.0.1:8787`, localhost saja).
 - `-db` — path file SQLite (default `bughound.db`; kosongkan untuk in-memory).
 - `-engine` — `mock` (default, tanpa jaringan) atau `real` (engine nyata via proxy scope guard).
-- `-auth` — password HTTP Basic (atau env `BUGHOUND_AUTH`); kosong = tanpa auth (hanya aman di localhost).
+- `-auth` — aktifkan autentikasi (password; atau env `BUGHOUND_AUTH`). Browser mendapat **halaman login ber-logo** (sesi cookie `HttpOnly`+`SameSite=Strict`, ada tombol **Keluar**); otomasi/CLI boleh tetap pakai **HTTP Basic**. Kosong = tanpa auth (hanya aman di localhost).
 - `-key` — path kunci master enkripsi secret (atau env `BUGHOUND_MASTER_KEY`); `-rotate-key` merotasinya.
 - `-sast-root` — root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini (path scope, default-deny).
 - `-ffuf-wordlist` — wordlist untuk engine ffuf nyata (kosong = wordlist bawaan).
 - `-zap-mode` — mode ZAP nyata: `quick` (default) · `baseline` · `full` (spider + active scan via Automation Framework).
 - `-grpc` — engine enumerasi gRPC: `mock` (default) · `real` (grpcurl). `-grpc-plaintext` untuk gRPC tanpa TLS.
 - `-version` — cetak versi build lalu keluar.
+
+## Cara pakai (alur kerja)
+
+1. **Jalankan** `go run ./cmd/bughound` → buka http://127.0.0.1:8787 (default engine **mock**: tanpa jaringan, aman dicoba).
+2. **Programs** → buat program & isi **scope** (in-scope + out-of-scope). Wajib: semua target dicek scope guard (default-deny).
+3. **Scan** → pilih program, isi target/seed (atau tempel spec **OpenAPI/Swagger**, atau isi **upstream proxy / rantai** bila target mewajibkan) → jalankan. Scan jalan di latar belakang; pantau statusnya di tempat.
+4. **Capture** (opsional) → bughound jadi reverse proxy ke satu target in-scope; browsing manual lewat listener lokal, lalu **promote** endpoint terekam jadi scan.
+5. **gRPC / SAST** (opsional) → enumerasi + fuzz gRPC, atau analisis statis kode lokal (`-sast-root`).
+6. **Findings** → triase temuan (konfirmasi / false-positive / abaikan; filter + aksi massal).
+7. **Reports** → hasilkan **draft** report dari temuan terkonfirmasi (Markdown / cetak-PDF) atau export ke template **HackerOne / Bugcrowd**. Submit tetap **manual** (tanpa auto-submit).
+8. **Audit** → jejak keputusan scope + aktivitas (append-only, ter-anchor).
+
+> Untuk scan **nyata**, pasang engine (lihat *Engine yang didukung & cara pasang*) atau pakai image Docker (engine sudah di dalam), lalu jalankan `-engine real`. Tetap **hanya target in-scope** yang disentuh.
 
 ## Rilis (single binary)
 

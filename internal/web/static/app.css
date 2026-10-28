@@ -42,8 +42,21 @@ body {
   padding: 14px 12px;
   display: flex; flex-direction: column; gap: 16px;
 }
-.brand { font-weight: 600; font-size: 15px; letter-spacing: .2px; }
+.brand { font-weight: 600; font-size: 15px; letter-spacing: .2px; display: flex; align-items: center; gap: 8px; }
 .brand .logo { filter: grayscale(.2); }
+.brand .logo-img { border-radius: 50%; object-fit: cover; flex: 0 0 auto; box-shadow: 0 0 0 1px var(--line); }
+
+/* Login page (halaman ber-sesi saat -auth diset) */
+.login-body { display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+.login-card { width: 320px; max-width: 90vw; background: var(--bg-1); border: 1px solid var(--line); border-radius: 12px; padding: 28px; text-align: center; }
+.login-logo { border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1px var(--line); margin-bottom: 8px; }
+.login-card h1 { margin: 6px 0 2px; font-size: 20px; }
+.login-card form { text-align: left; margin-top: 16px; }
+.login-submit { width: 100%; margin-top: 10px; }
+.login-foot { margin-top: 18px; }
+.logout-form { margin-top: 8px; }
+.linklike { background: none; border: none; color: var(--fg-dim); cursor: pointer; padding: 0; font: inherit; text-decoration: underline; }
+.linklike:hover { color: var(--fg); }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
 .sidebar nav a {
   color: var(--fg-dim); text-decoration: none; padding: 7px 10px;

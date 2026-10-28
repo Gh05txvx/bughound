@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>bughound · {{.Title}}</title>
+  <link rel="icon" type="image/png" href="/static/bughound-logo.png">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
 </head>
 <body hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
   <div class="shell">
     <aside class="sidebar">
-      <div class="brand"><span class="logo">🐾</span> bughound</div>
+      <div class="brand"><img class="logo-img" src="/static/bughound-logo.png" alt="bughound" width="30" height="30"> bughound</div>
       <nav>
         <a href="/dashboard" class="{{if eq .Nav "dashboard"}}active{{end}}">Dashboard</a>
         <a href="/programs" class="{{if eq .Nav "programs"}}active{{end}}">Programs</a>
@@ -27,6 +28,7 @@
         <div class="pill st-confirmed small">scope guard aktif</div>
         <div class="muted small">engine: mock (tanpa jaringan)</div>
         <div class="muted small">bughound {{appVersion}}</div>
+        {{if authOn}}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit" class="linklike">Keluar</button></form>{{end}}
       </div>
     </aside>
     <main class="content">

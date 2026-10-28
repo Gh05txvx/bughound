@@ -197,11 +197,11 @@ func TestAudit_BasicAuthEnforced(t *testing.T) {
 	}
 	t.Cleanup(func() { srv.Close() })
 
-	// Tanpa kredensial -> 401.
+	// Tanpa kredensial (browser) -> redirect ke halaman login ber-sesi.
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/scan", nil))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("tanpa auth harus 401, dapat %d", rec.Code)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("tanpa auth harus redirect ke /login, dapat %d (loc=%q)", rec.Code, rec.Header().Get("Location"))
 	}
 	// Password benar -> 200.
 	req := httptest.NewRequest("GET", "/scan", nil)
