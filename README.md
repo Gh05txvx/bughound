@@ -117,6 +117,19 @@ socks5://127.0.0.1:9050    # hop 2 (mis. Tor)
 
 Alur: `engine → proxy egress bughound (scope guard + pin IP) → hop1 → hop2 → … → target`. **Keamanan tetap utuh** — scope guard & IP-pinning (anti-SSRF/rebinding) berjalan **sebelum** diteruskan; rantai hanya mengganti jalur ke IP yang sudah dicek. Hop tak valid = **fail-closed** (scan tak jalan).
 
+## Capture — reverse proxy perekam (browsing manual → scan)
+
+Halaman **Capture** menjadikan bughound **reverse proxy ke satu target in-scope**: pilih program + target, bughound membuka listener lokal, lalu arahkan browser/tool ke situ dan browsing target seperti biasa. Tiap request yang lewat **direkam** (dedup, dengan status) sebagai kandidat endpoint; centang yang relevan lalu **Promote → scan** (masuk jalur scan yang sama: scope guard + rate limiter + engine).
+
+```
+1. Programs → simpan scope program (mis. in-scope: app.demo.test)
+2. Capture → Program=demo, Target=app.demo.test → Mulai capture
+3. Arahkan browser ke http://127.0.0.1:<port>/ → browsing target
+4. Segarkan kandidat → centang endpoint → Promote → scan
+```
+
+**Keamanan tetap utuh**: gateway memakai transport egress ter-guard yang sama (resolve → tolak IP internal → **pin IP**, bisa ikut rantai upstream), target divalidasi scope guard saat start (**default-deny, fail closed**), dan tiap penerusan **di-scope-check ulang + rate-limited** → **hanya host in-scope** yang pernah diteruskan, bahkan saat browsing manual. Listener loopback bicara HTTP biasa; re-originasi ke target HTTPS ditangani di balik layar (SNI = host target, IP di-pin) → **tak perlu pasang CA cert**. Tanpa auto-submit. Aktivitas tercatat di Audit (`capture.start/stop/promote`, serta penolakan `capture.egress`).
+
 ## Docker (engine ikut di dalam image)
 
 Karena engine nyata tidak di-bundle ke binary, cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan bughound + engine (nuclei, subfinder, httpx, katana, ffuf, semgrep; ZAP opsional). Di dalam container semua engine ada di `PATH`, jadi `-engine real`/`nuclei,ffuf,zap` langsung jalan.

@@ -17,6 +17,7 @@
         <a href="/scan{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "scan"}}active{{end}}">Scan</a>
         <a href="/sast{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "sast"}}active{{end}}">SAST</a>
         <a href="/grpc{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "grpc"}}active{{end}}">gRPC</a>
+        <a href="/capture{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "capture"}}active{{end}}">Capture</a>
         <a href="/findings{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "findings"}}active{{end}}">Findings</a>
         <a href="/report{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "report"}}active{{end}}">Reports</a>
         <a href="/audit{{if .Program}}?program={{.Program}}{{end}}" class="{{if eq .Nav "audit"}}active{{end}}">Audit</a>

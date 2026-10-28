@@ -20,9 +20,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"bughound/internal/audit"
+	"bughound/internal/egress"
 	"bughound/internal/engine"
 	"bughound/internal/engine/grpc"
 	"bughound/internal/finding"
@@ -57,6 +59,9 @@ type Server struct {
 	version string
 	sastRoot string // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
 	grpcEngine grpc.Scanner // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
+
+	captureMu sync.Mutex
+	captures  map[string]*captureSession // sesi capture reverse-proxy aktif per program
 
 	pages map[string]*template.Template
 }
@@ -108,6 +113,7 @@ func NewServer(cfg Config) (*Server, error) {
 		queue:    jobs.New(4),
 		version:  version,
 		sastRoot: strings.TrimSpace(cfg.SASTRoot),
+		captures: map[string]*captureSession{},
 		pages:    pages,
 	}
 	if cfg.GRPCReal {
@@ -119,8 +125,17 @@ func NewServer(cfg Config) (*Server, error) {
 	return s, nil
 }
 
-// Close menghentikan worker pool (menunggu scan yang berjalan selesai).
+// Close menghentikan sesi capture yang aktif lalu worker pool (menunggu scan
+// yang berjalan selesai).
 func (s *Server) Close() error {
+	s.captureMu.Lock()
+	for _, sess := range s.captures {
+		if sess.stop != nil {
+			_ = sess.stop()
+		}
+	}
+	s.captures = map[string]*captureSession{}
+	s.captureMu.Unlock()
 	s.queue.Close()
 	return nil
 }
@@ -233,6 +248,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /sast/run", s.handleSASTRun)
 	s.mux.HandleFunc("GET /grpc", s.handleGRPC)
 	s.mux.HandleFunc("POST /grpc/run", s.handleGRPCRun)
+	s.mux.HandleFunc("GET /capture", s.handleCapture)
+	s.mux.HandleFunc("POST /capture/start", s.handleCaptureStart)
+	s.mux.HandleFunc("POST /capture/stop", s.handleCaptureStop)
+	s.mux.HandleFunc("POST /capture/promote", s.handleCapturePromote)
 	s.mux.HandleFunc("GET /programs", s.handlePrograms)
 	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
@@ -370,12 +389,22 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	// Simpan/perbarui definisi scope program (persisten lintas-restart).
 	_ = s.store.SaveProgram(r.Context(), store.Program{Name: program, InScope: inScope, OutScope: outScope})
 
-	storeRef := s.store
-
 	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
-	// Task memakai ctx milik queue (bukan r.Context()) agar tak dibatalkan saat
-	// response web dikirim.
-	runID := s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
+	runID := s.enqueueScan(program, guard, seeds, targets, rps, proxyChain)
+
+	if run, ok := s.queue.Get(runID); ok {
+		s.renderPartial(w, "scan", "run_status", toRunView(run))
+	}
+}
+
+// enqueueScan menjalankan satu scan di latar belakang (worker pool) dan
+// mengembalikan run id seketika. Satu jalur peluncuran scan dipakai bersama oleh
+// form Scan dan "promote" dari Capture. Task memakai ctx milik queue (bukan
+// r.Context()) agar tak dibatalkan saat response web dikirim. Rate limiter selalu
+// dipasang (tak bisa dimatikan); scope guard menjadi satu-satunya gate.
+func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets []string, rps float64, proxyChain []string) string {
+	storeRef := s.store
+	return s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
 		s.auditAppend(ctx, audit.Event{Kind: "run.start", Program: program, RunID: runID, Message: scanLabel(seeds, targets)})
 
 		auditSink := func(e orchestrator.AuditEvent) {
@@ -411,10 +440,6 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		}
 		return sum, nil
 	})
-
-	if run, ok := s.queue.Get(runID); ok {
-		s.renderPartial(w, "scan", "run_status", toRunView(run))
-	}
 }
 
 func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {
@@ -1086,6 +1111,211 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "grpc", "base", page)
 }
 
+// ---- Capture (reverse proxy perekam) ----
+
+// captureSession adalah satu gateway reverse-proxy aktif untuk sebuah program.
+type captureSession struct {
+	Program string
+	Target  string
+	Addr    string
+	Started time.Time
+	gw      *egress.Gateway
+	stop    func() error
+}
+
+type capturePage struct {
+	Nav      string
+	Title    string
+	Program  string
+	CSRF     string
+	Programs []string
+	Target   string
+	RPS      string
+	Session  *captureSessionView
+	Records  []egress.CaptureRecord
+	Error    string
+	Note     string
+}
+
+type captureSessionView struct {
+	Program string
+	Target  string
+	Addr    string
+	Started string
+	Count   int
+}
+
+func (s *Server) getCapture(program string) *captureSession {
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	return s.captures[program]
+}
+
+func (s *Server) setCapture(program string, sess *captureSession) {
+	s.captureMu.Lock()
+	s.captures[program] = sess
+	s.captureMu.Unlock()
+}
+
+// delCapture menghapus sesi dari peta dan mengembalikannya (nil bila tak ada).
+func (s *Server) delCapture(program string) *captureSession {
+	s.captureMu.Lock()
+	defer s.captureMu.Unlock()
+	sess := s.captures[program]
+	delete(s.captures, program)
+	return sess
+}
+
+func (s *Server) capturePageFor(r *http.Request, program string) capturePage {
+	page := capturePage{
+		Nav: "capture", Title: "Capture", CSRF: s.csrfToken(r),
+		Program: program, Programs: s.programNames(r.Context()), RPS: "10",
+	}
+	if sess := s.getCapture(program); sess != nil {
+		recs := sess.gw.Records()
+		page.Target = sess.Target
+		page.Records = recs
+		page.Session = &captureSessionView{
+			Program: sess.Program, Target: sess.Target, Addr: sess.Addr,
+			Started: sess.Started.Format("15:04:05"), Count: len(recs),
+		}
+	}
+	return page
+}
+
+func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	page := s.capturePageFor(r, program)
+	if run := strings.TrimSpace(r.URL.Query().Get("run")); run != "" {
+		page.Note = fmt.Sprintf("%s endpoint dipromosikan jadi scan %s — lihat Findings/Audit.", r.URL.Query().Get("n"), run)
+	}
+	s.render(w, "capture", "base", page)
+}
+
+// handleCaptureStart membuka gateway reverse-proxy ke satu target in-scope. Target
+// WAJIB lolos scope guard program (fail closed); gateway memakai transport egress
+// ter-guard sehingga hanya host in-scope yang diteruskan.
+func (s *Server) handleCaptureStart(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	program := strings.TrimSpace(r.FormValue("program"))
+	target := strings.TrimSpace(r.FormValue("target"))
+	rps := parseRPS(r.FormValue("rps"))
+
+	page := s.capturePageFor(r, program)
+	page.Target = target
+	page.RPS = r.FormValue("rps")
+
+	if program == "" || target == "" {
+		page.Error = "Program dan target wajib diisi."
+		s.render(w, "capture", "base", page)
+		return
+	}
+	if s.getCapture(program) != nil {
+		page.Error = "Sesi capture untuk program ini sudah berjalan — hentikan dulu."
+		s.render(w, "capture", "base", page)
+		return
+	}
+	prog, err := s.store.GetProgram(r.Context(), program)
+	if err != nil {
+		page.Error = "Program belum punya scope tersimpan — simpan scope-nya dulu di halaman Programs."
+		s.render(w, "capture", "base", page)
+		return
+	}
+	guard, errs := scope.New(prog.InScope, prog.OutScope)
+	if len(errs) > 0 {
+		page.Error = "Scope program tak valid: " + errs[0].Error()
+		s.render(w, "capture", "base", page)
+		return
+	}
+
+	// Audit penolakan egress gateway (host di luar scope saat browsing). Memakai
+	// context.Background karena gateway hidup melampaui request ini.
+	auditSink := func(d egress.Decision) {
+		if d.Allowed {
+			return
+		}
+		s.auditAppend(context.Background(), audit.Event{
+			Kind: "capture.egress", Program: program, Target: d.Target,
+			Allowed: false, Reason: string(d.Reason), Layer: "egress",
+		})
+	}
+	px := egress.New(guard, auditSink)
+	lim := ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5})
+	gw, err := egress.NewGateway(px, target, lim)
+	if err != nil {
+		s.auditAppend(r.Context(), audit.Event{Kind: "capture.start", Program: program, Target: target, Allowed: false, Reason: "out-of-scope", Message: err.Error()})
+		page.Error = "Tidak bisa memulai gateway: " + err.Error()
+		s.render(w, "capture", "base", page)
+		return
+	}
+	addr, stop, err := gw.Listen("127.0.0.1:0")
+	if err != nil {
+		page.Error = "Gagal membuka listener: " + err.Error()
+		s.render(w, "capture", "base", page)
+		return
+	}
+	s.setCapture(program, &captureSession{
+		Program: program, Target: gw.Target(), Addr: addr, Started: time.Now(), gw: gw, stop: stop,
+	})
+	s.auditAppend(r.Context(), audit.Event{Kind: "capture.start", Program: program, Target: gw.Target(), Allowed: true, Message: "listener " + addr})
+	http.Redirect(w, r, "/capture?program="+url.QueryEscape(program), http.StatusSeeOther)
+}
+
+func (s *Server) handleCaptureStop(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	program := strings.TrimSpace(r.FormValue("program"))
+	if sess := s.delCapture(program); sess != nil {
+		if sess.stop != nil {
+			_ = sess.stop()
+		}
+		s.auditAppend(r.Context(), audit.Event{Kind: "capture.stop", Program: program, Target: sess.Target, Allowed: true, Message: fmt.Sprintf("%d kandidat", len(sess.gw.Records()))})
+	}
+	http.Redirect(w, r, "/capture?program="+url.QueryEscape(program), http.StatusSeeOther)
+}
+
+// handleCapturePromote mengubah endpoint terpilih menjadi scan. Endpoint TETAP
+// lewat scope guard + rate limiter + egress (jalur scan yang sama) — tak ada
+// pintasan. Tanpa auto-submit.
+func (s *Server) handleCapturePromote(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	program := strings.TrimSpace(r.FormValue("program"))
+	targets := r.Form["url"]
+	rps := parseRPS(r.FormValue("rps"))
+
+	if program == "" || len(targets) == 0 {
+		page := s.capturePageFor(r, program)
+		page.Error = "Pilih minimal satu endpoint untuk di-promote."
+		s.render(w, "capture", "base", page)
+		return
+	}
+	prog, err := s.store.GetProgram(r.Context(), program)
+	if err != nil {
+		page := s.capturePageFor(r, program)
+		page.Error = "Program belum punya scope tersimpan."
+		s.render(w, "capture", "base", page)
+		return
+	}
+	guard, errs := scope.New(prog.InScope, prog.OutScope)
+	if len(errs) > 0 {
+		page := s.capturePageFor(r, program)
+		page.Error = "Scope program tak valid: " + errs[0].Error()
+		s.render(w, "capture", "base", page)
+		return
+	}
+	runID := s.enqueueScan(program, guard, nil, targets, rps, nil)
+	s.auditAppend(r.Context(), audit.Event{Kind: "capture.promote", Program: program, RunID: runID, Allowed: true, Message: fmt.Sprintf("%d endpoint", len(targets))})
+	http.Redirect(w, r, fmt.Sprintf("/capture?program=%s&run=%s&n=%d", url.QueryEscape(program), url.QueryEscape(runID), len(targets)), http.StatusSeeOther)
+}
+
 // ---- Settings / secrets ----
 
 type settingsPage struct {
@@ -1251,6 +1481,7 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 		"dashboard":    {"templates/base.html", "templates/dashboard.html"},
 		"sast":         {"templates/base.html", "templates/sast.html"},
 		"grpc":         {"templates/base.html", "templates/grpc.html"},
+		"capture":      {"templates/base.html", "templates/capture.html"},
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
 		"report":       {"templates/base.html", "templates/report.html"},

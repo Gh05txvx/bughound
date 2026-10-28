@@ -1,0 +1,81 @@
+{{define "content"}}
+<div class="report-head">
+  <div>
+    <h2>Capture <span class="muted small">(reverse proxy perekam)</span></h2>
+    <p class="muted small">bughound berdiri sebagai reverse proxy ke satu target in-scope. Arahkan browser ke listener lokal, browsing target seperti biasa — tiap request direkam jadi kandidat scan. Tetap lewat scope guard + rate limiter; host di luar scope tak pernah diteruskan.</p>
+  </div>
+</div>
+
+{{if .Error}}<div class="errors"><p>{{.Error}}</p></div>{{end}}
+{{if .Note}}<div class="card"><p class="muted small">{{.Note}}</p></div>{{end}}
+
+{{if .Session}}
+<div class="card">
+  <h2>Sesi aktif <span class="muted small">— {{.Session.Program}}</span></h2>
+  <div class="result-summary">
+    <span class="chip ok">target: {{.Session.Target}}</span>
+    <span class="chip good">{{.Session.Count}} kandidat</span>
+    <span class="muted small">sejak {{.Session.Started}}</span>
+  </div>
+  <p>Arahkan browser / tool ke listener ini, lalu browsing target:</p>
+  <p class="mono">http://{{.Session.Addr}}/</p>
+  <p class="muted small">Listener bicara HTTP biasa di loopback; penerusan ke target (termasuk HTTPS) ditangani di balik layar dengan IP di-pin — tak perlu pasang CA cert di browser. Hanya host in-scope yang diteruskan.</p>
+  <div class="actions">
+    <a class="btn" href="/capture?program={{.Program}}">Segarkan kandidat</a>
+    <form method="post" action="/capture/stop" style="display:inline">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <input type="hidden" name="program" value="{{.Program}}">
+      <button type="submit" class="btn">Hentikan sesi</button>
+    </form>
+  </div>
+</div>
+
+<form class="card" method="post" action="/capture/promote">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="program" value="{{.Program}}">
+  <input type="hidden" name="rps" value="{{.RPS}}">
+  <h2>Kandidat endpoint</h2>
+  {{if .Records}}
+  <p class="muted small">Pilih endpoint lalu promote jadi scan (tetap lewat scope guard, rate limiter, egress). Tanpa auto-submit.</p>
+  <table class="tbl compact">
+    <thead><tr><th></th><th>Method</th><th>URL</th><th>Status</th><th>×</th></tr></thead>
+    <tbody>
+    {{range .Records}}
+      <tr>
+        <td><input type="checkbox" name="url" value="{{.URL}}"></td>
+        <td class="mono">{{.Method}}</td>
+        <td class="mono">{{.URL}}</td>
+        <td>{{if .Status}}{{.Status}}{{else}}&mdash;{{end}}</td>
+        <td>{{.Count}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  <div class="actions">
+    <button type="submit" class="btn primary">Promote terpilih &rarr; scan</button>
+    {{if .Program}}<a class="btn" href="/findings?program={{.Program}}">Lihat findings &rarr;</a>{{end}}
+  </div>
+  {{else}}
+  <p class="muted">Belum ada request terekam. Browsing target lewat listener di atas, lalu <b>Segarkan kandidat</b>.</p>
+  {{end}}
+</form>
+{{else}}
+<form class="card" method="post" action="/capture/start">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <label>Program <span class="muted small">(scope-nya menentukan target yang boleh)</span></label>
+  <input type="text" name="program" value="{{.Program}}" autocomplete="off" required list="cap-progs">
+  <datalist id="cap-progs">{{range .Programs}}<option value="{{.}}">{{end}}</datalist>
+
+  <label>Target <span class="muted small">(satu host/URL in-scope; tanpa skema = https)</span></label>
+  <input type="text" name="target" value="{{.Target}}" autocomplete="off" placeholder="app.demo.test" required>
+
+  <label>Rate limit <span class="muted small">(request/detik penerusan)</span></label>
+  <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">
+
+  <div class="actions">
+    <button type="submit" class="btn primary">Mulai capture</button>
+    <span class="muted small">reverse proxy &middot; hanya target in-scope</span>
+  </div>
+</form>
+{{end}}
+{{end}}
