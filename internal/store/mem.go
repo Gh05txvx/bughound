@@ -89,6 +89,21 @@ func (m *Mem) DeleteProgram(ctx context.Context, name string) error {
 	return nil
 }
 
+// DeleteFindingsByProgram: lihat Store.DeleteFindingsByProgram.
+func (m *Mem) DeleteFindingsByProgram(ctx context.Context, program string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for id, f := range m.byID {
+		if f.Program == program {
+			delete(m.byID, id)
+			n++
+		}
+	}
+	delete(m.primary, program) // reset state dedup program (kunci dedup = baris temuan)
+	return n, nil
+}
+
 func cloneProgram(p *Program) *Program {
 	cp := *p
 	cp.InScope = append([]string(nil), p.InScope...)

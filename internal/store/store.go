@@ -39,6 +39,12 @@ type Store interface {
 	// ada. Hanya definisi program yang dihapus — temuan & audit TIDAK disentuh
 	// (temuan adalah hasil kerja, audit append-only per prinsip keamanan).
 	DeleteProgram(ctx context.Context, name string) error
+	// DeleteFindingsByProgram menghapus SEMUA temuan sebuah program (termasuk
+	// state dedup-nya) dan mengembalikan jumlah yang dihapus. Definisi scope
+	// program (SaveProgram) TIDAK disentuh — itu dikelola terpisah lewat
+	// DeleteProgram. Audit append-only juga tak tersentuh; penghapusan dicatat
+	// oleh pemanggil. Program tanpa temuan → 0, nil (bukan error).
+	DeleteFindingsByProgram(ctx context.Context, program string) (int, error)
 	// SetStatus mengubah status triase sebuah temuan.
 	SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error
 	// Close melepaskan sumber daya (no-op untuk in-memory).

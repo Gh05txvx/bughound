@@ -235,3 +235,35 @@ func TestMemPrograms(t *testing.T) {
 		t.Errorf("programs harus unik & terurut: %v", ps)
 	}
 }
+
+func TestMemDeleteFindingsByProgram(t *testing.T) {
+	s := NewMem()
+	ctx := context.Background()
+	s.Save(ctx, mkFinding("A", "r1", "ssrf", "https://a.io", "https://a.io/x", "p", finding.SeverityHigh))
+	s.Save(ctx, mkFinding("A", "r1", "xss", "https://a.io", "https://a.io/y", "q", finding.SeverityLow))
+	s.Save(ctx, mkFinding("B", "r1", "ssrf", "https://b.io", "https://b.io/x", "p", finding.SeverityHigh))
+	s.SaveProgram(ctx, Program{Name: "A", InScope: []string{"a.io"}}) // definisi scope harus bertahan
+
+	n, err := s.DeleteFindingsByProgram(ctx, "A")
+	if err != nil || n != 2 {
+		t.Fatalf("DeleteFindingsByProgram(A) = %d,%v; ingin 2,nil", n, err)
+	}
+	if fs, _ := s.List(ctx, Query{Program: "A"}); len(fs) != 0 {
+		t.Errorf("temuan A harus habis, sisa %d", len(fs))
+	}
+	if fs, _ := s.List(ctx, Query{Program: "B"}); len(fs) != 1 {
+		t.Errorf("temuan B (program lain) harus tetap, dapat %d", len(fs))
+	}
+	if _, err := s.GetProgram(ctx, "A"); err != nil {
+		t.Errorf("definisi scope A harus tetap (hanya temuan dihapus): %v", err)
+	}
+	// State dedup ter-reset: dedup_key yang sama kini jadi primary lagi.
+	res, _ := s.Save(ctx, mkFinding("A", "r2", "ssrf", "https://a.io", "https://a.io/x", "p", finding.SeverityHigh))
+	if res.Deduplicated {
+		t.Error("setelah hapus, dedup_key lama harus jadi primary lagi")
+	}
+	// Program tanpa temuan → 0, nil (bukan error).
+	if n, err := s.DeleteFindingsByProgram(ctx, "kosong"); n != 0 || err != nil {
+		t.Errorf("hapus program tanpa temuan = %d,%v; ingin 0,nil", n, err)
+	}
+}

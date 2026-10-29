@@ -350,6 +350,21 @@ func (s *SQLite) DeleteProgram(ctx context.Context, name string) error {
 	return nil
 }
 
+// DeleteFindingsByProgram: lihat Store.DeleteFindingsByProgram. Dedup ditegakkan
+// langsung dari baris findings (tak ada tabel bookkeeping terpisah), jadi
+// menghapus baris otomatis mereset state dedup. Lock dipegang agar tak balapan
+// dengan keputusan dedup Save. Definisi program & audit tak disentuh.
+func (s *SQLite) DeleteFindingsByProgram(ctx context.Context, program string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.ExecContext(ctx, `DELETE FROM findings WHERE program=?`, program)
+	if err != nil {
+		return 0, fmt.Errorf("store: hapus temuan program: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 func decodeProgram(name, in, out, upd string) *Program {
 	p := &Program{Name: name}
 	_ = json.Unmarshal([]byte(in), &p.InScope)

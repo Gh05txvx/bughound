@@ -675,6 +675,7 @@ func (s *Server) routes() {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 	})
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
+	s.mux.HandleFunc("POST /dashboard/findings/delete", s.handleDashboardDeleteFindings)
 	s.mux.HandleFunc("GET /sast", s.handleSAST)
 	s.mux.HandleFunc("POST /sast/run", s.handleSASTRun)
 	s.mux.HandleFunc("GET /grpc", s.handleGRPC)
@@ -1500,6 +1501,7 @@ type dashboardPage struct {
 	Title          string
 	Program        string
 	CSRF           string
+	Note           string // flash setelah aksi (mis. hapus temuan)
 	Rows           []dashRow
 	TotalPrograms  int
 	TotalFindings  int
@@ -1520,6 +1522,11 @@ var dashSevOrder = []finding.Severity{
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	page := dashboardPage{Nav: "dashboard", Title: "Dashboard", CSRF: s.csrfToken(r)}
+	if r.URL.Query().Get("ok") == "findings-deleted" {
+		prog := strings.TrimSpace(r.URL.Query().Get("program"))
+		n := strings.TrimSpace(r.URL.Query().Get("n"))
+		page.Note = fmt.Sprintf("%s temuan program %q dihapus. Definisi scope & audit tetap.", n, prog)
+	}
 	sevTotal := map[finding.Severity]int{}
 
 	for _, name := range s.programNames(ctx) {
@@ -1598,6 +1605,32 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	})
 
 	s.render(w, r, "dashboard", "base", page)
+}
+
+// handleDashboardDeleteFindings menghapus SEMUA temuan sebuah program (aksi dari
+// baris "Temuan per program"). Sesuai pilihan: HANYA temuan — definisi scope
+// program tetap (dikelola di menu Programs) dan audit append-only tak disentuh;
+// penghapusan ini sendiri dicatat (findings.delete). State-changing → operator+
+// & CSRF via middleware authorize(). Idempoten: program tanpa temuan → 0, 303.
+func (s *Server) handleDashboardDeleteFindings(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	program := strings.TrimSpace(r.FormValue("program"))
+	if program == "" {
+		http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
+		return
+	}
+	me, _ := s.currentUser(r)
+	n, err := s.store.DeleteFindingsByProgram(r.Context(), program)
+	if err != nil {
+		http.Error(w, "gagal menghapus temuan: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.auditAppend(r.Context(), audit.Event{Kind: "findings.delete", Program: program, Allowed: true,
+		Message: fmt.Sprintf("%s menghapus %d temuan program (definisi scope tetap)", me, n)})
+	http.Redirect(w, r, fmt.Sprintf("/dashboard?ok=findings-deleted&program=%s&n=%d", url.QueryEscape(program), n), http.StatusSeeOther)
 }
 
 // ---- SAST (plugin) ----

@@ -1,4 +1,5 @@
 {{define "content"}}
+{{if .Note}}<div class="banner ok"><span class="dot ok"></span>{{.Note}}</div>{{end}}
 <div class="statrow">
   <div class="statcard">
     <div class="sc-top"><span class="sc-label">Programs</span><span class="sc-ico"><svg class="ico"><use href="#i-target"/></svg></span></div>
@@ -56,6 +57,13 @@
             <span class="row-actions">
               <a class="btn ghost" href="/findings?program={{.Program}}">findings</a>
               <a class="btn ghost" href="/report?program={{.Program}}">report</a>
+              {{if .Total}}
+              <form method="post" action="/dashboard/findings/delete" class="inline" onsubmit="return confirm('Hapus SEMUA {{.Total}} temuan program {{.Program}}? Permanen & tak bisa dibatalkan. Definisi scope program (menu Programs) & audit TETAP.')">
+                <input type="hidden" name="csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="program" value="{{.Program}}">
+                <button type="submit" class="btn ghost danger" title="Hapus semua temuan program ini (scope & audit tetap)">hapus temuan</button>
+              </form>
+              {{end}}
             </span>
           </td>
         </tr>

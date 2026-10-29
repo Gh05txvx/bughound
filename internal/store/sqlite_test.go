@@ -209,6 +209,37 @@ func TestSQLiteDeleteProgramKeepsFindings(t *testing.T) {
 	}
 }
 
+func TestSQLiteDeleteFindingsByProgram(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	s.Save(ctx, mkFinding("A", "r1", "ssrf", "https://a.io", "https://a.io/x", "p", finding.SeverityHigh))
+	s.Save(ctx, mkFinding("A", "r1", "xss", "https://a.io", "https://a.io/y", "q", finding.SeverityLow))
+	s.Save(ctx, mkFinding("B", "r1", "ssrf", "https://b.io", "https://b.io/x", "p", finding.SeverityHigh))
+	s.SaveProgram(ctx, Program{Name: "A", InScope: []string{"a.io"}})
+
+	n, err := s.DeleteFindingsByProgram(ctx, "A")
+	if err != nil || n != 2 {
+		t.Fatalf("delete = %d,%v; ingin 2,nil", n, err)
+	}
+	if fs, _ := s.List(ctx, Query{Program: "A"}); len(fs) != 0 {
+		t.Errorf("temuan A harus habis, sisa %d", len(fs))
+	}
+	if fs, _ := s.List(ctx, Query{Program: "B"}); len(fs) != 1 {
+		t.Errorf("temuan B harus tetap, dapat %d", len(fs))
+	}
+	if _, err := s.GetProgram(ctx, "A"); err != nil {
+		t.Errorf("definisi scope A harus tetap: %v", err)
+	}
+	// Dedup ter-reset (baris findings = state dedup di SQLite).
+	res, _ := s.Save(ctx, mkFinding("A", "r2", "ssrf", "https://a.io", "https://a.io/x", "p", finding.SeverityHigh))
+	if res.Deduplicated {
+		t.Error("dedup_key lama harus jadi primary lagi setelah hapus")
+	}
+	if n, _ := s.DeleteFindingsByProgram(ctx, "kosong"); n != 0 {
+		t.Errorf("hapus program tanpa temuan = %d; ingin 0", n)
+	}
+}
+
 func TestSQLitePrograms(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()
