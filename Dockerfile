@@ -58,7 +58,6 @@ RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
     fi
 
 COPY --from=engines /engines/ /usr/local/bin/
-COPY --from=build /out/bughound /usr/local/bin/bughound
 
 # Jalan sebagai non-root; data (db, kunci, anchor) di /data.
 RUN useradd -m -u 10001 bh && mkdir -p /data && chown bh:bh /data
@@ -77,6 +76,12 @@ WORKDIR /data
 # ~/.config/nuclei/.templates-config.json untuk ketertelusuran; pinning versi
 # yang sebenarnya menyusul di bank payload (Fase 2 BH-SPEC-PAYLOAD).
 RUN nuclei -update-templates
+
+# Binary bughound disalin TERAKHIR: perubahan source hanya membatalkan layer ini
+# (tak ada layer mahal setelahnya), sehingga bake template di atas tetap ter-cache
+# lintas rebuild. COPY berjalan di tingkat builder (file jadi milik root, 0755);
+# USER runtime tetap bh dari atas (COPY tak mengubah USER).
+COPY --from=build /out/bughound /usr/local/bin/bughound
 
 EXPOSE 8787
 
