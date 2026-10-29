@@ -1,0 +1,51 @@
+{{define "scans_live"}}
+<div id="live-scans" class="panel live-scans"
+     hx-get="/dashboard/scans" hx-trigger="load delay:{{.Interval}}" hx-swap="outerHTML">
+  <div class="panel-head">
+    <h2>Proses scanning <span class="live-dot" title="pembaruan langsung"></span></h2>
+    <span class="muted small">
+      {{if .HasAny}}aktif <b class="mono">{{.ActiveCount}}</b> · antre <b class="mono">{{.QueuedCount}}</b> · selesai <b class="mono">{{.DoneCount}}</b> · diperbarui {{.UpdatedAt}}
+      {{else}}belum ada scan{{end}}
+    </span>
+  </div>
+  {{if .HasAny}}
+  <div class="panel-body flush">
+    <table class="tbl livescan-tbl">
+      <thead><tr>
+        <th>Program</th><th>Cakupan</th><th>Status</th><th>Progres</th><th>Hasil</th><th>Durasi</th><th></th>
+      </tr></thead>
+      <tbody>
+      {{range .Rows}}
+      <tr>
+        <td class="prog mono">{{.Program}}</td>
+        <td class="mono muted truncate">{{if .Label}}{{.Label}}{{else}}—{{end}}</td>
+        <td>
+          {{if eq .Status "running"}}<span class="pill st-running"><span class="dot run"></span>berjalan</span>
+          {{else if eq .Status "queued"}}<span class="pill st-new"><span class="dot"></span>antre</span>
+          {{else if eq .Status "failed"}}<span class="pill st-failed">gagal</span>
+          {{else}}<span class="pill st-confirmed"><span class="dot ok"></span>selesai</span>{{end}}
+        </td>
+        <td class="prog-cell">
+          {{if eq .Status "running"}}<div class="pbar run"><span></span></div>
+          {{else if eq .Status "queued"}}<div class="pbar queued"></div>
+          {{else if eq .Status "failed"}}<div class="pbar fail"></div>
+          {{else}}<div class="pbar done"></div>{{end}}
+        </td>
+        <td class="mono">
+          {{if .Done}}<span class="chip good">{{.Saved}} temuan</span> <span class="muted small">{{.Scanned}} discan · {{.DeniedCount}} ditolak</span>
+          {{else if .Failed}}<span class="muted small truncate" title="{{.Err}}">{{.Err}}</span>
+          {{else if eq .Status "running"}}<span class="muted small">memindai…</span>
+          {{else}}<span class="muted small">menunggu slot</span>{{end}}
+        </td>
+        <td class="muted mono">{{.Elapsed}}</td>
+        <td>{{if .Done}}<a class="btn ghost small" href="/findings?program={{.Program}}">findings</a>{{end}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="empty"><p class="muted">Belum ada scan berjalan. <a href="/scan">Jalankan scan →</a> — prosesnya tampil live di sini (antre → berjalan → selesai).</p></div>
+  {{end}}
+</div>
+{{end}}

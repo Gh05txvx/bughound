@@ -96,4 +96,13 @@
     </div>
   </div>
 </div>
+
+<!-- Monitor scan live: dimuat & diperbarui sendiri lewat HTMX (polling adaptif). -->
+<div id="live-scans" class="panel live-scans" hx-get="/dashboard/scans" hx-trigger="load" hx-swap="outerHTML">
+  <div class="panel-head">
+    <h2>Proses scanning <span class="live-dot"></span></h2>
+    <span class="muted small">memuat…</span>
+  </div>
+  <div class="panel-body"><p class="muted small">Memuat status scan…</p></div>
+</div>
 {{end}}

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"bughound/internal/finding"
 	"bughound/internal/store"
@@ -95,6 +96,54 @@ func TestDashboardDeleteFindingsViewerForbidden(t *testing.T) {
 	}
 	if fs, _ := st.List(context.Background(), store.Query{Program: "keep"}); len(fs) != 1 {
 		t.Error("temuan terhapus oleh viewer yang seharusnya ditolak")
+	}
+}
+
+func TestDashboardScansLive(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	// Kosong: partial menampilkan empty state; dashboard menyematkan loader.
+	empty := do(t, srv, "GET", "/dashboard/scans", nil)
+	if empty.Code != http.StatusOK {
+		t.Fatalf("GET /dashboard/scans = %d", empty.Code)
+	}
+	if b := empty.Body.String(); !strings.Contains(b, "Belum ada scan") || !strings.Contains(b, `id="live-scans"`) {
+		t.Errorf("partial kosong tak sesuai:\n%s", b)
+	}
+	if b := do(t, srv, "GET", "/dashboard", nil).Body.String(); !strings.Contains(b, `hx-get="/dashboard/scans"`) {
+		t.Error("dashboard tak menyematkan loader live-scans")
+	}
+
+	// Jalankan satu scan (engine mock) sampai selesai → muncul di monitor.
+	rec := do(t, srv, "POST", "/scan", url.Values{"program": {"live-demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test"}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /scan = %d", rec.Code)
+	}
+	waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
+
+	b := do(t, srv, "GET", "/dashboard/scans", nil).Body.String()
+	if !strings.Contains(b, "live-demo") || !strings.Contains(b, "selesai") {
+		t.Errorf("monitor live tak menampilkan run selesai:\n%s", b)
+	}
+	// Semua run sudah selesai → polling idle (interval lambat 6s).
+	if !strings.Contains(b, "delay:6s") {
+		t.Errorf("interval polling idle harus 6s:\n%s", b)
+	}
+}
+
+func TestHumanDur(t *testing.T) {
+	for _, c := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{500 * time.Millisecond, "<1s"},
+		{9 * time.Second, "9s"},
+		{65 * time.Second, "1m 05s"},
+		{2*time.Hour + 10*time.Minute, "2h 10m"},
+	} {
+		if got := humanDur(c.d); got != c.want {
+			t.Errorf("humanDur(%v) = %q, ingin %q", c.d, got, c.want)
+		}
 	}
 }
 

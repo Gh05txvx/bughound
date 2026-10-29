@@ -675,6 +675,7 @@ func (s *Server) routes() {
 		http.Redirect(w, r, "/dashboard", http.StatusFound)
 	})
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
+	s.mux.HandleFunc("GET /dashboard/scans", s.handleDashboardScans)
 	s.mux.HandleFunc("POST /dashboard/findings/delete", s.handleDashboardDeleteFindings)
 	s.mux.HandleFunc("GET /sast", s.handleSAST)
 	s.mux.HandleFunc("POST /sast/run", s.handleSASTRun)
@@ -1633,6 +1634,119 @@ func (s *Server) handleDashboardDeleteFindings(w http.ResponseWriter, r *http.Re
 	http.Redirect(w, r, fmt.Sprintf("/dashboard?ok=findings-deleted&program=%s&n=%d", url.QueryEscape(program), n), http.StatusSeeOther)
 }
 
+// ---- Monitor scan live (dashboard) ----
+
+type scanLiveRow struct {
+	ID          string
+	Program     string
+	Label       string
+	Status      string
+	Active      bool
+	Done        bool
+	Failed      bool
+	Saved       int
+	Scanned     int
+	Discovered  int
+	DeniedCount int
+	Err         string
+	Elapsed     string
+}
+
+type scansLivePage struct {
+	Rows        []scanLiveRow
+	ActiveCount int
+	QueuedCount int
+	DoneCount   int
+	Total       int
+	HasAny      bool
+	Interval    string // interval polling HTMX (adaptif)
+	UpdatedAt   string
+}
+
+const scansLiveLimit = 12
+
+// handleDashboardScans merender panel "Proses scanning" (live) dari job queue
+// in-process — read-only, tanpa jaringan & tanpa query store (murah untuk
+// polling). HTMX memanggilnya berulang (trigger self-chained) sehingga status
+// run tampil berubah real-time: antre → berjalan → selesai/gagal, lengkap durasi.
+func (s *Server) handleDashboardScans(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	runs := s.queue.List("") // semua, terbaru dulu
+	page := scansLivePage{Total: len(runs), UpdatedAt: now.Format("15:04:05")}
+	for _, rn := range runs {
+		switch rn.Status {
+		case jobs.Queued:
+			page.QueuedCount++
+		case jobs.Running:
+			page.ActiveCount++
+		case jobs.Done:
+			page.DoneCount++
+		}
+		if len(page.Rows) >= scansLiveLimit {
+			continue
+		}
+		v := toRunView(rn)
+		page.Rows = append(page.Rows, scanLiveRow{
+			ID: v.ID, Program: v.Program, Label: rn.Label,
+			Status:      string(rn.Status),
+			Active:      v.Active,
+			Done:        rn.Status == jobs.Done,
+			Failed:      rn.Status == jobs.Failed,
+			Saved:       v.Saved,
+			Scanned:     v.Scanned,
+			Discovered:  v.Discovered,
+			DeniedCount: len(v.Denied),
+			Err:         v.Err,
+			Elapsed:     runElapsed(rn, now),
+		})
+	}
+	page.HasAny = len(page.Rows) > 0
+	// Polling adaptif: 2 dtk saat ada scan aktif/antre, 6 dtk saat idle (tetap
+	// memantau scan baru) — murah karena hanya baca queue in-memory.
+	page.Interval = "6s"
+	if page.ActiveCount > 0 || page.QueuedCount > 0 {
+		page.Interval = "2s"
+	}
+	s.renderPartial(w, r, "dashboard", "scans_live", page)
+}
+
+// runElapsed: berjalan = sejak mulai; selesai/gagal = total runtime; antre = tunggu.
+func runElapsed(r *jobs.Run, now time.Time) string {
+	switch r.Status {
+	case jobs.Queued:
+		return "antre"
+	case jobs.Running:
+		if r.StartedAt.IsZero() {
+			return "—"
+		}
+		return humanDur(now.Sub(r.StartedAt))
+	default:
+		if r.StartedAt.IsZero() || r.FinishedAt.IsZero() {
+			return "—"
+		}
+		return humanDur(r.FinishedAt.Sub(r.StartedAt))
+	}
+}
+
+// humanDur memformat durasi ringkas: "<1s", "9s", "1m 05s", "2h 10m".
+func humanDur(d time.Duration) string {
+	if d < time.Second {
+		return "<1s"
+	}
+	d = d.Round(time.Second)
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	sec := int(d.Seconds()) % 60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh %dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm %02ds", m, sec)
+	default:
+		return fmt.Sprintf("%ds", sec)
+	}
+}
+
 // ---- SAST (plugin) ----
 
 type sastResult struct {
@@ -2246,7 +2360,7 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 		"appVersion": func() string { return version },
 	}
 	sets := map[string][]string{
-		"dashboard":    {"templates/base.html", "templates/dashboard.html"},
+		"dashboard":    {"templates/base.html", "templates/dashboard.html", "templates/scans_live.html"},
 		"login":        {"templates/login.html"},
 		"users":        {"templates/base.html", "templates/users.html"},
 		"sast":         {"templates/base.html", "templates/sast.html"},

@@ -380,3 +380,18 @@ a.btn { display: inline-flex; }
 .ph-right { display: inline-flex; align-items: center; gap: 12px; }
 .btn.small { padding: 4px 10px; font-size: 11.5px; }
 .btn.small .ico { width: 13px; height: 13px; }
+
+/* ---- monitor scan live (dashboard "Proses scanning") ---- */
+.live-scans { margin-top: 16px; }
+.live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-left: 7px; vertical-align: middle; animation: livepulse 1.8s infinite; }
+@keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(55,179,107,.5); } 70% { box-shadow: 0 0 0 6px rgba(55,179,107,0); } 100% { box-shadow: 0 0 0 0 rgba(55,179,107,0); } }
+.st-running { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+.st-failed { background: var(--danger-dim); border-color: var(--danger); color: var(--danger); }
+.livescan-tbl td { vertical-align: middle; }
+.prog-cell { min-width: 110px; width: 22%; }
+.pbar { position: relative; height: 6px; border-radius: 3px; background: var(--bg-2); overflow: hidden; }
+.pbar.done { background: var(--ok); }
+.pbar.fail { background: var(--danger); opacity: .85; }
+.pbar.queued { background: repeating-linear-gradient(45deg, var(--line-2) 0 6px, transparent 6px 12px); }
+.pbar.run span { position: absolute; top: 0; bottom: 0; width: 40%; border-radius: 3px; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: barslide 1.1s ease-in-out infinite; }
+@keyframes barslide { 0% { left: -40%; } 100% { left: 100%; } }
