@@ -83,6 +83,25 @@ func TestRunnerArgs(t *testing.T) {
 	}
 }
 
+// throttleArgs: tanpa RateLimit tak ada jeda; dengan RateLimit=20 → 1 thread per
+// host + jeda 1000/20=50ms, berlaku di mode quick maupun full (active scan).
+func TestRunnerThrottle(t *testing.T) {
+	if plain := strings.Join((&Runner{}).buildArgs("https://demo.test", "/tmp/o.json"), " "); strings.Contains(plain, "scanner.delayInMs") {
+		t.Errorf("tanpa RateLimit tak boleh ada throttle; dapat %q", plain)
+	}
+	r := &Runner{RateLimit: 20}
+	for _, got := range []string{
+		strings.Join(r.buildArgs("https://demo.test", "/tmp/o.json"), " "),
+		strings.Join(r.buildFullArgs("/tmp/plan.yaml"), " "),
+	} {
+		for _, want := range []string{"scanner.threadPerHost=1", "scanner.delayInMs=50"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("throttle harus memuat %q; dapat %q", want, got)
+			}
+		}
+	}
+}
+
 func TestRunnerFullMode(t *testing.T) {
 	if (&Runner{}).mode() != "quick" {
 		t.Error("mode default harus quick")

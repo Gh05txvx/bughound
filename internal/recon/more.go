@@ -3,6 +3,7 @@ package recon
 import (
 	"context"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -57,7 +58,10 @@ func (d *Dnsx) Resolve(ctx context.Context, hosts []string) ([]string, error) {
 }
 
 // Naabu memindai port terbuka (TCP connect scan — tanpa libpcap runtime).
-type Naabu struct{ Binary string }
+type Naabu struct {
+	Binary string
+	rate   int // -rate (paket/dtk); 0 = default naabu
+}
 
 func (n *Naabu) bin() string {
 	if n.Binary != "" {
@@ -66,7 +70,13 @@ func (n *Naabu) bin() string {
 	return "naabu"
 }
 
-func (n *Naabu) args() []string { return []string{"-silent", "-scan-type", "c"} }
+func (n *Naabu) args() []string {
+	a := []string{"-silent", "-scan-type", "c"}
+	if n.rate > 0 {
+		a = append(a, "-rate", strconv.Itoa(n.rate))
+	}
+	return a
+}
 
 // ScanPorts membaca host dari stdin dan mengembalikan "host:port" terbuka.
 func (n *Naabu) ScanPorts(ctx context.Context, hosts []string) ([]string, error) {

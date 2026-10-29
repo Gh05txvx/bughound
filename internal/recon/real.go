@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"bughound/internal/egress"
@@ -30,9 +31,22 @@ type RealPipeline struct {
 	Naabu *Naabu
 }
 
-// NewRealPipeline membuat pipeline dengan tool default (binary di PATH).
-func NewRealPipeline() *RealPipeline {
-	return &RealPipeline{Httpx: &Httpx{}, Katana: &Katana{}, Gau: &Gau{}, Dnsx: &Dnsx{}, Naabu: &Naabu{}}
+// NewRealPipeline membuat pipeline dengan tool default (binary di PATH), tanpa
+// batas laju tambahan (tiap tool memakai default-nya).
+func NewRealPipeline() *RealPipeline { return NewRealPipelineRate(0) }
+
+// NewRealPipelineRate seperti NewRealPipeline, tetapi menjepit laju request
+// tahap AKTIF (httpx, katana, naabu) ke rate req/dtk (0 = default tool). Tahap
+// pasif (subfinder, gau) dan query DNS (dnsx) tidak menyentuh target sehingga
+// tidak ikut dijepit.
+func NewRealPipelineRate(rate int) *RealPipeline {
+	return &RealPipeline{
+		Httpx:  &Httpx{rate: rate},
+		Katana: &Katana{rate: rate},
+		Gau:    &Gau{},
+		Dnsx:   &Dnsx{},
+		Naabu:  &Naabu{rate: rate},
+	}
 }
 
 func (p *RealPipeline) Name() string {
@@ -149,6 +163,7 @@ func (s Subfinder) Enumerate(ctx context.Context, domain string) ([]string, erro
 // Httpx: probe host hidup (aktif → lewat proxy egress).
 type Httpx struct {
 	Binary    string
+	rate      int // -rate-limit (req/dtk); 0 = default httpx
 	proxyAddr string
 }
 
@@ -163,6 +178,9 @@ func (h *Httpx) args() []string {
 	a := []string{"-silent"}
 	if h.proxyAddr != "" {
 		a = append(a, "-http-proxy", "http://"+h.proxyAddr)
+	}
+	if h.rate > 0 {
+		a = append(a, "-rate-limit", strconv.Itoa(h.rate))
 	}
 	return a
 }
@@ -184,6 +202,7 @@ func (h *Httpx) proxyEnvOrNil() []string {
 // Katana: crawling (aktif → lewat proxy egress).
 type Katana struct {
 	Binary    string
+	rate      int // -rate-limit (req/dtk); 0 = default katana
 	proxyAddr string
 }
 
@@ -198,6 +217,9 @@ func (k *Katana) args() []string {
 	a := []string{"-silent"}
 	if k.proxyAddr != "" {
 		a = append(a, "-proxy", "http://"+k.proxyAddr)
+	}
+	if k.rate > 0 {
+		a = append(a, "-rate-limit", strconv.Itoa(k.rate))
 	}
 	return a
 }

@@ -50,11 +50,17 @@ var staticFS embed.FS
 
 // Server adalah handler HTTP utama bughound.
 type Server struct {
-	mux          *http.ServeMux
-	store        store.Store
-	users        store.UserStore // akun RBAC (nil bila authDisabled)
-	engines      []engine.Engine
-	recon        recon.Engine
+	mux     *http.ServeMux
+	store   store.Store
+	users   store.UserStore // akun RBAC (nil bila authDisabled)
+	engines []engine.Engine
+	recon   recon.Engine
+	// newEngines, bila diset, membangun instance engine + recon BARU untuk tiap
+	// scan (laju request dijepit ke rps scan). Dipakai mode engine nyata agar tiap
+	// run punya engine sendiri: menjepit laju per-engine DAN mencegah proxy egress
+	// antar-run saling tumpang-tindih (tiap run menegakkan scope guard-nya sendiri).
+	// nil (mock/test) = pakai instance tetap di `engines`/`recon`.
+	newEngines   func(rps float64) ([]engine.Engine, recon.Engine)
 	vault        secret.Vault
 	audit        audit.Log
 	authDisabled bool // true = akses terbuka tanpa login (hanya -no-auth / test)
@@ -77,8 +83,13 @@ type Config struct {
 	Store   store.Store
 	Engines []engine.Engine
 	Recon   recon.Engine
-	Vault   secret.Vault
-	Audit   audit.Log
+	// NewEngines (opsional) membangun engine + recon BARU per scan dengan laju
+	// request dijepit ke rps scan. Bila diset, dipakai menggantikan Engines/Recon
+	// untuk tiap run (lihat Server.newEngines). Engines tetap wajib (≥1) sebagai
+	// fallback & validasi; Recon boleh nil.
+	NewEngines func(rps float64) ([]engine.Engine, recon.Engine)
+	Vault      secret.Vault
+	Audit      audit.Log
 	// Users adalah store akun RBAC. Wajib kecuali AuthDisabled=true. Login
 	// (sesi) & HTTP Basic (otomasi) diverifikasi terhadapnya; peran menentukan
 	// hak (viewer baca, operator ubah, admin kelola user).
@@ -121,6 +132,7 @@ func NewServer(cfg Config) (*Server, error) {
 		users:        cfg.Users,
 		engines:      cfg.Engines,
 		recon:        cfg.Recon,
+		newEngines:   cfg.NewEngines,
 		vault:        cfg.Vault,
 		audit:        cfg.Audit,
 		authDisabled: cfg.AuthDisabled,
@@ -808,13 +820,20 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets 
 				Allowed: e.Allowed, Reason: string(e.Reason), Layer: string(e.Layer), Message: e.MatchedEntry,
 			})
 		}
-		o := orchestrator.New(guard, s.engines[0], storeRef,
+		// Engine per-run: mode nyata membangun instance BARU dengan laju dijepit
+		// ke rps (throttle per-engine di jalur eksekusi) sehingga tiap run punya
+		// engine + proxy egress sendiri; mock/test pakai instance tetap.
+		engines, rec := s.engines, s.recon
+		if s.newEngines != nil {
+			engines, rec = s.newEngines(rps)
+		}
+		o := orchestrator.New(guard, engines[0], storeRef,
 			ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), auditSink)
-		for _, e := range s.engines[1:] {
+		for _, e := range engines[1:] {
 			o.AddEngine(e)
 		}
-		if len(seeds) > 0 && s.recon != nil {
-			o.UseRecon(s.recon)
+		if len(seeds) > 0 && rec != nil {
+			o.UseRecon(rec)
 		}
 		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: proxyChain})
 		if err != nil {

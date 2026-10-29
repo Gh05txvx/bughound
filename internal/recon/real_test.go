@@ -44,3 +44,21 @@ func TestRealPipelineUseProxyActiveOnly(t *testing.T) {
 		t.Error("subfinder pasif tidak boleh lewat proxy")
 	}
 }
+
+// NewRealPipelineRate menjepit laju tahap AKTIF: -rate-limit pada httpx & katana,
+// -rate pada naabu. NewRealPipeline (rate 0) tidak menambah flag laju.
+func TestRealPipelineRate(t *testing.T) {
+	if strings.Contains(strings.Join((&Httpx{}).args(), " "), "-rate-limit") {
+		t.Error("tanpa rate, httpx tak boleh punya -rate-limit")
+	}
+	p := NewRealPipelineRate(12)
+	if got := strings.Join(p.Httpx.args(), " "); !strings.Contains(got, "-rate-limit 12") {
+		t.Errorf("httpx harus -rate-limit 12; dapat %q", got)
+	}
+	if got := strings.Join(p.Katana.args(), " "); !strings.Contains(got, "-rate-limit 12") {
+		t.Errorf("katana harus -rate-limit 12; dapat %q", got)
+	}
+	if got := strings.Join(p.Naabu.args(), " "); !strings.Contains(got, "-rate 12") {
+		t.Errorf("naabu harus -rate 12; dapat %q", got)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"bughound/internal/finding"
@@ -26,6 +27,7 @@ import (
 type Runner struct {
 	Binary    string // default "zap.sh"
 	Mode      string // "quick" (default) | "baseline" | "full"
+	RateLimit int    // throttle active scan: 0 = default ZAP; >0 = 1 thread/host + jeda ~1000/rate ms
 	proxyAddr string
 }
 
@@ -113,11 +115,31 @@ func readReport(path, program, runID string) ([]*finding.Finding, error) {
 
 func (r *Runner) buildArgs(target, out string) []string {
 	args := []string{"-cmd", "-quickurl", target, "-quickout", out, "-quickprogress"}
-	return append(args, r.proxyConfigArgs()...)
+	args = append(args, r.proxyConfigArgs()...)
+	return append(args, r.throttleArgs()...)
 }
 
 func (r *Runner) buildFullArgs(planPath string) []string {
-	return append([]string{"-cmd", "-autorun", planPath}, r.proxyConfigArgs()...)
+	args := append([]string{"-cmd", "-autorun", planPath}, r.proxyConfigArgs()...)
+	return append(args, r.throttleArgs()...)
+}
+
+// throttleArgs menjepit keagresifan ZAP ke target (RateLimit req/dtk): satu
+// thread per host + jeda antar-request ~1000/rate ms pada active scanner. Mode
+// quick (spider + pasif) sudah ringan; jeda ini terutama meredam active scan
+// (mode full) agar scan tidak membanjiri/menumbangkan target.
+func (r *Runner) throttleArgs() []string {
+	if r.RateLimit <= 0 {
+		return nil
+	}
+	delayMs := 1000 / r.RateLimit
+	if delayMs < 1 {
+		delayMs = 1
+	}
+	return []string{
+		"-config", "scanner.threadPerHost=1",
+		"-config", "scanner.delayInMs=" + strconv.Itoa(delayMs),
+	}
 }
 
 // proxyConfigArgs mengarahkan ZAP ke proxy egress bughound (bila diset).

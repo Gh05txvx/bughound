@@ -167,27 +167,36 @@ func main() {
 
 	var engines []engine.Engine
 	var rec recon.Engine
+	var engineFactory func(rps float64) ([]engine.Engine, recon.Engine)
 	names, useMock := parseEngineMode(*engineMode)
 	if useMock {
 		engines = []engine.Engine{nuclei.Mock{}, ffuf.Mock{}, zap.Mock{}}
 		rec = recon.MockPipeline{}
 		log.Printf("engine: mock (nuclei + ffuf + zap) — tanpa koneksi jaringan")
 	} else {
-		for _, n := range names {
-			switch n {
-			case "nuclei":
-				engines = append(engines, &nuclei.Runner{})
-			case "ffuf":
-				engines = append(engines, &ffuf.Runner{Wordlist: *ffufWordlist})
-			case "zap":
-				engines = append(engines, &zap.Runner{Mode: *zapMode})
+		// Factory: bangun engine + recon BARU per scan dengan laju request dijepit
+		// ke rps scan (throttle per-engine, di jalur eksekusi). Web memanggilnya
+		// untuk tiap run agar tiap run punya engine & proxy egress sendiri.
+		engineFactory = func(rps float64) ([]engine.Engine, recon.Engine) {
+			rate := engineRate(rps)
+			var es []engine.Engine
+			for _, n := range names {
+				switch n {
+				case "nuclei":
+					es = append(es, &nuclei.Runner{RateLimit: rate})
+				case "ffuf":
+					es = append(es, &ffuf.Runner{Wordlist: *ffufWordlist, RateLimit: rate})
+				case "zap":
+					es = append(es, &zap.Runner{Mode: *zapMode, RateLimit: rate})
+				}
 			}
+			return es, recon.NewRealPipelineRate(rate)
 		}
+		engines, rec = engineFactory(0) // instance representatif (laju default) utk validasi & fallback
 		if len(engines) == 0 {
 			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap)", *engineMode)
 		}
-		rec = recon.NewRealPipeline()
-		log.Printf("engine: NYATA (%s + recon subfinder/httpx/katana) — egress lewat proxy scope guard", strings.Join(names, ", "))
+		log.Printf("engine: NYATA (%s + recon subfinder/httpx/katana) — egress lewat proxy scope guard · throttle per-engine aktif (laju dari rps scan, default %d/dtk)", strings.Join(names, ", "), engineRate(0))
 		log.Printf("PERINGATAN: hanya scan target yang sah (in-scope / lab / izin eksplisit)")
 		for _, n := range names {
 			if n == "ffuf" && strings.TrimSpace(*ffufWordlist) == "" {
@@ -234,7 +243,7 @@ func main() {
 		}
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: *sastRoot, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext})
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, NewEngines: engineFactory, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: *sastRoot, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}
@@ -330,6 +339,22 @@ func parseEngineMode(mode string) (names []string, mock bool) {
 		}
 	}
 	return names, false
+}
+
+// engineRate menurunkan laju request per-engine (req/dtk) dari rps scan. Nilai
+// 0/negatif → default aman; dijepit ≤ maxEngineRate agar tak pernah "praktis
+// tanpa batas" — senada dengan penjepitan di paket ratelimit, sehingga throttle
+// selalu ada di jalur eksekusi dan tak bisa dimatikan lewat input.
+func engineRate(rps float64) int {
+	const defaultEngineRate, maxEngineRate = 20, 50
+	r := rps
+	if r <= 0 {
+		r = defaultEngineRate
+	}
+	if r > maxEngineRate {
+		r = maxEngineRate
+	}
+	return int(r)
 }
 
 func isLocalhost(addr string) bool {
