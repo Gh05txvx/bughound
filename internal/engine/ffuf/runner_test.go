@@ -12,7 +12,7 @@ func TestRunnerArgs(t *testing.T) {
 	joined := strings.Join(r.buildArgs("https://demo.test", "/tmp/o.json", "/wl.txt"), " ")
 	for _, want := range []string{
 		"-u https://demo.test/FUZZ", "-w /wl.txt", "-of json", "-o /tmp/o.json",
-		"-s", "-x http://127.0.0.1:9000", "-rate 20",
+		"-s", "-ac", "-x http://127.0.0.1:9000", "-rate 20",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args harus memuat %q; dapat %q", want, joined)

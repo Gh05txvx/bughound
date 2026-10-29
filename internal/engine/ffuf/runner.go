@@ -74,7 +74,12 @@ func (r *Runner) buildArgs(target, out, wordlist string) []string {
 	if !strings.Contains(u, "FUZZ") {
 		u = strings.TrimRight(u, "/") + "/FUZZ"
 	}
-	args := []string{"-u", u, "-w", wordlist, "-of", "json", "-o", out, "-s"}
+	// -ac: auto-kalibrasi ffuf. ffuf menyelidiki beberapa path acak lebih dulu
+	// untuk mempelajari "sidik jari" respons catch-all (mis. SPA yang membalas
+	// index.html untuk hampir semua path) lalu menyaringnya DI SUMBER. Ini
+	// memangkas banjir positif palsu sekaligus mengurangi request ke target.
+	// Parse() tetap punya lapis penekanan sendiri sebagai jaring pengaman.
+	args := []string{"-u", u, "-w", wordlist, "-of", "json", "-o", out, "-s", "-ac"}
 	if r.proxyAddr != "" {
 		args = append(args, "-x", "http://"+r.proxyAddr)
 	}
