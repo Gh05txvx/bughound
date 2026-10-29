@@ -22,6 +22,14 @@
     <label>OpenAPI/Swagger spec <span class="muted small">(opsional · tempel JSON/YAML · tiap endpoint jadi target &amp; tetap lewat scope guard)</span></label>
     <textarea name="openapi" rows="3" spellcheck="false" placeholder="tempel isi openapi.json / swagger.yaml (OpenAPI 3 / Swagger 2)">{{.OpenAPI}}</textarea>
 
+    <label>Seleksi template <span class="muted small">(opsional · memilih subset dari <a href="/payloads{{if .Program}}?program={{.Program}}{{end}}">Bank Payload</a> · kosong = semua template aktif)</span></label>
+    <input type="text" name="tags" value="{{.Tags}}" autocomplete="off" placeholder="tags (mis. cve,exposure,misconfig — dipisah koma)">
+    <div class="checkrow">
+      {{range $s := strs "critical" "high" "medium" "low" "info"}}
+      <label class="check"><input type="checkbox" name="severity" value="{{$s}}" {{if hasStr $.Severity $s}}checked{{end}}><span class="badge sev-{{$s}}">{{$s}}</span></label>
+      {{end}}
+    </div>
+
     <label>Rate limit <span class="muted small">(request/detik · wajib di jalur eksekusi, dijepit maks 50)</span></label>
     <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">
 

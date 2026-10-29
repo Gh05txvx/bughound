@@ -23,3 +23,23 @@ func TestRunnerBuildArgsNoProxy(t *testing.T) {
 		t.Errorf("tanpa proxy tak boleh ada flag -proxy; dapat: %s", got)
 	}
 }
+
+func TestRunnerBuildArgsSelection(t *testing.T) {
+	// Seleksi template: tags & severity → -tags / -severity (koma-join, trim).
+	r := &Runner{Tags: []string{"cve", " exposure ", ""}, Severity: []string{"critical", "high"}}
+	got := strings.Join(r.buildArgs("https://demo.test"), " ")
+	for _, want := range []string{"-tags cve,exposure", "-severity critical,high"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("args harus memuat %q; dapat: %s", want, got)
+		}
+	}
+}
+
+func TestRunnerBuildArgsNoSelection(t *testing.T) {
+	// Seleksi kosong → tak ada flag -tags/-severity (jalankan semua template).
+	r := &Runner{Tags: []string{"", "  "}, Severity: nil}
+	got := strings.Join(r.buildArgs("https://demo.test"), " ")
+	if strings.Contains(got, "-tags") || strings.Contains(got, "-severity") {
+		t.Errorf("seleksi kosong tak boleh memunculkan flag; dapat: %s", got)
+	}
+}

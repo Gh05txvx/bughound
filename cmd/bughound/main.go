@@ -177,7 +177,7 @@ func main() {
 
 	var engines []engine.Engine
 	var rec recon.Engine
-	var engineFactory func(rps float64) ([]engine.Engine, recon.Engine)
+	var engineFactory func(rps float64, sel web.Selection) ([]engine.Engine, recon.Engine)
 	names, useMock := parseEngineMode(*engineMode)
 	if useMock {
 		engines = []engine.Engine{nuclei.Mock{}, ffuf.Mock{}, zap.Mock{}}
@@ -187,13 +187,15 @@ func main() {
 		// Factory: bangun engine + recon BARU per scan dengan laju request dijepit
 		// ke rps scan (throttle per-engine, di jalur eksekusi). Web memanggilnya
 		// untuk tiap run agar tiap run punya engine & proxy egress sendiri.
-		engineFactory = func(rps float64) ([]engine.Engine, recon.Engine) {
+		engineFactory = func(rps float64, sel web.Selection) ([]engine.Engine, recon.Engine) {
 			rate := engineRate(rps)
 			var es []engine.Engine
 			for _, n := range names {
 				switch n {
 				case "nuclei":
-					es = append(es, &nuclei.Runner{RateLimit: rate})
+					// Seleksi template (tags/severity) hanya berlaku untuk nuclei —
+					// -tags/-severity memilih subset dari templates terpasang.
+					es = append(es, &nuclei.Runner{RateLimit: rate, Tags: sel.Tags, Severity: sel.Severity})
 				case "ffuf":
 					es = append(es, &ffuf.Runner{Wordlist: *ffufWordlist, RateLimit: rate})
 				case "zap":
@@ -202,7 +204,7 @@ func main() {
 			}
 			return es, recon.NewRealPipelineRate(rate)
 		}
-		engines, rec = engineFactory(0) // instance representatif (laju default) utk validasi & fallback
+		engines, rec = engineFactory(0, web.Selection{}) // instance representatif (laju default, semua template) utk validasi & fallback
 		if len(engines) == 0 {
 			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap)", *engineMode)
 		}

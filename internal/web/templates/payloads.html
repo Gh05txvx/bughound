@@ -114,7 +114,10 @@
 <div class="panel">
   <div class="panel-head">
     <h3>Template</h3>
-    <span class="muted small">{{if .Total}}{{.From}}–{{.To}} dari {{.Total}}{{else}}0 hasil{{end}}</span>
+    <div class="ph-right">
+      <span class="muted small">{{if .Total}}{{.From}}–{{.To}} dari {{.Total}}{{else}}0 hasil{{end}}</span>
+      {{if .Stats.Total}}<a class="btn ghost small" href="/scan?program={{.Program}}{{if .Severity}}&severity={{.Severity}}{{end}}{{if .Tag}}&tags={{.Tag}}{{end}}" title="Buka form scan dengan seleksi template dari filter aktif (tags/severity)"><svg class="ico"><use href="#i-radio"/></svg>Scan pakai filter ini</a>{{end}}
+    </div>
   </div>
   <div class="panel-body flush">
     {{if .Entries}}

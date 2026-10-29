@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 
 	"bughound/internal/egress"
 	"bughound/internal/finding"
@@ -23,6 +24,12 @@ import (
 type Runner struct {
 	Binary    string // default "nuclei"
 	RateLimit int    // -rate-limit (req/dtk); 0 = default nuclei
+	// Tags & Severity menyeleksi SUBSET template yang dijalankan (dari metadata
+	// bank payload, BH-SPEC-PAYLOAD §Seleksi). Kosong = jalankan semua template
+	// terpasang. -tags dan -severity dikombinasikan (template harus cocok
+	// keduanya), memangkas 14k template ke subset terarah → scan jauh lebih cepat.
+	Tags      []string // -tags t1,t2
+	Severity  []string // -severity critical,high
 	proxyAddr string
 }
 
@@ -59,5 +66,23 @@ func (r *Runner) buildArgs(target string) []string {
 	if r.RateLimit > 0 {
 		args = append(args, "-rate-limit", strconv.Itoa(r.RateLimit))
 	}
+	if tags := joinNonEmpty(r.Tags); tags != "" {
+		args = append(args, "-tags", tags)
+	}
+	if sev := joinNonEmpty(r.Severity); sev != "" {
+		args = append(args, "-severity", sev)
+	}
 	return args
+}
+
+// joinNonEmpty menggabungkan nilai ter-trim non-kosong dengan koma (format daftar
+// yang diterima flag -tags/-severity nuclei); mengembalikan "" bila tak ada.
+func joinNonEmpty(in []string) string {
+	var out []string
+	for _, v := range in {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return strings.Join(out, ",")
 }

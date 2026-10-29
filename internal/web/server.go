@@ -61,7 +61,7 @@ type Server struct {
 	// run punya engine sendiri: menjepit laju per-engine DAN mencegah proxy egress
 	// antar-run saling tumpang-tindih (tiap run menegakkan scope guard-nya sendiri).
 	// nil (mock/test) = pakai instance tetap di `engines`/`recon`.
-	newEngines func(rps float64) ([]engine.Engine, recon.Engine)
+	newEngines func(rps float64, sel Selection) ([]engine.Engine, recon.Engine)
 	// catalog mempersist Bank Payload (BH-SPEC-PAYLOAD); nil bila store tak
 	// mendukung (mendeteksi lewat type assertion, seperti users). payloadSources
 	// adalah sumber yang di-scan saat refresh katalog.
@@ -84,6 +84,14 @@ type Server struct {
 	pages map[string]*template.Template
 }
 
+// Selection menyeleksi subset template nuclei yang dijalankan sebuah scan,
+// berdasarkan metadata bank payload (BH-SPEC-PAYLOAD §Seleksi). Kosong = semua
+// template terpasang. Hanya memengaruhi engine nuclei; engine lain mengabaikannya.
+type Selection struct {
+	Tags     []string
+	Severity []string
+}
+
 // Config mengonfigurasi server: store, engine DAST (minimal 1), recon & vault opsional.
 type Config struct {
 	Store   store.Store
@@ -93,7 +101,7 @@ type Config struct {
 	// request dijepit ke rps scan. Bila diset, dipakai menggantikan Engines/Recon
 	// untuk tiap run (lihat Server.newEngines). Engines tetap wajib (≥1) sebagai
 	// fallback & validasi; Recon boleh nil.
-	NewEngines func(rps float64) ([]engine.Engine, recon.Engine)
+	NewEngines func(rps float64, sel Selection) ([]engine.Engine, recon.Engine)
 	// PayloadSources adalah sumber Bank Payload yang di-scan saat refresh katalog
 	// (BH-SPEC-PAYLOAD). Kosong = tombol refresh nonaktif; katalog tetap bisa
 	// ditampilkan dari data tersimpan. Men-scan hanya berkas lokal (tanpa jaringan).
@@ -712,6 +720,8 @@ type scanPage struct {
 	OpenAPI       string
 	UpstreamProxy string
 	RPS           string
+	Tags          string   // seleksi template: -tags (dipisah koma/spasi)
+	Severity      []string // seleksi template: -severity (checkbox tercentang)
 	Errors        []string
 	Result        *scanView
 }
@@ -744,6 +754,10 @@ func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 			page.OutScope = strings.Join(p.OutScope, "\n")
 		}
 	}
+	// Prefill seleksi template dari query — dipakai tautan "Scan pakai filter ini"
+	// di Bank Payload (membawa ?tags= / ?severity= dari filter katalog yang aktif).
+	page.Tags = strings.TrimSpace(r.URL.Query().Get("tags"))
+	page.Severity = filterSeverities(r.URL.Query()["severity"])
 	// Default contoh (langsung mendemokan gate) bila tak ada program.
 	if page.Program == "" {
 		page.Program = "demo"
@@ -767,6 +781,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	targets := splitLines(r.FormValue("targets"))
 	rps := parseRPS(r.FormValue("rps"))
 	proxyChain := splitLines(r.FormValue("upstream_proxy")) // satu hop per baris
+	sel := Selection{Tags: splitList(r.FormValue("tags")), Severity: filterSeverities(r.Form["severity"])}
 
 	page := scanPage{
 		Nav: "scan", Title: "Scan", Program: program,
@@ -777,6 +792,8 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		OpenAPI:       r.FormValue("openapi"),
 		UpstreamProxy: r.FormValue("upstream_proxy"),
 		RPS:           r.FormValue("rps"),
+		Tags:          strings.TrimSpace(r.FormValue("tags")),
+		Severity:      sel.Severity,
 	}
 
 	// Scan ter-arah spec: perluas OpenAPI/Swagger jadi endpoint → target. Tiap
@@ -815,7 +832,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SaveProgram(r.Context(), store.Program{Name: program, InScope: inScope, OutScope: outScope})
 
 	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
-	runID := s.enqueueScan(program, guard, seeds, targets, rps, proxyChain)
+	runID := s.enqueueScan(program, guard, seeds, targets, rps, proxyChain, sel)
 
 	if run, ok := s.queue.Get(runID); ok {
 		s.renderPartial(w, r, "scan", "run_status", toRunView(run))
@@ -827,7 +844,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 // form Scan dan "promote" dari Capture. Task memakai ctx milik queue (bukan
 // r.Context()) agar tak dibatalkan saat response web dikirim. Rate limiter selalu
 // dipasang (tak bisa dimatikan); scope guard menjadi satu-satunya gate.
-func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets []string, rps float64, proxyChain []string) string {
+func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets []string, rps float64, proxyChain []string, sel Selection) string {
 	storeRef := s.store
 	return s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
 		s.auditAppend(ctx, audit.Event{Kind: "run.start", Program: program, RunID: runID, Message: scanLabel(seeds, targets)})
@@ -840,10 +857,11 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets 
 		}
 		// Engine per-run: mode nyata membangun instance BARU dengan laju dijepit
 		// ke rps (throttle per-engine di jalur eksekusi) sehingga tiap run punya
-		// engine + proxy egress sendiri; mock/test pakai instance tetap.
+		// engine + proxy egress sendiri; mock/test pakai instance tetap. Seleksi
+		// template (tags/severity) diteruskan ke engine agar hanya subset yang jalan.
 		engines, rec := s.engines, s.recon
 		if s.newEngines != nil {
-			engines, rec = s.newEngines(rps)
+			engines, rec = s.newEngines(rps, sel)
 		}
 		o := orchestrator.New(guard, engines[0], storeRef,
 			ratelimit.New(ratelimit.Config{RequestsPerSecond: rps, Burst: 5}), auditSink)
@@ -1939,7 +1957,7 @@ func (s *Server) handleCapturePromote(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "capture", "base", page)
 		return
 	}
-	runID := s.enqueueScan(program, guard, nil, targets, rps, nil)
+	runID := s.enqueueScan(program, guard, nil, targets, rps, nil, Selection{})
 	s.auditAppend(r.Context(), audit.Event{Kind: "capture.promote", Program: program, RunID: runID, Allowed: true, Message: fmt.Sprintf("%d endpoint", len(targets))})
 	http.Redirect(w, r, fmt.Sprintf("/capture?program=%s&run=%s&n=%d", url.QueryEscape(program), url.QueryEscape(runID), len(targets)), http.StatusSeeOther)
 }
@@ -2086,6 +2104,38 @@ func splitLines(raw string) []string {
 	return out
 }
 
+// splitList memecah daftar dipisah koma atau spasi (mis. input tags seleksi
+// template) menjadi token non-kosong. Dipakai untuk field tags pada form scan.
+func splitList(raw string) []string {
+	return strings.Fields(strings.ReplaceAll(raw, ",", " "))
+}
+
+// scanSeverities adalah himpunan severity yang sah untuk seleksi template nuclei
+// (-severity). Urutan = prioritas tampilan checkbox pada form scan.
+var scanSeverities = []string{"critical", "high", "medium", "low", "info"}
+
+// filterSeverities menormalkan input severity seleksi: lowercase, buang duplikat,
+// dan simpan hanya nilai yang dikenal (checkbox form selalu sah, tapi query
+// ?severity= dari tautan luar bisa apa saja — jangan teruskan sampah ke engine).
+func filterSeverities(in []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, v := range in {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" || seen[v] {
+			continue
+		}
+		for _, k := range scanSeverities {
+			if v == k {
+				out = append(out, v)
+				seen[v] = true
+				break
+			}
+		}
+	}
+	return out
+}
+
 // parseRPS membaca laju dari form; nilai kosong/tak sah => 10 req/dtk (limiter
 // tetap menjepit ke rentang amannya).
 func parseRPS(s string) float64 {
@@ -2120,7 +2170,15 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 		"join":        func(v []string, sep string) string { return strings.Join(v, sep) },
 		"add":         func(a, b int) int { return a + b },
 		"strs":        func(v ...string) []string { return v },
-		"appVersion":  func() string { return version },
+		"hasStr": func(v []string, s string) bool {
+			for _, x := range v {
+				if x == s {
+					return true
+				}
+			}
+			return false
+		},
+		"appVersion": func() string { return version },
 	}
 	sets := map[string][]string{
 		"dashboard":    {"templates/base.html", "templates/dashboard.html"},
