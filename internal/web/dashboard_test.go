@@ -25,7 +25,14 @@ func TestDashboardSummary(t *testing.T) {
 		t.Fatalf("GET /dashboard = %d", rec.Code)
 	}
 	b := rec.Body.String()
-	for _, want := range []string{"acme", "globex", "2 program", "3 temuan", "1 terkonfirmasi"} {
+	// UI dashboard menaruh angka KPI & labelnya di elemen stat-card terpisah
+	// (bukan frasa "N program"): cek label + nilai KPI, baris program, dan sub
+	// "dari 3 temuan" pada kartu Terkonfirmasi.
+	for _, want := range []string{
+		"acme", "globex", "3 temuan",
+		`<span class="sc-label">Programs</span>`, `<div class="sc-kpi">2</div>`, // 2 program
+		`<span class="sc-label">Terkonfirmasi</span>`, `<div class="sc-kpi">1</div>`, // 1 terkonfirmasi
+	} {
 		if !strings.Contains(b, want) {
 			t.Errorf("dashboard harus memuat %q", want)
 		}
