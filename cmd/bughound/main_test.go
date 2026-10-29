@@ -37,3 +37,28 @@ func TestParseEngineMode(t *testing.T) {
 		}
 	}
 }
+
+func TestSplitSubcommand(t *testing.T) {
+	cases := []struct {
+		name     string
+		args     []string
+		wantSub  string
+		wantRest []string
+	}{
+		{"verb lalu flag", []string{"update", "-db", "x.db"}, "update", []string{"-db", "x.db"}},
+		{"verb saja", []string{"list"}, "list", nil},
+		{"tanpa verb (langsung flag) pakai default", []string{"-db", "x.db"}, "update", []string{"-db", "x.db"}},
+		{"kosong pakai default", nil, "update", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			sub, rest := splitSubcommand(c.args, "update")
+			if sub != c.wantSub {
+				t.Errorf("sub=%q, ingin %q", sub, c.wantSub)
+			}
+			if !eqStrings(rest, c.wantRest) {
+				t.Errorf("rest=%v, ingin %v", rest, c.wantRest)
+			}
+		})
+	}
+}

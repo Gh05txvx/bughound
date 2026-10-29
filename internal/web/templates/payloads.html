@@ -1,0 +1,154 @@
+{{define "content"}}
+<div class="report-head">
+  <div>
+    <h2>Bank Payload <span class="muted small">(katalog template &amp; payload · BH-SPEC-PAYLOAD)</span></h2>
+    <p class="muted small">Katalog netral di atas template native tiap engine — isi payload tidak disentuh. Dari sini kamu melihat apa yang tersedia, trust-nya, dan memantau update list-nya. <code>template_id</code> terbawa ke <code>source_template</code> pada tiap temuan.</p>
+  </div>
+  {{if .CanRefresh}}
+  <form method="post" action="/payloads/refresh" class="inline">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button type="submit" class="btn primary"><svg class="ico"><use href="#i-radio"/></svg>Refresh katalog</button>
+  </form>
+  {{end}}
+</div>
+
+{{if not .Supported}}
+<div class="empty">
+  <p class="muted">Store ini tak mendukung katalog payload (mode ephemeral tanpa katalog). Jalankan dengan database SQLite untuk mengaktifkan Bank Payload.</p>
+</div>
+{{else}}
+
+{{if .Flash}}<div class="banner ok"><span class="dot ok"></span>{{.Flash}}</div>{{end}}
+
+<div class="statrow">
+  <div class="statcard">
+    <div class="sc-top"><span class="sc-label">Total template</span><span class="sc-ico"><svg class="ico"><use href="#i-file"/></svg></span></div>
+    <div class="sc-kpi">{{.Stats.Total}}</div>
+    <div class="sc-sub">dikatalogkan dari {{len .Sources}} sumber</div>
+  </div>
+  <div class="statcard">
+    <div class="sc-top"><span class="sc-label">Aktif</span><span class="sc-ico ok"><svg class="ico"><use href="#i-shield-check"/></svg></span></div>
+    <div class="sc-kpi">{{.Stats.Enabled}}</div>
+    <div class="sc-sub">siap jalan (trusted + metadata lengkap)</div>
+  </div>
+  <div class="statcard">
+    <div class="sc-top"><span class="sc-label">Sumber</span><span class="sc-ico violet"><svg class="ico"><use href="#i-share"/></svg></span></div>
+    <div class="sc-kpi">{{len .Sources}}</div>
+    <div class="sc-sub">pluggable · trust eksplisit</div>
+  </div>
+  <div class="statcard">
+    <div class="sc-top"><span class="sc-label">Terakhir diperbarui</span><span class="sc-ico"><svg class="ico"><use href="#i-activity"/></svg></span></div>
+    <div class="sc-kpi small">{{if .Stats.BuiltAt.IsZero}}belum pernah{{else}}{{.Stats.BuiltAt.Format "2006-01-02 15:04"}}{{end}}</div>
+    <div class="sc-sub">{{if not .CanRefresh}}refresh butuh peran operator{{else}}klik "Refresh katalog" untuk scan ulang{{end}}</div>
+  </div>
+</div>
+
+{{if .Stats.Total}}
+<div class="fchips">
+  <a class="fchip" href="/payloads">semua <b>{{.Stats.Total}}</b></a>
+  {{range $sev, $n := .Stats.BySeverity}}<a class="fchip" href="/payloads?severity={{$sev}}"><span class="lg-dot sev-{{$sev}}"></span>{{$sev}} <b>{{$n}}</b></a>{{end}}
+  {{range $t, $n := .Stats.ByTrust}}<a class="fchip" href="/payloads?trust={{$t}}">trust:{{$t}} <b>{{$n}}</b></a>{{end}}
+  {{range $e, $n := .Stats.ByEngine}}<a class="fchip" href="/payloads?engine={{$e}}">{{$e}} <b>{{$n}}</b></a>{{end}}
+</div>
+{{end}}
+
+<div class="panel">
+  <div class="panel-head"><h3>Sumber</h3><span class="muted small">tiap sumber = satu entri konfigurasi (lokasi · engine · trust · versi)</span></div>
+  <div class="panel-body flush">
+    {{if .Sources}}
+    <table class="tbl">
+      <thead><tr><th>ID</th><th>Engine</th><th>Trust</th><th>Lokasi</th><th>Versi</th><th>Template</th><th>Aktif</th><th>Status</th></tr></thead>
+      <tbody>
+      {{range .Sources}}
+      <tr>
+        <td class="mono">{{.ID}}</td>
+        <td class="mono">{{.Engine}}</td>
+        <td>
+          {{if eq (printf "%s" .Trust) "trusted"}}<span class="chip good">trusted</span>
+          {{else if eq (printf "%s" .Trust) "review"}}<span class="chip warn">review</span>
+          {{else}}<span class="chip">{{.Trust}}</span>{{end}}
+        </td>
+        <td class="mono truncate" title="{{.Path}}">{{.Path}}</td>
+        <td class="mono">{{if .Version}}{{.Version}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td class="mono">{{.Count}}</td>
+        <td class="mono">{{.Enabled}}</td>
+        <td>
+          {{if .Available}}<span class="chip ok">tersedia</span>{{else}}<span class="chip">tak tersedia</span>{{end}}
+          {{if .Note}}<span class="muted small">· {{.Note}}</span>{{end}}
+        </td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty"><p class="muted">Belum ada sumber. {{if .HasSources}}Klik "Refresh katalog" untuk men-scan sumber pertama kali.{{else}}Set <code>-nuclei-templates &lt;dir&gt;</code> / <code>-custom-templates &lt;dir&gt;</code> saat menjalankan server.{{end}}</p></div>
+    {{end}}
+  </div>
+</div>
+
+<form method="get" action="/payloads" class="filters">
+  {{if .Program}}<input type="hidden" name="program" value="{{.Program}}">{{end}}
+  <input type="text" name="q" value="{{.Q}}" placeholder="cari id / nama" autocomplete="off">
+  <select name="engine">
+    <option value="">engine: semua</option>
+    {{range $e, $n := .Stats.ByEngine}}<option value="{{$e}}" {{if eq $.Engine $e}}selected{{end}}>{{$e}}</option>{{end}}
+  </select>
+  <select name="severity">
+    <option value="">severity: semua</option>
+    {{range $s := strs "critical" "high" "medium" "low" "info"}}<option value="{{$s}}" {{if eq $.Severity $s}}selected{{end}}>{{$s}}</option>{{end}}
+  </select>
+  <select name="trust">
+    <option value="">trust: semua</option>
+    {{range $t := strs "trusted" "review" "untrusted"}}<option value="{{$t}}" {{if eq $.Trust $t}}selected{{end}}>{{$t}}</option>{{end}}
+  </select>
+  <select name="enabled">
+    <option value="">status: semua</option>
+    <option value="1" {{if eq .Enabled "1"}}selected{{end}}>aktif</option>
+    <option value="0" {{if eq .Enabled "0"}}selected{{end}}>nonaktif</option>
+  </select>
+  <input type="text" name="tag" value="{{.Tag}}" placeholder="tag" autocomplete="off">
+  <button class="btn" type="submit">Filter</button>
+  <a class="btn ghost" href="/payloads">reset</a>
+</form>
+
+<div class="panel">
+  <div class="panel-head">
+    <h3>Template</h3>
+    <span class="muted small">{{if .Total}}{{.From}}–{{.To}} dari {{.Total}}{{else}}0 hasil{{end}}</span>
+  </div>
+  <div class="panel-body flush">
+    {{if .Entries}}
+    <table class="tbl">
+      <thead><tr><th>template_id</th><th>Engine</th><th>Sev</th><th>Trust</th><th>Tags</th><th>Status</th><th>Sumber</th></tr></thead>
+      <tbody>
+      {{range .Entries}}
+      <tr>
+        <td class="mono truncate" title="{{.NativeRef}}">{{.TemplateID}}{{if .Name}}<div class="muted small truncate">{{.Name}}</div>{{end}}</td>
+        <td class="mono">{{.Engine}}</td>
+        <td>{{if .SeverityDefault}}<span class="badge {{sevClass .SeverityDefault}}">{{.SeverityDefault}}</span>{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>
+          {{if eq (printf "%s" .Trust) "trusted"}}<span class="chip good">trusted</span>
+          {{else if eq (printf "%s" .Trust) "review"}}<span class="chip warn">review</span>
+          {{else}}<span class="chip">{{.Trust}}</span>{{end}}
+        </td>
+        <td class="mono truncate">{{if .Tags}}{{join .Tags ", "}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>{{if .Enabled}}<span class="chip ok">aktif</span>{{else}}<span class="muted small" title="{{.Note}}">nonaktif</span>{{end}}</td>
+        <td class="mono">{{.Source}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+    <div class="empty"><p class="muted">Tidak ada template untuk filter ini. {{if not .Stats.Total}}Katalog masih kosong — klik "Refresh katalog".{{else}}<a href="/payloads">reset filter</a>.{{end}}</p></div>
+    {{end}}
+  </div>
+  {{if gt .Pages 1}}
+  <div class="pager">
+    {{if .HasPrev}}<a class="btn ghost" href="{{.PrevURL}}">← sebelumnya</a>{{else}}<span class="btn ghost disabled">←</span>{{end}}
+    <span class="muted small">hal {{.Page}} / {{.Pages}}</span>
+    {{if .HasNext}}<a class="btn ghost" href="{{.NextURL}}">berikutnya →</a>{{else}}<span class="btn ghost disabled">→</span>{{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}

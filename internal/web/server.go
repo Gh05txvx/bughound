@@ -33,6 +33,7 @@ import (
 	"bughound/internal/jobs"
 	"bughound/internal/openapi"
 	"bughound/internal/orchestrator"
+	"bughound/internal/payload"
 	"bughound/internal/ratelimit"
 	"bughound/internal/recon"
 	"bughound/internal/report"
@@ -60,14 +61,19 @@ type Server struct {
 	// run punya engine sendiri: menjepit laju per-engine DAN mencegah proxy egress
 	// antar-run saling tumpang-tindih (tiap run menegakkan scope guard-nya sendiri).
 	// nil (mock/test) = pakai instance tetap di `engines`/`recon`.
-	newEngines   func(rps float64) ([]engine.Engine, recon.Engine)
-	vault        secret.Vault
-	audit        audit.Log
-	authDisabled bool // true = akses terbuka tanpa login (hanya -no-auth / test)
-	queue        *jobs.Queue
-	version      string
-	sastRoot     string       // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
-	grpcEngine   grpc.Scanner // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
+	newEngines func(rps float64) ([]engine.Engine, recon.Engine)
+	// catalog mempersist Bank Payload (BH-SPEC-PAYLOAD); nil bila store tak
+	// mendukung (mendeteksi lewat type assertion, seperti users). payloadSources
+	// adalah sumber yang di-scan saat refresh katalog.
+	catalog        store.CatalogStore
+	payloadSources []payload.Source
+	vault          secret.Vault
+	audit          audit.Log
+	authDisabled   bool // true = akses terbuka tanpa login (hanya -no-auth / test)
+	queue          *jobs.Queue
+	version        string
+	sastRoot       string       // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
+	grpcEngine     grpc.Scanner // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
 
 	captureMu sync.Mutex
 	captures  map[string]*captureSession // sesi capture reverse-proxy aktif per program
@@ -88,8 +94,12 @@ type Config struct {
 	// untuk tiap run (lihat Server.newEngines). Engines tetap wajib (≥1) sebagai
 	// fallback & validasi; Recon boleh nil.
 	NewEngines func(rps float64) ([]engine.Engine, recon.Engine)
-	Vault      secret.Vault
-	Audit      audit.Log
+	// PayloadSources adalah sumber Bank Payload yang di-scan saat refresh katalog
+	// (BH-SPEC-PAYLOAD). Kosong = tombol refresh nonaktif; katalog tetap bisa
+	// ditampilkan dari data tersimpan. Men-scan hanya berkas lokal (tanpa jaringan).
+	PayloadSources []payload.Source
+	Vault          secret.Vault
+	Audit          audit.Log
 	// Users adalah store akun RBAC. Wajib kecuali AuthDisabled=true. Login
 	// (sesi) & HTTP Basic (otomasi) diverifikasi terhadapnya; peran menentukan
 	// hak (viewer baca, operator ubah, admin kelola user).
@@ -127,26 +137,32 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{
-		mux:          http.NewServeMux(),
-		store:        cfg.Store,
-		users:        cfg.Users,
-		engines:      cfg.Engines,
-		recon:        cfg.Recon,
-		newEngines:   cfg.NewEngines,
-		vault:        cfg.Vault,
-		audit:        cfg.Audit,
-		authDisabled: cfg.AuthDisabled,
-		queue:        jobs.New(4),
-		version:      version,
-		sastRoot:     strings.TrimSpace(cfg.SASTRoot),
-		captures:     map[string]*captureSession{},
-		sessions:     map[string]sessionInfo{},
-		pages:        pages,
+		mux:            http.NewServeMux(),
+		store:          cfg.Store,
+		users:          cfg.Users,
+		engines:        cfg.Engines,
+		recon:          cfg.Recon,
+		newEngines:     cfg.NewEngines,
+		payloadSources: cfg.PayloadSources,
+		vault:          cfg.Vault,
+		audit:          cfg.Audit,
+		authDisabled:   cfg.AuthDisabled,
+		queue:          jobs.New(4),
+		version:        version,
+		sastRoot:       strings.TrimSpace(cfg.SASTRoot),
+		captures:       map[string]*captureSession{},
+		sessions:       map[string]sessionInfo{},
+		pages:          pages,
 	}
 	if cfg.GRPCReal {
 		s.grpcEngine = &grpc.Runner{Plaintext: cfg.GRPCPlaintext}
 	} else {
 		s.grpcEngine = grpc.Mock{}
+	}
+	// Bank Payload: store yang mendukung katalog dipakai; bila tidak, halaman
+	// /payloads menampilkan pesan "tak didukung" (fitur degradasi mulus).
+	if cs, ok := cfg.Store.(store.CatalogStore); ok {
+		s.catalog = cs
 	}
 	s.routes()
 	return s, nil
@@ -663,6 +679,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
 	s.mux.HandleFunc("POST /programs/preview", s.handleProgramPreview)
+	s.mux.HandleFunc("GET /payloads", s.handlePayloads)
+	s.mux.HandleFunc("POST /payloads/refresh", s.handlePayloadsRefresh)
 	s.mux.HandleFunc("GET /scan", s.handleScanForm)
 	s.mux.HandleFunc("POST /scan", s.handleScanRun)
 	s.mux.HandleFunc("GET /runs/{id}", s.handleRunStatus)
@@ -1207,6 +1225,172 @@ func (s *Server) handleProgramPreview(w http.ResponseWriter, r *http.Request) {
 		res.Rows = append(res.Rows, previewRow{Target: d.Target, Allowed: d.Allowed, Reason: string(d.Reason)})
 	}
 	s.renderPartial(w, r, "program_edit", "program_preview", res)
+}
+
+// ---- Bank Payload (BH-SPEC-PAYLOAD) ----
+
+const payloadPageSize = 50
+
+type payloadsPage struct {
+	Nav        string
+	Title      string
+	Program    string
+	CSRF       string
+	Supported  bool // store mendukung katalog
+	CanRefresh bool // ada sumber & peran operator ke atas
+	HasSources bool
+	Sources    []payload.SourceInfo
+	Stats      store.CatalogStats
+	Entries    []payload.Entry
+
+	// filter aktif (untuk mengisi ulang form)
+	Q, Engine, Trust, Severity, Tag, Enabled string
+
+	// paginasi
+	Total, Page, Pages, From, To int
+	HasPrev, HasNext             bool
+	PrevURL, NextURL             string
+
+	Flash string // banner setelah refresh
+}
+
+func (s *Server) handlePayloads(w http.ResponseWriter, r *http.Request) {
+	page := payloadsPage{
+		Nav: "payloads", Title: "Bank Payload", CSRF: s.csrfToken(r),
+		Program:    strings.TrimSpace(r.URL.Query().Get("program")),
+		HasSources: len(s.payloadSources) > 0,
+	}
+	if s.catalog == nil {
+		s.render(w, r, "payloads", "base", page)
+		return
+	}
+	page.Supported = true
+	ctx := r.Context()
+	q := r.URL.Query()
+
+	cq := store.CatalogQuery{
+		Search:   strings.TrimSpace(q.Get("q")),
+		Engine:   strings.TrimSpace(q.Get("engine")),
+		Trust:    strings.TrimSpace(q.Get("trust")),
+		Severity: strings.TrimSpace(q.Get("severity")),
+		Tag:      strings.TrimSpace(q.Get("tag")),
+		Enabled:  strings.TrimSpace(q.Get("enabled")),
+		Limit:    payloadPageSize,
+	}
+	pageNo := 1
+	if n, err := strconv.Atoi(q.Get("page")); err == nil && n > 1 {
+		pageNo = n
+	}
+	cq.Offset = (pageNo - 1) * payloadPageSize
+
+	entries, total, err := s.catalog.ListCatalog(ctx, cq)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	page.Entries = entries
+	page.Total = total
+	page.Stats, _ = s.catalog.CatalogStats(ctx)
+	page.Sources, _ = s.catalog.ListCatalogSources(ctx)
+	page.Q, page.Engine, page.Trust = cq.Search, cq.Engine, cq.Trust
+	page.Severity, page.Tag, page.Enabled = cq.Severity, cq.Tag, cq.Enabled
+
+	pages := (total + payloadPageSize - 1) / payloadPageSize
+	if pages < 1 {
+		pages = 1
+	}
+	if pageNo > pages {
+		pageNo = pages
+	}
+	page.Page, page.Pages = pageNo, pages
+	if total > 0 {
+		page.From = cq.Offset + 1
+		page.To = cq.Offset + len(entries)
+	}
+	base := payloadFilterQuery(cq)
+	if pageNo > 1 {
+		page.HasPrev = true
+		page.PrevURL = "/payloads?" + appendPage(base, pageNo-1)
+	}
+	if pageNo < pages {
+		page.HasNext = true
+		page.NextURL = "/payloads?" + appendPage(base, pageNo+1)
+	}
+
+	_, role := s.currentUser(r)
+	page.CanRefresh = page.HasSources && (s.authDisabled || auth.CanWrite(role))
+	if q.Get("refreshed") == "1" {
+		if t := q.Get("total"); t != "" {
+			page.Flash = "Katalog diperbarui — " + t + " template dikatalogkan."
+		} else {
+			page.Flash = "Katalog diperbarui."
+		}
+	}
+	s.render(w, r, "payloads", "base", page)
+}
+
+func (s *Server) handlePayloadsRefresh(w http.ResponseWriter, r *http.Request) {
+	if s.catalog == nil {
+		http.Error(w, "katalog tak didukung oleh store ini", http.StatusServiceUnavailable)
+		return
+	}
+	if len(s.payloadSources) == 0 {
+		http.Error(w, "tak ada sumber payload terkonfigurasi (set -nuclei-templates / -custom-templates)", http.StatusServiceUnavailable)
+		return
+	}
+	ctx := r.Context()
+	before, _ := s.catalog.CatalogStats(ctx)
+	// Build men-scan berkas lokal sumber (tanpa jaringan) lalu ReplaceCatalog
+	// mengganti katalog secara atomik.
+	cat := payload.Build(ctx, s.payloadSources)
+	if err := s.catalog.ReplaceCatalog(ctx, cat); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	user, _ := s.currentUser(r)
+	s.auditAppend(ctx, audit.Event{
+		Kind:    "catalog.refresh",
+		Allowed: true,
+		Message: fmt.Sprintf("bank payload di-refresh oleh %s: %d template dari %d sumber (sebelumnya %d)",
+			firstNonEmptyStr(user, "sistem"), len(cat.Entries), len(cat.Sources), before.Total),
+	})
+	v := url.Values{}
+	v.Set("refreshed", "1")
+	v.Set("total", strconv.Itoa(len(cat.Entries)))
+	http.Redirect(w, r, "/payloads?"+v.Encode(), http.StatusSeeOther)
+}
+
+// payloadFilterQuery menyusun query string filter (tanpa page) untuk link paginasi.
+func payloadFilterQuery(cq store.CatalogQuery) string {
+	v := url.Values{}
+	set := func(k, val string) {
+		if strings.TrimSpace(val) != "" {
+			v.Set(k, val)
+		}
+	}
+	set("q", cq.Search)
+	set("engine", cq.Engine)
+	set("trust", cq.Trust)
+	set("severity", cq.Severity)
+	set("tag", cq.Tag)
+	set("enabled", cq.Enabled)
+	return v.Encode()
+}
+
+func appendPage(base string, n int) string {
+	if base == "" {
+		return "page=" + strconv.Itoa(n)
+	}
+	return base + "&page=" + strconv.Itoa(n)
+}
+
+func firstNonEmptyStr(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 // ---- Audit ----
@@ -1953,6 +2137,7 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 		"audit":        {"templates/base.html", "templates/audit.html"},
 		"programs":     {"templates/base.html", "templates/programs.html"},
 		"program_edit": {"templates/base.html", "templates/program_edit.html", "templates/program_preview.html"},
+		"payloads":     {"templates/base.html", "templates/payloads.html"},
 	}
 	out := map[string]*template.Template{}
 	for name, files := range sets {

@@ -22,6 +22,7 @@ import (
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/engine/zap"
+	"bughound/internal/payload"
 	"bughound/internal/recon"
 	"bughound/internal/secret"
 	"bughound/internal/store"
@@ -33,6 +34,13 @@ import (
 var version = "dev"
 
 func main() {
+	// Subperintah CLI: `bughound templates update|list` mengelola Bank Payload
+	// (BH-SPEC-PAYLOAD) tanpa menjalankan server.
+	if len(os.Args) > 1 && os.Args[1] == "templates" {
+		runTemplates(os.Args[2:])
+		return
+	}
+
 	addr := flag.String("addr", "127.0.0.1:8787", "alamat bind (default localhost saja)")
 	showVersion := flag.Bool("version", false, "cetak versi lalu keluar")
 	dbPath := flag.String("db", "bughound.db", "path file SQLite (kosongkan untuk in-memory/ephemeral)")
@@ -47,6 +55,8 @@ func main() {
 	zapMode := flag.String("zap-mode", "quick", "mode engine ZAP nyata: quick | baseline | full (full = spider + active scan)")
 	grpcMode := flag.String("grpc", "mock", "engine enumerasi gRPC: mock | real (grpcurl, butuh binary)")
 	grpcPlaintext := flag.Bool("grpc-plaintext", false, "gRPC tanpa TLS (-plaintext) untuk engine gRPC nyata")
+	nucleiTemplates := flag.String("nuclei-templates", "", "dir nuclei-templates untuk Bank Payload (kosong = auto: env NUCLEI_TEMPLATES_DIR / $HOME/nuclei-templates)")
+	customTemplates := flag.String("custom-templates", "", "dir template custom untuk Bank Payload (opsional; atau env BUGHOUND_CUSTOM_TEMPLATES)")
 	flag.Parse()
 
 	if *showVersion {
@@ -243,7 +253,18 @@ func main() {
 		}
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, NewEngines: engineFactory, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: *sastRoot, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext})
+	// Bank Payload (BH-SPEC-PAYLOAD): sumber template yang di-scan saat refresh
+	// katalog. Hanya membaca berkas lokal (tanpa jaringan); aman di mode apa pun.
+	payloadSources := payload.DefaultSources(*nucleiTemplates, *customTemplates)
+	if len(payloadSources) > 0 {
+		var ids []string
+		for _, ps := range payloadSources {
+			ids = append(ids, fmt.Sprintf("%s(%s,%s)", ps.ID, ps.Engine, ps.Trust))
+		}
+		log.Printf("bank payload: %d sumber [%s] — refresh via /payloads atau `bughound templates update`", len(payloadSources), strings.Join(ids, ", "))
+	}
+
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, NewEngines: engineFactory, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: *sastRoot, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext, PayloadSources: payloadSources})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}
@@ -355,6 +376,81 @@ func engineRate(rps float64) int {
 		r = maxEngineRate
 	}
 	return int(r)
+}
+
+// splitSubcommand melepas verb subperintah (argumen non-flag pertama) dari args
+// sehingga flag setelahnya tetap bisa diurai. Mengembalikan def bila argumen
+// pertama adalah flag atau args kosong.
+func splitSubcommand(args []string, def string) (string, []string) {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		return args[0], args[1:]
+	}
+	return def, args
+}
+
+// runTemplates menjalankan subperintah `bughound templates <update|list>` untuk
+// mengelola Bank Payload (BH-SPEC-PAYLOAD): men-scan sumber lalu me-refresh
+// katalog yang tersimpan di SQLite. Hanya membaca berkas lokal (tanpa jaringan).
+func runTemplates(args []string) {
+	// Ambil verb subperintah lebih dulu: flag package berhenti mengurai begitu
+	// menemui argumen non-flag, jadi verb harus dilepas sebelum Parse agar flag
+	// SETELAH verb (mis. `templates update -db ...`) tetap terbaca.
+	sub, args := splitSubcommand(args, "update")
+
+	fs := flag.NewFlagSet("templates", flag.ExitOnError)
+	db := fs.String("db", "bughound.db", "path file SQLite tempat katalog disimpan")
+	nucleiDir := fs.String("nuclei-templates", "", "dir nuclei-templates (kosong = auto: env NUCLEI_TEMPLATES_DIR / $HOME/nuclei-templates)")
+	customDir := fs.String("custom-templates", "", "dir template custom (opsional; atau env BUGHOUND_CUSTOM_TEMPLATES)")
+	_ = fs.Parse(args)
+	if *db == "" {
+		log.Fatalf("templates: butuh -db (SQLite) untuk menyimpan katalog")
+	}
+	st, err := store.OpenSQLite(*db)
+	if err != nil {
+		log.Fatalf("templates: buka database %q: %v", *db, err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	switch sub {
+	case "update", "refresh":
+		sources := payload.DefaultSources(*nucleiDir, *customDir)
+		if len(sources) == 0 {
+			log.Fatalf("templates: tak ada sumber (set -nuclei-templates / -custom-templates atau env)")
+		}
+		before, _ := st.CatalogStats(ctx)
+		cat := payload.Build(ctx, sources)
+		if err := st.ReplaceCatalog(ctx, cat); err != nil {
+			log.Fatalf("templates: simpan katalog: %v", err)
+		}
+		fmt.Printf("katalog diperbarui: %d template dari %d sumber (sebelumnya %d)\n", len(cat.Entries), len(cat.Sources), before.Total)
+		for _, s := range cat.Sources {
+			status := "tersedia"
+			if !s.Available {
+				status = "TAK TERSEDIA"
+			}
+			fmt.Printf("  - %-16s %-7s trust=%-9s %6d template (%d aktif) [%s] %s\n",
+				s.ID, s.Engine, s.Trust, s.Count, s.Enabled, status, s.Path)
+			if s.Note != "" {
+				fmt.Printf("      catatan: %s\n", s.Note)
+			}
+		}
+	case "list":
+		entries, total, err := st.ListCatalog(ctx, store.CatalogQuery{Limit: 50})
+		if err != nil {
+			log.Fatalf("templates: list: %v", err)
+		}
+		fmt.Printf("%d template di katalog (menampilkan %d):\n", total, len(entries))
+		for _, e := range entries {
+			en := "off"
+			if e.Enabled {
+				en = "on "
+			}
+			fmt.Printf("  [%s] %-44s %-7s %-8s %s\n", en, e.TemplateID, e.Engine, e.SeverityDefault, e.Trust)
+		}
+	default:
+		log.Fatalf("templates: subperintah tak dikenal %q (pakai: update | list)", sub)
+	}
 }
 
 func isLocalhost(addr string) bool {

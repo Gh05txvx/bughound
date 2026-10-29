@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"bughound/internal/finding"
+	"bughound/internal/payload"
 )
 
 // Mem adalah Store in-memory yang aman dipakai konkuren. Dipakai untuk unit
@@ -21,6 +22,11 @@ type Mem struct {
 	primary  map[string]map[string]string
 	programs map[string]*Program
 	users    map[string]*User
+
+	// Bank Payload (BH-SPEC-PAYLOAD): katalog in-memory, diganti utuh saat refresh.
+	catalog        []payload.Entry
+	catalogSources []payload.SourceInfo
+	catalogBuiltAt time.Time
 }
 
 // NewMem membuat store in-memory kosong.

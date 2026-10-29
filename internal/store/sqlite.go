@@ -69,6 +69,33 @@ func (s *SQLite) init() error {
 			pass_hash  TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		);`,
+		// Bank Payload (BH-SPEC-PAYLOAD): katalog metadata di atas template native.
+		// Entri utuh disimpan sebagai doc JSON; kolom terindeks untuk filter UI.
+		`CREATE TABLE IF NOT EXISTS catalog (
+			template_id TEXT PRIMARY KEY,
+			source      TEXT NOT NULL,
+			engine      TEXT NOT NULL,
+			trust       TEXT NOT NULL,
+			severity    TEXT,
+			type        TEXT,
+			tags        TEXT,
+			name        TEXT NOT NULL,
+			enabled     INTEGER NOT NULL,
+			version     TEXT NOT NULL,
+			doc         TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_engine ON catalog(engine);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_trust  ON catalog(trust);`,
+		`CREATE INDEX IF NOT EXISTS idx_catalog_sev    ON catalog(severity);`,
+		`CREATE TABLE IF NOT EXISTS catalog_sources (
+			id         TEXT PRIMARY KEY,
+			doc        TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
+		`CREATE TABLE IF NOT EXISTS catalog_meta (
+			k TEXT PRIMARY KEY,
+			v TEXT NOT NULL
+		);`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
