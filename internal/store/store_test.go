@@ -209,6 +209,19 @@ func TestMemProgramCRUD(t *testing.T) {
 	if err := s.SaveProgram(ctx, Program{Name: "  "}); err == nil {
 		t.Error("nama kosong harus ditolak")
 	}
+	// Delete: hapus "demo", sisakan "alpha"; hapus yang tak ada → ErrNotFound.
+	if err := s.DeleteProgram(ctx, "demo"); err != nil {
+		t.Fatalf("DeleteProgram: %v", err)
+	}
+	if _, err := s.GetProgram(ctx, "demo"); err != ErrNotFound {
+		t.Errorf("program terhapus harus ErrNotFound, dapat %v", err)
+	}
+	if ps, _ := s.ListPrograms(ctx); len(ps) != 1 || ps[0].Name != "alpha" {
+		t.Errorf("setelah hapus harus sisa [alpha]: %+v", ps)
+	}
+	if err := s.DeleteProgram(ctx, "demo"); err != ErrNotFound {
+		t.Errorf("hapus program tak ada harus ErrNotFound, dapat %v", err)
+	}
 }
 
 func TestMemPrograms(t *testing.T) {

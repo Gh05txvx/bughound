@@ -177,6 +177,38 @@ func TestSQLiteProgramCRUDPersists(t *testing.T) {
 	}
 }
 
+func TestSQLiteDeleteProgramKeepsFindings(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	// Program dengan definisi scope + satu temuan.
+	if err := s.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"demo.test"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.Save(ctx, mkFinding("demo", "r", "x", "https://demo.test", "https://demo.test/a", "p", finding.SeverityLow))
+
+	if err := s.DeleteProgram(ctx, "demo"); err != nil {
+		t.Fatalf("DeleteProgram: %v", err)
+	}
+	// Definisi hilang...
+	if _, err := s.GetProgram(ctx, "demo"); err != ErrNotFound {
+		t.Errorf("definisi program harus hilang (ErrNotFound), dapat %v", err)
+	}
+	if ps, _ := s.ListPrograms(ctx); len(ps) != 0 {
+		t.Errorf("ListPrograms harus kosong setelah hapus, dapat %+v", ps)
+	}
+	// ...tapi temuan TETAP (hasil kerja; audit/temuan tak ikut terhapus).
+	if fs, _ := s.List(ctx, Query{Program: "demo"}); len(fs) != 1 {
+		t.Errorf("temuan harus tetap tersimpan setelah program dihapus, dapat %d", len(fs))
+	}
+	if ps, _ := s.Programs(ctx); len(ps) != 1 || ps[0] != "demo" {
+		t.Errorf("Programs() (dari temuan) harus tetap memuat demo, dapat %v", ps)
+	}
+	// Idempoten: hapus lagi → ErrNotFound.
+	if err := s.DeleteProgram(ctx, "demo"); err != ErrNotFound {
+		t.Errorf("hapus ulang harus ErrNotFound, dapat %v", err)
+	}
+}
+
 func TestSQLitePrograms(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()

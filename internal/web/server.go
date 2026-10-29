@@ -686,6 +686,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /programs", s.handlePrograms)
 	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
+	s.mux.HandleFunc("POST /programs/delete", s.handleProgramDelete)
 	s.mux.HandleFunc("POST /programs/preview", s.handleProgramPreview)
 	s.mux.HandleFunc("GET /payloads", s.handlePayloads)
 	s.mux.HandleFunc("POST /payloads/refresh", s.handlePayloadsRefresh)
@@ -1147,13 +1148,18 @@ type programsPage struct {
 	Title    string
 	Program  string
 	CSRF     string
+	Note     string // flash setelah aksi (mis. hapus)
 	Programs []*store.Program
 }
 
 func (s *Server) handlePrograms(w http.ResponseWriter, r *http.Request) {
 	progs, _ := s.store.ListPrograms(r.Context())
+	note := ""
+	if r.URL.Query().Get("ok") == "deleted" {
+		note = "Program dihapus (temuan & audit tetap tersimpan)."
+	}
 	s.render(w, r, "programs", "base", programsPage{
-		Nav: "programs", Title: "Programs", CSRF: s.csrfToken(r), Programs: progs,
+		Nav: "programs", Title: "Programs", CSRF: s.csrfToken(r), Note: note, Programs: progs,
 	})
 }
 
@@ -1215,6 +1221,32 @@ func (s *Server) handleProgramSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/programs", http.StatusSeeOther)
+}
+
+// handleProgramDelete menghapus definisi scope sebuah program. Yang dibuang HANYA
+// definisi program (agar daftar tak menumpuk); temuan tetap tersimpan sebagai
+// hasil kerja dan audit append-only tidak disentuh — penghapusan ini sendiri
+// DICATAT di audit. State-changing → butuh operator+ & CSRF (middleware authorize).
+func (s *Server) handleProgramDelete(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		http.Redirect(w, r, "/programs", http.StatusSeeOther)
+		return
+	}
+	me, _ := s.currentUser(r)
+	err := s.store.DeleteProgram(r.Context(), name)
+	if err != nil && err != store.ErrNotFound { // idempoten: sudah tak ada = sukses senyap
+		http.Error(w, "gagal menghapus program: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err == nil {
+		s.auditAppend(r.Context(), audit.Event{Kind: "program.delete", Program: name, Allowed: true, Message: fmt.Sprintf("%s menghapus definisi program (temuan & audit tetap)", me)})
+	}
+	http.Redirect(w, r, "/programs?ok=deleted", http.StatusSeeOther)
 }
 
 type previewResult struct {

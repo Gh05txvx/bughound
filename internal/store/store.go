@@ -35,6 +35,10 @@ type Store interface {
 	GetProgram(ctx context.Context, name string) (*Program, error)
 	// ListPrograms mengembalikan semua program tersimpan, terurut nama.
 	ListPrograms(ctx context.Context) ([]*Program, error)
+	// DeleteProgram menghapus definisi scope sebuah program; ErrNotFound bila tak
+	// ada. Hanya definisi program yang dihapus — temuan & audit TIDAK disentuh
+	// (temuan adalah hasil kerja, audit append-only per prinsip keamanan).
+	DeleteProgram(ctx context.Context, name string) error
 	// SetStatus mengubah status triase sebuah temuan.
 	SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error
 	// Close melepaskan sumber daya (no-op untuk in-memory).

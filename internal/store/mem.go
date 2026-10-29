@@ -78,6 +78,17 @@ func (m *Mem) ListPrograms(ctx context.Context) ([]*Program, error) {
 	return out, nil
 }
 
+// DeleteProgram: lihat Store.DeleteProgram.
+func (m *Mem) DeleteProgram(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.programs[name]; !ok {
+		return ErrNotFound
+	}
+	delete(m.programs, name)
+	return nil
+}
+
 func cloneProgram(p *Program) *Program {
 	cp := *p
 	cp.InScope = append([]string(nil), p.InScope...)

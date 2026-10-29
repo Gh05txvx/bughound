@@ -337,6 +337,19 @@ func (s *SQLite) ListPrograms(ctx context.Context) ([]*Program, error) {
 	return out, rows.Err()
 }
 
+// DeleteProgram: lihat Store.DeleteProgram. Hanya baris definisi program yang
+// dihapus; tabel findings & audit tidak disentuh.
+func (s *SQLite) DeleteProgram(ctx context.Context, name string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM programs WHERE name=?`, name)
+	if err != nil {
+		return fmt.Errorf("store: hapus program: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func decodeProgram(name, in, out, upd string) *Program {
 	p := &Program{Name: name}
 	_ = json.Unmarshal([]byte(in), &p.InScope)

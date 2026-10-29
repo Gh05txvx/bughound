@@ -7,6 +7,8 @@
   <div class="actions"><a class="btn primary" href="/programs/edit">+ Program baru</a></div>
 </div>
 
+{{if .Note}}<div class="banner ok"><span class="dot ok"></span>{{.Note}}</div>{{end}}
+
 {{if .Programs}}
 <table class="tbl">
   <thead><tr><th>Program</th><th>In-scope</th><th>Out-of-scope</th><th>Diperbarui</th><th></th></tr></thead>
@@ -18,8 +20,15 @@
     <td class="mono muted">{{len .OutScope}} entri</td>
     <td class="mono muted">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td>
     <td>
-      <a class="btn ghost" href="/programs/edit?name={{.Name}}">edit scope</a>
-      <a class="btn" href="/scan?program={{.Name}}">scan →</a>
+      <div class="row-actions">
+        <a class="btn ghost" href="/programs/edit?name={{.Name}}">edit scope</a>
+        <a class="btn" href="/scan?program={{.Name}}">scan →</a>
+        <form method="post" action="/programs/delete" class="inline" onsubmit="return confirm('Hapus definisi program {{.Name}}? Temuan & audit TETAP tersimpan — hanya scope program yang dibuang.')">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="name" value="{{.Name}}">
+          <button type="submit" class="btn ghost danger">hapus</button>
+        </form>
+      </div>
     </td>
   </tr>
   {{end}}
