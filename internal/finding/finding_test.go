@@ -82,6 +82,34 @@ func TestComputeDedupKey_DiffersByTypePathParam(t *testing.T) {
 	}
 }
 
+// Tipe site-wide (header policy, CORS) mengabaikan path: instance per-URL dari
+// satu origin terkolaps jadi satu dedup_key.
+func TestComputeDedupKey_SiteWideIgnoresPath(t *testing.T) {
+	siteWide := []string{
+		"content-security-policy-csp-header-not-set",
+		"cross-domain-misconfiguration",
+		"strict-transport-security-header-not-set",
+		"x-content-type-options-header-missing",
+	}
+	for _, typ := range siteWide {
+		a := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/", "")
+		b := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/ftp/quarantine", "")
+		c := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/sitemap.xml", "")
+		if a != b || a != c {
+			t.Errorf("%s: path berbeda pada origin sama harus satu dedup_key; %s/%s/%s", typ, a[:8], b[:8], c[:8])
+		}
+		// Origin berbeda tetap terpisah.
+		if other := ComputeDedupKey(typ, "https://other.io", "https://other.io/", ""); other == a {
+			t.Errorf("%s: origin berbeda tak boleh terkolaps", typ)
+		}
+	}
+	// Non-site-wide tetap sensitif-path (jaring pengaman regresi).
+	if x := ComputeDedupKey("exposed-path", "https://acme.io", "https://acme.io/a", ""); x ==
+		ComputeDedupKey("exposed-path", "https://acme.io", "https://acme.io/b", "") {
+		t.Error("exposed-path harus tetap membedakan path")
+	}
+}
+
 func TestFinalize_SetsDerivedFields(t *testing.T) {
 	f := &Finding{
 		ID:           "id-1",

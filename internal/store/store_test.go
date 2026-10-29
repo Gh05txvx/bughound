@@ -98,6 +98,37 @@ func TestListExcludesDuplicatesByDefault(t *testing.T) {
 	}
 }
 
+// Isu site-wide (CSP absen) yang dilaporkan ZAP di banyak URL harus terkolaps
+// jadi satu temuan utama — path diabaikan oleh dedup_key.
+func TestDedupSiteWideCollapsesAcrossPaths(t *testing.T) {
+	s := NewMem()
+	ctx := context.Background()
+	const typ = "content-security-policy-csp-header-not-set"
+	paths := []string{"https://acme.io/", "https://acme.io/ftp", "https://acme.io/ftp/quarantine", "https://acme.io/sitemap.xml"}
+	dupes := 0
+	for _, u := range paths {
+		r, err := s.Save(ctx, mkFinding("acme", "r", typ, "https://acme.io", u, "", finding.SeverityMedium))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Deduplicated {
+			dupes++
+		}
+	}
+	if dupes != len(paths)-1 {
+		t.Fatalf("CSP di %d URL harus kolaps jadi 1 (sisanya duplikat); duplikat=%d", len(paths), dupes)
+	}
+	def, _ := s.List(ctx, Query{Program: "acme"})
+	if len(def) != 1 {
+		t.Fatalf("hitungan default harus 1 isu CSP, bukan %d", len(def))
+	}
+	// Semua instance tetap tersimpan untuk audit.
+	all, _ := s.List(ctx, Query{Program: "acme", IncludeDuplicates: true})
+	if len(all) != len(paths) {
+		t.Fatalf("semua instance harus tetap tersimpan (audit): dapat %d", len(all))
+	}
+}
+
 func TestListFiltersAndSort(t *testing.T) {
 	s := NewMem()
 	ctx := context.Background()

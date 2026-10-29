@@ -16,13 +16,48 @@ import (
 // Yang sengaja TIDAK masuk kunci: run_id, source_engine, timestamp, payload,
 // dan nilai query. Dengan begitu isu yang sama pada parameter yang sama tetap
 // satu temuan walau ditemukan dua engine atau di dua run berbeda.
+//
+// Pengecualian: untuk tipe SITE-WIDE (lihat siteWide) path dikeluarkan dari
+// kunci. Isu origin-level seperti header CSP/HSTS absen atau CORS permisif
+// dilaporkan engine (mis. ZAP) sekali per URL yang dirayapi, padahal satu origin
+// = satu misconfig. Mengabaikan path membuat semua instance terkolaps jadi satu
+// temuan utama; sisanya ditandai duplikat oleh store (disembunyikan dari hitungan
+// & report, tetap tersimpan utuh untuk audit).
 func ComputeDedupKey(typ, target, locationURL, parameter string) string {
+	path := pathOf(locationURL)
+	if siteWide(typ) {
+		path = "" // identitas = origin, bukan path
+	}
 	raw := strings.ToLower(strings.TrimSpace(typ)) + "|" +
 		hostOf(target) + "|" +
-		pathOf(locationURL) + "|" +
+		path + "|" +
 		parameter
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// siteWideTypes: tipe isu yang identitasnya ORIGIN (host), bukan path tertentu.
+// Disengaja sebagai daftar eksplisit + pola sufiks konservatif agar temuan
+// per-path yang sah (exposed-path, suspicious-comments per berkas, dll.) TIDAK
+// pernah ikut terkolaps keliru.
+var siteWideTypes = map[string]bool{
+	"cross-domain-misconfiguration": true, // CORS permisif (origin-level)
+	"modern-web-application":        true, // info ZAP, sama utk seluruh situs
+	"user-agent-fuzzer":             true, // probe header, bukan path spesifik
+}
+
+// siteWide melaporkan apakah typ adalah isu origin-level yang dedup-nya harus
+// mengabaikan path. Keluarga header-policy ZAP ("...-header-not-set" /
+// "...-header-missing", mis. CSP, HSTS, X-Frame-Options, X-Content-Type-Options)
+// selalu origin-level, begitu pula kebocoran teknologi via X-Powered-By.
+func siteWide(typ string) bool {
+	t := strings.ToLower(strings.TrimSpace(typ))
+	if siteWideTypes[t] {
+		return true
+	}
+	return strings.HasSuffix(t, "-header-not-set") ||
+		strings.HasSuffix(t, "-header-missing") ||
+		strings.Contains(t, "x-powered-by")
 }
 
 // hostOf mengambil host dari target tanpa skema, userinfo, dan port. Dinormalkan
