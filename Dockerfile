@@ -64,6 +64,20 @@ COPY --from=build /out/bughound /usr/local/bin/bughound
 RUN useradd -m -u 10001 bh && mkdir -p /data && chown bh:bh /data
 USER bh
 WORKDIR /data
+
+# Pre-bake nuclei-templates saat build (sumber 'trusted' = repo resmi
+# projectdiscovery, satu-satunya sumber tepercaya di awal per BH-SPEC-PAYLOAD).
+# Dengan template ada di disk, nuclei tak perlu — dan di runtime TAK BISA —
+# menariknya sendiri: egress runtime dikunci scope guard (cuma in-scope), jadi
+# unduhan template ke GitHub memang akan diblok. Dijalankan sebagai user 'bh'
+# agar template + config mendarat di $HOME-nya (/home/bh/nuclei-templates),
+# lokasi default yang dibaca nuclei saat scan — sehingga runner tak butuh -t.
+# Fail-closed: bila unduh gagal, build gagal keras (bukan diam-diam mengirim
+# image tanpa satu pun check). Versi template tercatat di
+# ~/.config/nuclei/.templates-config.json untuk ketertelusuran; pinning versi
+# yang sebenarnya menyusul di bank payload (Fase 2 BH-SPEC-PAYLOAD).
+RUN nuclei -update-templates
+
 EXPOSE 8787
 
 # Default AMAN: bind 0.0.0.0 (untuk -p docker) TAPI engine mock (tak ada scan
