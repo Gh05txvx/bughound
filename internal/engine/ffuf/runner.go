@@ -45,11 +45,15 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	}
 	defer func() { cleanupWL() }() // closure: ikut cleanup pengganti bila wordlist di-merge
 
-	// Enrichment robots.txt (best-effort, lewat proxy egress yang scope-enforced):
-	// path yang DIIKLANKAN target lewat Disallow/Allow adalah kandidat probe
-	// bernilai tinggi (mis. /ftp). Tiap path hasil tetap diprobe ffuf lewat proxy
-	// yang sama. Gagal/absen = tanpa enrichment, bukan error.
-	if extra := r.robotsPaths(ctx, target); len(extra) > 0 {
+	// Enrichment (best-effort, lewat proxy egress yang scope-enforced): path yang
+	// diiklankan target lewat robots.txt (Disallow/Allow) + endpoint terdokumentasi
+	// di spec OpenAPI/Swagger adalah kandidat probe bernilai tinggi (mis. /ftp,
+	// /b2b/v2/orders). Tiap path hasil tetap diprobe ffuf lewat proxy yang sama.
+	// Gagal/absen = tanpa enrichment, bukan error.
+	var extra []string
+	extra = append(extra, r.robotsPaths(ctx, target)...)
+	extra = append(extra, r.specPaths(ctx, target)...)
+	if len(extra) > 0 {
 		if merged, cleanupMerged, mErr := mergeWordlist(wordlist, extra); mErr == nil {
 			cleanupWL() // buang wordlist dasar
 			wordlist, cleanupWL = merged, cleanupMerged
