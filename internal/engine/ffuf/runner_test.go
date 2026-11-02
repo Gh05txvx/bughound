@@ -28,7 +28,7 @@ func TestDefaultWordlistUsedWhenEmpty(t *testing.T) {
 	if len(DefaultWordlist()) == 0 {
 		t.Fatal("wordlist bawaan tak boleh kosong")
 	}
-	for _, want := range []string{"admin", ".env", ".git/config", "robots.txt"} {
+	for _, want := range []string{"admin", ".env", ".git/config", "robots.txt", "ftp"} {
 		if !strings.Contains(string(DefaultWordlist()), want) {
 			t.Errorf("wordlist bawaan harus memuat %q", want)
 		}
@@ -54,5 +54,29 @@ func TestDefaultWordlistUsedWhenEmpty(t *testing.T) {
 	p2, _, err := r2.resolveWordlist()
 	if err != nil || p2 != "/custom/wl.txt" {
 		t.Errorf("wordlist kustom harus dipakai apa adanya; dapat %q (%v)", p2, err)
+	}
+}
+
+// TestDefaultWordlistSane menjaga integritas wordlist bawaan: ffuf memprobe SETIAP
+// baris sebagai path, jadi baris kosong, komentar (#...), spasi tepi, atau entri
+// duplikat akan memboroskan request atau memprobe path sampah.
+func TestDefaultWordlistSane(t *testing.T) {
+	seen := map[string]bool{}
+	for i, ln := range strings.Split(strings.TrimRight(string(DefaultWordlist()), "\n"), "\n") {
+		n := i + 1
+		if strings.TrimSpace(ln) == "" {
+			t.Errorf("baris %d kosong", n)
+			continue
+		}
+		if strings.HasPrefix(ln, "#") {
+			t.Errorf("baris %d komentar (ffuf akan memprobe-nya sbg path): %q", n, ln)
+		}
+		if ln != strings.TrimSpace(ln) {
+			t.Errorf("baris %d ada spasi tepi: %q", n, ln)
+		}
+		if seen[ln] {
+			t.Errorf("baris %d duplikat: %q", n, ln)
+		}
+		seen[ln] = true
 	}
 }
