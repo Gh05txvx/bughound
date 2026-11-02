@@ -289,6 +289,32 @@ func (s *SQLite) SetStatus(ctx context.Context, id string, status finding.Status
 	return nil
 }
 
+// UpdateContent: lihat Store.UpdateContent. Hanya memperbarui field naratif di
+// doc JSON; kolom terindeks (status/severity/dedup) tak berubah.
+func (s *SQLite) UpdateContent(ctx context.Context, id, description, impact string, reproduction []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	f.Description = description
+	f.Impact = impact
+	f.Reproduction = reproduction
+	now := finding.NewTime(s.now())
+	f.UpdatedAt = &now
+
+	doc, err := json.Marshal(f)
+	if err != nil {
+		return fmt.Errorf("store: marshal temuan: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE findings SET doc=? WHERE id=?`, string(doc), id); err != nil {
+		return fmt.Errorf("store: update konten: %w", err)
+	}
+	return nil
+}
+
 // SaveProgram: lihat Store.SaveProgram.
 func (s *SQLite) SaveProgram(ctx context.Context, p Program) error {
 	if strings.TrimSpace(p.Name) == "" {

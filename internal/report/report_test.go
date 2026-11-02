@@ -50,6 +50,15 @@ func TestBuildMarkdown(t *testing.T) {
 	}
 }
 
+func TestBuildMarkdownImpact(t *testing.T) {
+	f := mk("SSRF di /x", finding.SeverityCritical, finding.StatusConfirmed)
+	f.Impact = "Penyerang membaca metadata internal cloud (SSRF)."
+	r := Build("demo", []*finding.Finding{f}, time.Now())
+	if !strings.Contains(r.Markdown, "**Dampak:**") || !strings.Contains(r.Markdown, f.Impact) {
+		t.Errorf("markdown harus memuat bagian Dampak yang diisi hunter:\n%s", r.Markdown)
+	}
+}
+
 func TestBuildEmpty(t *testing.T) {
 	r := Build("demo", []*finding.Finding{mk("x", finding.SeverityLow, finding.StatusNew)}, time.Now())
 	if len(r.Items) != 0 {

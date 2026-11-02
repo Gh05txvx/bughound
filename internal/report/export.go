@@ -177,7 +177,11 @@ func exportHackerOne(f *finding.Finding) string {
 	}
 
 	b.WriteString("## Impact\n\n")
-	b.WriteString("_Jelaskan dampak konkret (data terekspos, aksi yang bisa dilakukan penyerang) sebelum submit._\n\n")
+	if strings.TrimSpace(f.Impact) != "" {
+		fmt.Fprintf(&b, "%s\n\n", f.Impact)
+	} else {
+		b.WriteString("_Jelaskan dampak konkret (data terekspos, aksi yang bisa dilakukan penyerang) sebelum submit._\n\n")
+	}
 
 	if len(f.References) > 0 {
 		b.WriteString("## Supporting Material / References\n\n")
@@ -223,7 +227,11 @@ func exportBugcrowd(f *finding.Finding) string {
 	}
 
 	b.WriteString("**Impact**\n\n")
-	b.WriteString("_Jelaskan dampak konkret sebelum submit._\n\n")
+	if strings.TrimSpace(f.Impact) != "" {
+		fmt.Fprintf(&b, "%s\n\n", f.Impact)
+	} else {
+		b.WriteString("_Jelaskan dampak konkret sebelum submit._\n\n")
+	}
 
 	b.WriteString("**Remediation**\n\n")
 	if len(f.References) > 0 {

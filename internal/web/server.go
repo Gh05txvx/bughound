@@ -699,6 +699,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /findings/bulk", s.handleBulkTriage)
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
 	s.mux.HandleFunc("POST /findings/{id}/status", s.handleTriage)
+	s.mux.HandleFunc("POST /findings/{id}/edit", s.handleFindingEdit)
 	s.mux.HandleFunc("GET /report", s.handleReport)
 	s.mux.HandleFunc("GET /report/download", s.handleReportDownload)
 	s.mux.HandleFunc("GET /report/print", s.handleReportPrint)
@@ -1061,6 +1062,35 @@ func (s *Server) handleTriage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
 		return
 	}
+	s.renderPartial(w, r, "findings", "finding_detail", f)
+}
+
+// handleFindingEdit menyimpan field naratif report (deskripsi, langkah
+// reproduksi, dampak) yang dilengkapi hunter saat triase, agar draft report &
+// export platform lengkap (prinsip: report selalu draft, dilengkapi+diverifikasi
+// manual sebelum submit). Tak mengubah status/severity/dedup.
+func (s *Server) handleFindingEdit(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	description := strings.TrimSpace(r.FormValue("description"))
+	impact := strings.TrimSpace(r.FormValue("impact"))
+	reproduction := splitLines(r.FormValue("reproduction"))
+
+	if err := s.store.UpdateContent(r.Context(), id, description, impact, reproduction); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	f, err := s.store.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
+		return
+	}
+	me, _ := s.currentUser(r)
+	s.auditAppend(r.Context(), audit.Event{Kind: "finding.edit", Program: f.Program, Allowed: true,
+		Message: fmt.Sprintf("%s melengkapi draft temuan %s (deskripsi/langkah/dampak)", me, id)})
 	s.renderPartial(w, r, "findings", "finding_detail", f)
 }
 

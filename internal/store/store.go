@@ -47,6 +47,11 @@ type Store interface {
 	DeleteFindingsByProgram(ctx context.Context, program string) (int, error)
 	// SetStatus mengubah status triase sebuah temuan.
 	SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error
+	// UpdateContent memperbarui field naratif report (description, impact,
+	// reproduction) sebuah temuan — diisi hunter saat triase agar draft report
+	// lengkap (repro + dampak). Tidak menyentuh status/dedup/severity.
+	// ErrNotFound bila id tak ada.
+	UpdateContent(ctx context.Context, id, description, impact string, reproduction []string) error
 	// Close melepaskan sumber daya (no-op untuk in-memory).
 	Close() error
 }

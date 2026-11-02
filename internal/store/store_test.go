@@ -189,6 +189,34 @@ func TestSetStatus(t *testing.T) {
 	}
 }
 
+func TestUpdateContent(t *testing.T) {
+	s := NewMem()
+	ctx := context.Background()
+	res, _ := s.Save(ctx, mkFinding("acme", "r", "ssrf", "https://acme.io", "https://acme.io/x", "p", finding.SeverityHigh))
+
+	repro := []string{"Kirim GET /x", "Amati respons internal"}
+	if err := s.UpdateContent(ctx, res.ID, "deskripsi baru", "dampak: SSRF ke metadata internal", repro); err != nil {
+		t.Fatalf("UpdateContent error: %v", err)
+	}
+	got, _ := s.Get(ctx, res.ID)
+	if got.Description != "deskripsi baru" || got.Impact != "dampak: SSRF ke metadata internal" {
+		t.Errorf("deskripsi/dampak tak terset: %+v", got)
+	}
+	if len(got.Reproduction) != 2 || got.Reproduction[0] != "Kirim GET /x" {
+		t.Errorf("reproduction tak terset: %v", got.Reproduction)
+	}
+	if got.UpdatedAt == nil {
+		t.Error("updated_at harus terset")
+	}
+	// Tak menyentuh status/severity (triase & dedup jalur terpisah).
+	if got.Status != finding.StatusNew || got.Severity != finding.SeverityHigh {
+		t.Errorf("UpdateContent tak boleh mengubah status/severity: %+v", got)
+	}
+	if err := s.UpdateContent(ctx, "tidak-ada", "d", "i", nil); err != ErrNotFound {
+		t.Errorf("id tak ada harus ErrNotFound, dapat %v", err)
+	}
+}
+
 func TestGetClonesNoAliasing(t *testing.T) {
 	s := NewMem()
 	ctx := context.Background()

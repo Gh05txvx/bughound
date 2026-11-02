@@ -16,7 +16,11 @@ import (
 
 // CurrentSchemaVersion adalah versi skema yang ditulis komponen saat ini.
 // Kenaikan versi mengikuti aturan MAYOR.MINOR di BH-SPEC-FINDING.
-const CurrentSchemaVersion = "1.0"
+//
+// 1.0 → 1.1 (MINOR, aditif): menambah field opsional `impact` (dampak, diisi
+// hunter saat triase untuk melengkapi draft report). Konsumen lama tetap bisa
+// membaca; temuan lama (schema_version 1.0, tanpa impact) tetap valid.
+const CurrentSchemaVersion = "1.1"
 
 // Severity: tingkat keparahan temuan. Enum tertutup (BH-SPEC-FINDING).
 type Severity string
@@ -178,6 +182,7 @@ type Finding struct {
 	Location     Location  `json:"location"`
 	Evidence     *Evidence `json:"evidence,omitempty"`
 	Reproduction []string  `json:"reproduction,omitempty"`
+	Impact       string    `json:"impact,omitempty"` // dampak; diisi hunter saat triase untuk draft report
 
 	SourceEngine   string          `json:"source_engine"`
 	SourceTemplate string          `json:"source_template,omitempty"`

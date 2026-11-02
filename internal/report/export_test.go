@@ -68,6 +68,20 @@ func TestExportReportAllConfirmed(t *testing.T) {
 	}
 }
 
+func TestExportIncludesImpact(t *testing.T) {
+	f := mk("x", finding.SeverityHigh, finding.StatusConfirmed)
+	f.Impact = "Penyerang membaca metadata internal cloud."
+	for _, p := range Platforms() {
+		if md := ExportFinding(f, p); !strings.Contains(md, f.Impact) {
+			t.Errorf("export %s harus memuat teks dampak yang diisi hunter:\n%s", p.Label(), md)
+		}
+	}
+	// Tanpa impact: placeholder tetap ada (bagian Impact tak pernah kosong).
+	if md := ExportFinding(mk("y", finding.SeverityHigh, finding.StatusConfirmed), PlatformHackerOne); !strings.Contains(md, "Jelaskan dampak") {
+		t.Errorf("tanpa impact harus ada placeholder:\n%s", md)
+	}
+}
+
 func TestPlatformValid(t *testing.T) {
 	if !PlatformHackerOne.Valid() || !PlatformBugcrowd.Valid() {
 		t.Error("platform resmi harus valid")

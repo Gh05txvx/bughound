@@ -18,8 +18,6 @@
   {{if .VerifiedBy}}<dt>Diverifikasi</dt><dd>{{.VerifiedBy}}</dd>{{end}}
 </dl>
 
-{{if .Description}}<p>{{.Description}}</p>{{end}}
-
 {{with .Evidence}}
 <h4>Bukti <span class="muted small">(secret tersensor)</span></h4>
 {{if .Request}}<div class="ev-label">Request</div><pre class="ev mono">{{.Request}}</pre>{{end}}
@@ -32,6 +30,21 @@
 <h4>Referensi</h4>
 <ul class="list">{{range .References}}<li class="mono truncate">{{.}}</li>{{end}}</ul>
 {{end}}
+
+<h4>Lengkapi draft <span class="muted small">(untuk report; repro &amp; dampak)</span></h4>
+<form class="edit" hx-post="/findings/{{.ID}}/edit" hx-target="#detail" hx-swap="innerHTML">
+  <label class="fld">Deskripsi
+    <textarea name="description" rows="3" placeholder="ringkasan isu">{{.Description}}</textarea>
+  </label>
+  <label class="fld">Langkah reproduksi <span class="muted small">(satu per baris)</span>
+    <textarea name="reproduction" rows="4" placeholder="satu langkah per baris">{{range .Reproduction}}{{.}}
+{{end}}</textarea>
+  </label>
+  <label class="fld">Dampak
+    <textarea name="impact" rows="3" placeholder="dampak konkret: data terekspos / aksi penyerang">{{.Impact}}</textarea>
+  </label>
+  <button class="btn" type="submit">Simpan draft</button>
+</form>
 
 <h4>Triase</h4>
 <form class="triage" hx-post="/findings/{{.ID}}/status" hx-target="#detail" hx-swap="innerHTML">

@@ -232,6 +232,22 @@ func (m *Mem) SetStatus(ctx context.Context, id string, status finding.Status, v
 	return nil
 }
 
+// UpdateContent: lihat Store.UpdateContent.
+func (m *Mem) UpdateContent(ctx context.Context, id, description, impact string, reproduction []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	f, ok := m.byID[id]
+	if !ok {
+		return ErrNotFound
+	}
+	f.Description = description
+	f.Impact = impact
+	f.Reproduction = reproduction
+	now := finding.NewTime(m.now())
+	f.UpdatedAt = &now
+	return nil
+}
+
 // ---- UserStore (RBAC) ----
 
 // CreateUser: lihat UserStore.CreateUser.

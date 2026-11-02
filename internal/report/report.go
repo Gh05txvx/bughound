@@ -150,6 +150,9 @@ func renderMarkdown(r Report) string {
 				fmt.Fprintf(&b, "Payload: `%s`\n\n", f.Evidence.Payload)
 			}
 		}
+		if strings.TrimSpace(f.Impact) != "" {
+			fmt.Fprintf(&b, "**Dampak:**\n\n%s\n\n", f.Impact)
+		}
 		if len(f.References) > 0 {
 			b.WriteString("**Referensi:**\n\n")
 			for _, ref := range f.References {

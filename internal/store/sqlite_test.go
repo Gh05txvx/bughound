@@ -116,6 +116,20 @@ func TestSQLiteSetStatus(t *testing.T) {
 	}
 }
 
+func TestSQLiteUpdateContent(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	res, _ := s.Save(ctx, mkFinding("acme", "r", "ssrf", "https://acme.io", "https://acme.io/x", "p", finding.SeverityHigh))
+	if err := s.UpdateContent(ctx, res.ID, "desk", "dampak nyata", []string{"langkah 1", "langkah 2"}); err != nil {
+		t.Fatalf("UpdateContent: %v", err)
+	}
+	// Dibaca ulang dari doc JSON -> membuktikan impact/reproduction bertahan lewat serialisasi.
+	got, _ := s.Get(ctx, res.ID)
+	if got.Impact != "dampak nyata" || got.Description != "desk" || len(got.Reproduction) != 2 {
+		t.Errorf("konten tak tersimpan lewat doc JSON: %+v", got)
+	}
+}
+
 func TestSQLitePersistenceAcrossReopen(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "persist.db")
