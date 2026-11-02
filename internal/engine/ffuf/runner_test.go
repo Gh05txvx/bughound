@@ -28,7 +28,7 @@ func TestDefaultWordlistUsedWhenEmpty(t *testing.T) {
 	if len(DefaultWordlist()) == 0 {
 		t.Fatal("wordlist bawaan tak boleh kosong")
 	}
-	for _, want := range []string{"admin", ".env", ".git/config", "robots.txt", "ftp"} {
+	for _, want := range []string{"admin", ".env", ".git/config", "robots.txt", "ftp", "rest/products/search"} {
 		if !strings.Contains(string(DefaultWordlist()), want) {
 			t.Errorf("wordlist bawaan harus memuat %q", want)
 		}
