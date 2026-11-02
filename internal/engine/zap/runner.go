@@ -158,8 +158,19 @@ func (r *Runner) proxyConfigArgs() []string {
 	}
 }
 
+// Batas waktu plan full (menit). Active scan tanpa batas bisa berjalan berjam-jam
+// dan membanjiri target — terutama di SPA catch-all yang permukaan spider-nya
+// hampir tak-hingga. Batas ini menjaga scan tetap tuntas & tak menumbangkan
+// target; throttle per-request (throttleArgs) tetap di jalur terpisah.
+const (
+	spiderMaxDurationMin = 3  // spider berhenti setelah 3 menit
+	ascanMaxDurationMin  = 10 // total active scan maksimal 10 menit
+	ascanMaxRuleDurMin   = 2  // tiap rule active scan maksimal 2 menit
+)
+
 // planYAML menyusun rencana ZAP Automation Framework: spider → activeScan →
-// laporan traditional-json.
+// laporan traditional-json. Spider & activeScan dibatasi durasinya (lihat konstanta
+// di atas) agar tuntas di host kecil dan tak membanjiri target.
 func planYAML(target, reportDir, reportFile string) string {
 	return "" +
 		"env:\n" +
@@ -173,9 +184,12 @@ func planYAML(target, reportDir, reportFile string) string {
 		"    parameters:\n" +
 		"      context: bughound\n" +
 		"      url: \"" + target + "\"\n" +
+		"      maxDuration: " + strconv.Itoa(spiderMaxDurationMin) + "\n" +
 		"  - type: activeScan\n" +
 		"    parameters:\n" +
 		"      context: bughound\n" +
+		"      maxScanDurationInMins: " + strconv.Itoa(ascanMaxDurationMin) + "\n" +
+		"      maxRuleDurationInMins: " + strconv.Itoa(ascanMaxRuleDurMin) + "\n" +
 		"  - type: report\n" +
 		"    parameters:\n" +
 		"      template: traditional-json\n" +

@@ -118,7 +118,11 @@ func TestRunnerFullMode(t *testing.T) {
 		}
 	}
 	plan := planYAML("https://demo.test", "/out", "report.json")
-	for _, want := range []string{"activeScan", "spider", "https://demo.test", "traditional-json", `reportFile: "report.json"`} {
+	for _, want := range []string{
+		"activeScan", "spider", "https://demo.test", "traditional-json", `reportFile: "report.json"`,
+		// batas waktu wajib ada: tanpa ini active scan bisa tak-hingga di SPA catch-all.
+		"maxDuration: 3", "maxScanDurationInMins: 10", "maxRuleDurationInMins: 2",
+	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan harus memuat %q", want)
 		}
