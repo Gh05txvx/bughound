@@ -34,3 +34,6 @@ Thumbs.db
 
 # Gambar referensi UI (konsumsi internal sebagai acuan desain — jangan commit)
 ref/
+
+# Hasil scan lokal (laporan kerja per target, bukan sumber — jangan commit ke repo publik)
+hasil scan/
