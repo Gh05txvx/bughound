@@ -33,6 +33,7 @@ type Summary struct {
 	Saved      int
 	Duplicates int
 	Denied     []string // "target — alasan (lapis)"
+	Warnings   []string // mis. engine gagal di satu target (run tetap selesai)
 }
 
 // Run melacak satu pekerjaan scan.

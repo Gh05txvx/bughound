@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -110,6 +111,42 @@ func (f fakeEngine) Scan(_ context.Context, _ string, program, runID string) ([]
 		out = append(out, &c)
 	}
 	return out, nil
+}
+
+// errEngine selalu gagal — untuk membuktikan kegagalan satu engine tak
+// membatalkan run.
+type errEngine struct{}
+
+func (errEngine) Name() string { return "boom" }
+func (errEngine) Scan(_ context.Context, _, _, _ string) ([]*finding.Finding, error) {
+	return nil, errors.New("engine meledak")
+}
+
+// TestRunScanEngineErrorNonFatal: engine yang gagal pada satu target TIDAK boleh
+// membatalkan run — engine lain tetap menyimpan temuan, RunScan sukses, dan
+// kegagalan tercatat di EngineErrors.
+func TestRunScanEngineErrorNonFatal(t *testing.T) {
+	g := newGuard(t, []string{"demo.test"}, nil)
+	st := store.NewMem()
+	good := fakeEngine{out: []*finding.Finding{{
+		Target: "demo.test", Type: "x", Title: "t",
+		Severity: finding.SeverityLow, Confidence: finding.ConfidenceLow,
+		Status: finding.StatusNew, SourceEngine: "fake",
+		Location: finding.Location{URL: "https://demo.test/a"},
+	}}}
+	o := New(g, errEngine{}, st, testLimiter(), nil) // engine pertama gagal
+	o.AddEngine(good)                                // engine kedua sukses
+
+	res, err := o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r", Targets: []string{"demo.test"}})
+	if err != nil {
+		t.Fatalf("kegagalan engine tak boleh membuat RunScan error: %v", err)
+	}
+	if res.FindingsSaved != 1 {
+		t.Errorf("engine kedua harus tetap menyimpan 1 temuan; dapat saved=%d", res.FindingsSaved)
+	}
+	if len(res.EngineErrors) != 1 || res.EngineErrors[0].Engine != "boom" {
+		t.Errorf("kegagalan engine harus tercatat di EngineErrors; dapat %+v", res.EngineErrors)
+	}
 }
 
 // TestRunScanEgressBlocks membuktikan penegakan lapis kedua: temuan pada lokasi
@@ -228,7 +265,7 @@ type probeEngine struct {
 	urls      []string
 }
 
-func (p *probeEngine) Name() string        { return "probe" }
+func (p *probeEngine) Name() string         { return "probe" }
 func (p *probeEngine) UseProxy(addr string) { p.proxyAddr = addr }
 
 func (p *probeEngine) Scan(_ context.Context, _, program, runID string) ([]*finding.Finding, error) {

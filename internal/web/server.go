@@ -891,6 +891,11 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets 
 		for _, d := range res.Denied {
 			sum.Denied = append(sum.Denied, fmt.Sprintf("%s — %s (%s)", d.Target, d.Reason, d.Layer))
 		}
+		for _, ee := range res.EngineErrors {
+			sum.Warnings = append(sum.Warnings, fmt.Sprintf("engine %s @ %s: %s", ee.Engine, ee.Target, ee.Err))
+			s.auditAppend(ctx, audit.Event{Kind: "run.engine_error", Program: program, RunID: runID,
+				Message: fmt.Sprintf("engine %s gagal di %s: %s", ee.Engine, ee.Target, ee.Err)})
+		}
 		return sum, nil
 	})
 }
@@ -916,6 +921,7 @@ type runView struct {
 	Saved      int
 	Duplicates int
 	Denied     []string
+	Warnings   []string
 }
 
 func toRunView(r *jobs.Run) runView {
@@ -931,6 +937,7 @@ func toRunView(r *jobs.Run) runView {
 		Saved:      r.Summary.Saved,
 		Duplicates: r.Summary.Duplicates,
 		Denied:     r.Summary.Denied,
+		Warnings:   r.Summary.Warnings,
 	}
 }
 

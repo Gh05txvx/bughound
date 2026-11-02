@@ -21,10 +21,15 @@
       <span class="chip good">{{.Saved}} temuan baru</span>
       <span class="chip">{{.Duplicates}} duplikat</span>
       <span class="chip warn">{{len .Denied}} ditolak</span>
+      {{if .Warnings}}<span class="chip warn">{{len .Warnings}} peringatan</span>{{end}}
     </div>
     {{if .Denied}}
     <h3>Ditolak scope guard</h3>
     <ul class="list">{{range .Denied}}<li class="mono">{{.}}</li>{{end}}</ul>
+    {{end}}
+    {{if .Warnings}}
+    <h3>Peringatan engine (run tetap selesai)</h3>
+    <ul class="list">{{range .Warnings}}<li class="mono">{{.}}</li>{{end}}</ul>
     {{end}}
     <div class="actions">
       <a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a>

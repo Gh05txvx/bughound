@@ -94,6 +94,15 @@ type ScanResult struct {
 	Denied        []AuditEvent // target/temuan yang ditolak guard (input/egress)
 	FindingsSaved int
 	Duplicates    int
+	EngineErrors  []EngineError // engine yang gagal di suatu target (run tetap lanjut)
+}
+
+// EngineError mencatat satu engine yang gagal pada satu target. Tidak fatal: run
+// meneruskan ke engine/target lain agar temuan lain tetap terkumpul & tersimpan.
+type EngineError struct {
+	Engine string
+	Target string
+	Err    string
 }
 
 // RunScan menjalankan recon (bila aktif), menegakkan scope guard + rate limiter,
@@ -189,7 +198,14 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 			}
 			findings, err := eng.Scan(ctx, target, req.Program, runID)
 			if err != nil {
-				return res, fmt.Errorf("orchestrator: engine %s gagal scan %q: %w", eng.Name(), target, err)
+				// Kegagalan satu engine pada satu target TIDAK membatalkan run:
+				// catat lalu lanjut agar engine/target lain tetap menghasilkan &
+				// menyimpan temuan. Hanya pembatalan context yang fatal.
+				if ctx.Err() != nil {
+					return res, fmt.Errorf("orchestrator: dibatalkan: %w", ctx.Err())
+				}
+				res.EngineErrors = append(res.EngineErrors, EngineError{Engine: eng.Name(), Target: target, Err: err.Error()})
+				continue
 			}
 			for _, f := range findings {
 				// Lapis 2 — penegakan egress.
