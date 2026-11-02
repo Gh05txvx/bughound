@@ -21,6 +21,7 @@ import (
 	"bughound/internal/engine"
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
+	"bughound/internal/engine/retire"
 	"bughound/internal/engine/zap"
 	"bughound/internal/payload"
 	"bughound/internal/recon"
@@ -200,13 +201,18 @@ func main() {
 					es = append(es, &ffuf.Runner{Wordlist: *ffufWordlist, RateLimit: rate})
 				case "zap":
 					es = append(es, &zap.Runner{Mode: *zapMode, RateLimit: rate})
+				case "retire":
+					// retire.js: SCA library JS klien. Egress (fetch HTML + unduh JS
+					// same-origin) lewat proxy scope guard yang sama; tanpa proxy = tak
+					// fetch (fail-safe di Runner).
+					es = append(es, &retire.Runner{RateLimit: rate})
 				}
 			}
 			return es, recon.NewRealPipelineRate(rate)
 		}
 		engines, rec = engineFactory(0, web.Selection{}) // instance representatif (laju default, semua template) utk validasi & fallback
 		if len(engines) == 0 {
-			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap)", *engineMode)
+			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap,retire)", *engineMode)
 		}
 		log.Printf("engine: NYATA (%s + recon subfinder/httpx/katana) — egress lewat proxy scope guard · throttle per-engine aktif (laju dari rps scan, default %d/dtk)", strings.Join(names, ", "), engineRate(0))
 		log.Printf("PERINGATAN: hanya scan target yang sah (in-scope / lab / izin eksplisit)")
@@ -333,8 +339,8 @@ func firstNonEmpty(vals ...string) string {
 
 // parseEngineMode menafsirkan flag -engine. "" / "mock" -> engine mock (mock
 // eksklusif). Selain itu daftar dipisah koma: "real" = alias nuclei; nama yang
-// dikenal (nuclei, ffuf, zap) membangun Runner nyata. Nama tak dikenal diabaikan
-// (pemanggil menolak bila tak ada yang dikenali). Hasil ter-dedup, urut input.
+// dikenal (nuclei, ffuf, zap, retire) membangun Runner nyata. Nama tak dikenal
+// diabaikan (pemanggil menolak bila tak ada yang dikenali). Ter-dedup, urut input.
 func parseEngineMode(mode string) (names []string, mock bool) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
@@ -359,6 +365,8 @@ func parseEngineMode(mode string) (names []string, mock bool) {
 			add("ffuf")
 		case "zap":
 			add("zap")
+		case "retire":
+			add("retire")
 		}
 	}
 	return names, false

@@ -4,8 +4,9 @@
 # Karena adapter memanggil engine sebagai subprocess di PATH, menaruh engine di
 # image = `-engine real`/`nuclei,ffuf,zap` langsung jalan tanpa pasang apa pun di host.
 #
-# Build (lean, tanpa ZAP):     docker build -t bughound .
-# Build + ZAP (berat, +JRE):   docker build --build-arg WITH_ZAP=true -t bughound:zap .
+# Build (lean, tanpa ZAP):       docker build -t bughound .
+# Build + ZAP (berat, +JRE):     docker build --build-arg WITH_ZAP=true -t bughound:zap .
+# Build + retire.js (SCA, +Node): docker build --build-arg WITH_RETIRE=true -t bughound:retire .
 
 # --- Stage 1: build binary bughound ---
 FROM golang:1.27-bookworm AS build
@@ -39,6 +40,10 @@ ARG WITH_ZAP=false
 # bila checksum tak cocok). Bump versi: ganti keduanya (lihat rilis zaproxy).
 ARG ZAP_VERSION=2.17.0
 ARG ZAP_SHA256=efe799aaa3627db683b43f00c9c210aea0b75c00cc8f0a0f0434d12bb3ddde5a
+# retire.js (SCA library JS klien) opsional. Node di bookworm = 18.x; retire 6.x
+# butuh Node ^20.19||>=22.12, jadi di-pin ke 5.x (engines.node >= 18) yang jalan.
+ARG WITH_RETIRE=false
+ARG RETIRE_VERSION=5.7.0
 
 # semgrep (SAST) via pip + CA certs + libpcap0.8 (runtime naabu).
 RUN apt-get update \
@@ -54,6 +59,17 @@ RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
       echo "${ZAP_SHA256}  /tmp/zap.tgz" | sha256sum -c -; \
       tar -xzf /tmp/zap.tgz -C /opt; rm /tmp/zap.tgz; \
       ln -s "/opt/ZAP_${ZAP_VERSION}/zap.sh" /usr/local/bin/zap.sh; \
+      apt-get clean; rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# retire.js opsional (butuh Node + npm). Default tidak dipasang. Versi di-pin;
+# fail-closed: bila install/`retire --version` gagal, build gagal keras.
+RUN if [ "$WITH_RETIRE" = "true" ]; then set -eux; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends nodejs npm; \
+      npm install -g retire@${RETIRE_VERSION}; \
+      npm cache clean --force; \
+      retire --version; \
       apt-get clean; rm -rf /var/lib/apt/lists/*; \
     fi
 
