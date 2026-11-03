@@ -212,6 +212,8 @@ dl.meta dt { color: var(--fg-dim); }
 dl.meta dd { margin: 0; word-break: break-word; }
 h4 { margin: 14px 0 6px; font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .4px; }
 .ev-label { font-size: 11px; color: var(--fg-mute); margin-top: 6px; }
+.ev-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.ev-head .ev-label { margin-top: 0; }
 pre.ev { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 9px 11px; font-size: 11px; overflow: auto; max-height: 240px; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); }
 .triage { margin: 8px 0; }
 .triage input { max-width: 220px; }

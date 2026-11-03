@@ -43,6 +43,39 @@ func (t Trust) Valid() bool {
 	return false
 }
 
+// Safety mengklasifikasi dampak payload terhadap target (BH-SPEC-PAYLOAD
+// §Keamanan, aditif). Dipakai untuk memfilter payload yang berpotensi MENGUBAH
+// state/konfigurasi target: alur bug bounty bughound mencari kandidat bug untuk
+// diverifikasi manual, bukan mengeksekusi sampai merusak.
+type Safety string
+
+const (
+	// SafetyReadOnly: payload deteksi yang tak mengubah state (probe boolean/
+	// time/error, cek refleksi). Default untuk template nuclei pada umumnya.
+	SafetyReadOnly Safety = "read-only"
+	// SafetyMutating: berpotensi mengubah/merusak (mis. DoS, tag intrusive/
+	// destructive). Tidak dijalankan engine DAST secara default.
+	SafetyMutating Safety = "mutating"
+)
+
+// Valid melaporkan apakah s salah satu nilai safety yang sah.
+func (s Safety) Valid() bool { return s == SafetyReadOnly || s == SafetyMutating }
+
+// mutatingTags adalah penanda tag yang menandakan payload mengubah/merusak.
+// Konservatif dan bisa diperluas; selaras dengan destructiveExcludeTags engine.
+var mutatingTags = map[string]bool{"dos": true, "intrusive": true, "destructive": true}
+
+// classifySafety menurunkan Safety dari tag template: mutating bila ada penanda
+// berbahaya, selain itu read-only (template nuclei mayoritas deteksi/read-only).
+func classifySafety(tags []string) Safety {
+	for _, t := range tags {
+		if mutatingTags[strings.ToLower(strings.TrimSpace(t))] {
+			return SafetyMutating
+		}
+	}
+	return SafetyReadOnly
+}
+
 // Entry adalah satu baris katalog: metadata seragam untuk satu template/payload,
 // apa pun engine asalnya (BH-SPEC-PAYLOAD §Metadata katalog). Body native template
 // TIDAK disalin ke sini — hanya ditunjuk lewat NativeRef.
@@ -64,6 +97,9 @@ type Entry struct {
 	SeverityDefault finding.Severity `json:"severity_default,omitempty"`
 	// Tags: label untuk seleksi (mis. "ssrf", "cve", "fast").
 	Tags []string `json:"tags,omitempty"`
+	// Safety: klasifikasi dampak payload (read-only | mutating). Diturunkan dari
+	// tag, dapat ditimpa sidecar. Engine DAST hanya kirim yang read-only default.
+	Safety Safety `json:"safety,omitempty"`
 	// References: tautan referensi.
 	References []string `json:"references,omitempty"`
 	// Trust: diwarisi dari sumber; menentukan perlakuan keamanan.

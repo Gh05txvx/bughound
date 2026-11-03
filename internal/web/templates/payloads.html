@@ -122,7 +122,7 @@
   <div class="panel-body flush">
     {{if .Entries}}
     <table class="tbl">
-      <thead><tr><th>template_id</th><th>Engine</th><th>Sev</th><th>Trust</th><th>Tags</th><th>Status</th><th>Sumber</th></tr></thead>
+      <thead><tr><th>template_id</th><th>Engine</th><th>Sev</th><th>Trust</th><th>Tags</th><th>Safety</th><th>Status</th><th>Sumber</th></tr></thead>
       <tbody>
       {{range .Entries}}
       <tr>
@@ -135,6 +135,7 @@
           {{else}}<span class="chip">{{.Trust}}</span>{{end}}
         </td>
         <td class="mono truncate">{{if .Tags}}{{join .Tags ", "}}{{else}}<span class="muted">—</span>{{end}}</td>
+        <td>{{if eq (printf "%s" .Safety) "mutating"}}<span class="chip warn" title="berpotensi mengubah/merusak state — tak dikirim engine DAST secara default">mutating</span>{{else if eq (printf "%s" .Safety) "read-only"}}<span class="chip ok" title="payload deteksi, tak mengubah state target">read-only</span>{{else}}<span class="muted">—</span>{{end}}</td>
         <td>{{if .Enabled}}<span class="chip ok">aktif</span>{{else}}<span class="muted small" title="{{.Note}}">nonaktif</span>{{end}}</td>
         <td class="mono">{{.Source}}</td>
       </tr>

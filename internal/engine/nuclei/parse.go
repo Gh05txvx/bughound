@@ -51,18 +51,18 @@ func (s *stringList) UnmarshalJSON(b []byte) error {
 }
 
 type nucleiEvent struct {
-	TemplateID       string      `json:"template-id"`
-	Type             string      `json:"type"`
-	Host             string      `json:"host"`
-	MatchedAt        string      `json:"matched-at"`
-	Request          string      `json:"request"`
-	Response         string      `json:"response"`
-	IP               string      `json:"ip"`
-	Timestamp        string      `json:"timestamp"`
-	MatcherStatus    bool        `json:"matcher-status"`
-	MatcherName      string      `json:"matcher-name"`
-	ExtractedResults stringList  `json:"extracted-results"`
-	Info             nucleiInfo  `json:"info"`
+	TemplateID       string     `json:"template-id"`
+	Type             string     `json:"type"`
+	Host             string     `json:"host"`
+	MatchedAt        string     `json:"matched-at"`
+	Request          string     `json:"request"`
+	Response         string     `json:"response"`
+	IP               string     `json:"ip"`
+	Timestamp        string     `json:"timestamp"`
+	MatcherStatus    bool       `json:"matcher-status"`
+	MatcherName      string     `json:"matcher-name"`
+	ExtractedResults stringList `json:"extracted-results"`
+	Info             nucleiInfo `json:"info"`
 }
 
 type nucleiInfo struct {
@@ -141,7 +141,7 @@ func mapEvent(ev *nucleiEvent, raw []byte, program, runID string) (*finding.Find
 		Confidence:     mapConfidence(ev),
 		CWE:            cleanList(ev.Info.Classification.CWEID),
 		Tags:           cleanList(ev.Info.Tags),
-		Location:       finding.Location{URL: locURL},
+		Location:       finding.Location{URL: locURL, Method: methodFromRequest(sReq)},
 		SourceEngine:   "nuclei",
 		SourceTemplate: ev.TemplateID,
 		References:     cleanList(ev.Info.Reference),
@@ -243,6 +243,29 @@ func cvssVersion(metrics string) string {
 		return rest[:i]
 	}
 	return rest
+}
+
+// methodFromRequest mengambil method HTTP dari baris pertama request mentah
+// (mis. "POST /x HTTP/1.1" → "POST"). Mengembalikan "" bila bukan method yang
+// dikenal — agar Location.Method hanya terisi nilai sah (omitempty bila kosong).
+func methodFromRequest(req string) string {
+	req = strings.TrimSpace(req)
+	if req == "" {
+		return ""
+	}
+	line := req
+	if i := strings.IndexAny(req, "\r\n"); i >= 0 {
+		line = req[:i]
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return ""
+	}
+	switch m := strings.ToUpper(fields[0]); m {
+	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT":
+		return m
+	}
+	return ""
 }
 
 func firstNonEmpty(vals ...string) string {

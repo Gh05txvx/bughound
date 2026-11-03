@@ -33,6 +33,10 @@
     <label>Rate limit <span class="muted small">(request/detik · wajib di jalur eksekusi, dijepit maks 50)</span></label>
     <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">
 
+    <label>Profil keamanan DAST</label>
+    <label class="check"><input type="checkbox" name="stealth" value="1" {{if .Stealth}}checked{{end}}><span>Stealth (low-and-slow)</span></label>
+    <p class="muted small">Stealth menekan jejak pada target ber-SOC: laju dijepit ≤3/dtk, satu koneksi, User-Agent browser, cakupan URL dipersempit. <strong>Non-destruktif selalu aktif</strong> — tanpa payload DoS & tanpa callback blind/OAST; scan mencari kandidat bug untuk kamu verifikasi manual, bukan mengubah konfigurasi target.</p>
+
     <label>Upstream proxy / rantai <span class="muted small">(opsional · satu hop per baris, urut; egress diteruskan SETELAH lolos scope guard)</span></label>
     <textarea name="upstream_proxy" rows="2" spellcheck="false" placeholder="http://127.0.0.1:8080&#10;socks5://127.0.0.1:9050">{{.UpstreamProxy}}</textarea>
 

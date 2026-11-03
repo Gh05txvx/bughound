@@ -194,6 +194,10 @@ func entryFromFile(src Source, path string, now time.Time) (Entry, bool) {
 	if !e.SeverityDefault.Valid() {
 		e.Note = strings.TrimSpace(e.Note + " severity_default tak diketahui")
 	}
+	// Safety: pakai nilai sidecar bila diset & sah; selain itu turunkan dari tag.
+	if !e.Safety.Valid() {
+		e.Safety = classifySafety(e.Tags)
+	}
 
 	e.Enabled = e.canEnable()
 	if !e.Enabled && e.Note == "" && e.Trust != TrustTrusted {
@@ -220,6 +224,9 @@ func applySidecar(e *Entry, s metaSidecar) {
 	}
 	if len(s.References) > 0 {
 		e.References = dedupStrings(s.References)
+	}
+	if sf := Safety(strings.ToLower(strings.TrimSpace(s.Safety))); sf.Valid() {
+		e.Safety = sf
 	}
 	// trust sidecar hanya boleh MENURUNKAN, tak boleh menaikkan di atas sumber:
 	// sumber adalah batas kepercayaan, bukan file yang dikatalogkan.
@@ -249,6 +256,7 @@ type metaSidecar struct {
 	Tags            []string `yaml:"tags"`
 	References      []string `yaml:"references"`
 	Trust           string   `yaml:"trust"`
+	Safety          string   `yaml:"safety"`
 }
 
 // yamlStrList menerima nilai YAML berupa sequence string ATAU satu skalar

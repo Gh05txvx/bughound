@@ -27,3 +27,12 @@ type Engine interface {
 type ProxyAware interface {
 	UseProxy(addr string)
 }
+
+// OpenAPIAware ditandai oleh engine yang bisa memfuzz dari spesifikasi
+// OpenAPI/Swagger (membangkitkan request lengkap termasuk BODY, bukan hanya
+// query pada URL hasil crawl). Orchestrator memanggil UseOpenAPISpec sebelum Scan
+// bila request membawa spec. Request yang dibangkitkan TETAP lewat proxy egress
+// (scope guard menegakkan tiap koneksi; spec tak memintas batas).
+type OpenAPIAware interface {
+	UseOpenAPISpec(spec []byte)
+}

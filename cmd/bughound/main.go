@@ -211,8 +211,12 @@ func main() {
 					// payload (SQLi/XSS/dst.). Egress crawl+fuzz lewat proxy scope guard
 					// yang sama; volume dibatasi rate + agresi 'low'; tanpa proxy = tak
 					// ada koneksi (fail-safe). Temuan = kandidat (draft->verify).
-					es = append(es, &nuclei.DASTRunner{RateLimit: rate})
+					// Profil keamanan: non-destruktif selalu aktif; stealth dari form scan.
+					es = append(es, &nuclei.DASTRunner{RateLimit: rate, Safety: nuclei.Safety{Stealth: sel.Stealth}})
 				}
+			}
+			if sel.Stealth {
+				log.Printf("scan: profil STEALTH low-and-slow aktif (laju scan & DAST dijepit, UA browser) + non-destruktif")
 			}
 			return es, recon.NewRealPipelineRate(rate)
 		}

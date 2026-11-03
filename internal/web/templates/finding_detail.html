@@ -8,7 +8,7 @@
 <dl class="meta">
   <dt>Type</dt><dd class="mono">{{.Type}}</dd>
   <dt>Target</dt><dd class="mono">{{.Target}}</dd>
-  <dt>Lokasi</dt><dd class="mono">{{.Location.URL}}{{if .Location.Parameter}} · param <b>{{.Location.Parameter}}</b>{{if .Location.ParamLocation}} ({{.Location.ParamLocation}}){{end}}{{end}}</dd>
+  <dt>Lokasi</dt><dd class="mono">{{if .Location.Method}}<b>{{.Location.Method}}</b> {{end}}{{.Location.URL}}{{if .Location.Parameter}} · param <b>{{.Location.Parameter}}</b>{{if .Location.ParamLocation}} ({{.Location.ParamLocation}}){{end}}{{end}}</dd>
   <dt>Engine</dt><dd>{{.SourceEngine}}{{if .SourceTemplate}} · <span class="mono">{{.SourceTemplate}}</span>{{end}}</dd>
   <dt>Confidence</dt><dd>{{.Confidence}}</dd>
   {{if .CVSS}}<dt>CVSS</dt><dd class="mono">{{.CVSS.Score}} · {{.CVSS.Vector}}</dd>{{end}}
@@ -20,8 +20,12 @@
 
 {{with .Evidence}}
 <h4>Bukti <span class="muted small">(secret tersensor)</span></h4>
-{{if .Request}}<div class="ev-label">Request</div><pre class="ev mono">{{.Request}}</pre>{{end}}
-{{if .ResponseExcerpt}}<div class="ev-label">Response</div><pre class="ev mono">{{.ResponseExcerpt}}</pre>{{end}}
+{{if .Request}}
+<div class="ev-head"><span class="ev-label">Request</span><button type="button" class="btn ghost small" onclick="bhCopy(this)">Salin request</button></div>
+<pre class="ev mono">{{.Request}}</pre>
+<p class="muted small">Tempel ke <b>Burp Repeater</b> (Ctrl+R) untuk verifikasi manual — request sudah lengkap (method, header, body). Report tetap draft, tanpa auto-submit.</p>
+{{end}}
+{{if .ResponseExcerpt}}<div class="ev-head"><span class="ev-label">Response</span><button type="button" class="btn ghost small" onclick="bhCopy(this)">Salin</button></div><pre class="ev mono">{{.ResponseExcerpt}}</pre>{{end}}
 {{if .Payload}}<div class="ev-label">Payload</div><pre class="ev mono">{{.Payload}}</pre>{{end}}
 {{if .Matched}}<div class="ev-label">Matched</div><pre class="ev mono">{{.Matched}}</pre>{{end}}
 {{end}}

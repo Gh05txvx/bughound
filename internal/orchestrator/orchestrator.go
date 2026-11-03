@@ -84,6 +84,10 @@ type ScanRequest struct {
 	// ini (urut hop) SETELAH lolos scope guard (http/https/socks5). Kosong =
 	// dial langsung.
 	ProxyChain []string
+	// OpenAPISpec (opsional): isi mentah spec OpenAPI/Swagger. Bila ada, diberikan
+	// ke engine OpenAPIAware agar request (termasuk body) dibangkitkan dari spec
+	// dan difuzz. Tiap koneksi tetap lewat proxy egress (scope guard menegakkan).
+	OpenAPISpec []byte
 }
 
 // ScanResult meringkas hasil satu run.
@@ -152,6 +156,16 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		}
 		if pa, ok := o.recon.(engine.ProxyAware); ok {
 			pa.UseProxy(addr) // recon aktif (httpx/katana) juga ditegakkan scope
+		}
+	}
+
+	// Spec OpenAPI/Swagger (bila ada) diberikan ke engine yang mendukung agar
+	// request termasuk body dibangkitkan dari spec. Egress tetap lewat proxy.
+	if len(req.OpenAPISpec) > 0 {
+		for _, eng := range o.engines {
+			if oa, ok := eng.(engine.OpenAPIAware); ok {
+				oa.UseOpenAPISpec(req.OpenAPISpec)
+			}
 		}
 	}
 

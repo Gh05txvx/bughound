@@ -86,10 +86,15 @@ type Server struct {
 
 // Selection menyeleksi subset template nuclei yang dijalankan sebuah scan,
 // berdasarkan metadata bank payload (BH-SPEC-PAYLOAD §Seleksi). Kosong = semua
-// template terpasang. Hanya memengaruhi engine nuclei; engine lain mengabaikannya.
+// template terpasang. Tags/Severity hanya memengaruhi engine nuclei; Stealth
+// memengaruhi engine DAST (low-and-slow) dan laju scan keseluruhan.
 type Selection struct {
 	Tags     []string
 	Severity []string
+	// Stealth meminta profil low-and-slow: laju scan dijepit sangat rendah dan
+	// engine DAST memakai satu koneksi + UA browser (jejak minimal pada target
+	// ber-SOC). Non-destruktif selalu aktif terlepas dari ini.
+	Stealth bool
 }
 
 // Config mengonfigurasi server: store, engine DAST (minimal 1), recon & vault opsional.
@@ -728,6 +733,7 @@ type scanPage struct {
 	RPS           string
 	Tags          string   // seleksi template: -tags (dipisah koma/spasi)
 	Severity      []string // seleksi template: -severity (checkbox tercentang)
+	Stealth       bool     // profil low-and-slow (DAST + laju scan)
 	Errors        []string
 	Result        *scanView
 }
@@ -787,7 +793,13 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	targets := splitLines(r.FormValue("targets"))
 	rps := parseRPS(r.FormValue("rps"))
 	proxyChain := splitLines(r.FormValue("upstream_proxy")) // satu hop per baris
-	sel := Selection{Tags: splitList(r.FormValue("tags")), Severity: filterSeverities(r.Form["severity"])}
+	sel := Selection{Tags: splitList(r.FormValue("tags")), Severity: filterSeverities(r.Form["severity"]), Stealth: r.FormValue("stealth") != ""}
+	// Stealth = low-and-slow: jepit laju scan keseluruhan ke mode senyap (≤
+	// stealthScanRPS). Ini MENAMBAH pembatasan (arah aman), rate limiter tetap
+	// wajib di jalur eksekusi — tak pernah dimatikan.
+	if sel.Stealth {
+		rps = stealthScanRPS(rps)
+	}
 
 	page := scanPage{
 		Nav: "scan", Title: "Scan", Program: program,
@@ -800,11 +812,15 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		RPS:           r.FormValue("rps"),
 		Tags:          strings.TrimSpace(r.FormValue("tags")),
 		Severity:      sel.Severity,
+		Stealth:       sel.Stealth,
 	}
 
 	// Scan ter-arah spec: perluas OpenAPI/Swagger jadi endpoint → target. Tiap
-	// endpoint TETAP lewat scope guard di bawah (spec tak memintas batas).
+	// endpoint TETAP lewat scope guard di bawah (spec tak memintas batas). Spec
+	// mentah juga diteruskan ke engine DAST utk fuzz request+body (`-im openapi`).
+	var openapiSpec []byte
 	if spec := strings.TrimSpace(r.FormValue("openapi")); spec != "" {
+		openapiSpec = []byte(spec)
 		base := ""
 		if len(targets) > 0 {
 			base = targets[0]
@@ -838,7 +854,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SaveProgram(r.Context(), store.Program{Name: program, InScope: inScope, OutScope: outScope})
 
 	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
-	runID := s.enqueueScan(program, guard, seeds, targets, rps, proxyChain, sel)
+	runID := s.enqueueScan(program, guard, seeds, targets, rps, proxyChain, sel, openapiSpec)
 
 	if run, ok := s.queue.Get(runID); ok {
 		s.renderPartial(w, r, "scan", "run_status", toRunView(run))
@@ -850,7 +866,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 // form Scan dan "promote" dari Capture. Task memakai ctx milik queue (bukan
 // r.Context()) agar tak dibatalkan saat response web dikirim. Rate limiter selalu
 // dipasang (tak bisa dimatikan); scope guard menjadi satu-satunya gate.
-func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets []string, rps float64, proxyChain []string, sel Selection) string {
+func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets []string, rps float64, proxyChain []string, sel Selection, openapiSpec []byte) string {
 	storeRef := s.store
 	return s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
 		s.auditAppend(ctx, audit.Event{Kind: "run.start", Program: program, RunID: runID, Message: scanLabel(seeds, targets)})
@@ -877,7 +893,7 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets 
 		if len(seeds) > 0 && rec != nil {
 			o.UseRecon(rec)
 		}
-		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: proxyChain})
+		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: proxyChain, OpenAPISpec: openapiSpec})
 		if err != nil {
 			s.auditAppend(ctx, audit.Event{Kind: "run.finish", Program: program, RunID: runID, Message: "gagal: " + err.Error()})
 			return jobs.Summary{}, err
@@ -2298,7 +2314,7 @@ func (s *Server) handleCapturePromote(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "capture", "base", page)
 		return
 	}
-	runID := s.enqueueScan(program, guard, nil, targets, rps, nil, Selection{})
+	runID := s.enqueueScan(program, guard, nil, targets, rps, nil, Selection{}, nil)
 	s.auditAppend(r.Context(), audit.Event{Kind: "capture.promote", Program: program, RunID: runID, Allowed: true, Message: fmt.Sprintf("%d endpoint", len(targets))})
 	http.Redirect(w, r, fmt.Sprintf("/capture?program=%s&run=%s&n=%d", url.QueryEscape(program), url.QueryEscape(runID), len(targets)), http.StatusSeeOther)
 }
@@ -2485,6 +2501,18 @@ func parseRPS(s string) float64 {
 		return 10
 	}
 	return v
+}
+
+// stealthScanRPS menjepit laju scan ke mode low-and-slow saat stealth aktif:
+// tak pernah melebihi stealthScanMax (jejak minimal). Hanya bisa MENURUNKAN laju,
+// tak pernah menaikkan — rate limiter tetap wajib & tak dimatikan.
+const stealthScanMax = 3.0
+
+func stealthScanRPS(rps float64) float64 {
+	if rps <= 0 || rps > stealthScanMax {
+		return stealthScanMax
+	}
+	return rps
 }
 
 // safeFilename menyaring nama program menjadi nama berkas yang aman.
