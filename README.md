@@ -2,9 +2,11 @@
 
 <p align="center"><img src="assets/bughound-mascot.png" alt="bughound" width="180"></p>
 
-**Bug Bounty DAST Orchestrator** — bukan scanner, melainkan *orchestrator* yang menyatukan engine recon & DAST yang sudah matang (nuclei, httpx, subfinder, ZAP, dll), menormalkan hasilnya ke satu skema temuan seragam, lalu membantu triase dan menghasilkan draft report yang siap diverifikasi manual sebelum disubmit.
+**bughound** adalah *orchestrator* DAST (*Dynamic Application Security Testing*) untuk bug bounty — bukan pemindai (*scanner*) baru, melainkan pengatur yang menyatukan sejumlah *engine* recon dan DAST yang sudah matang (nuclei, httpx, subfinder, ZAP, dan lainnya) ke dalam satu alur kerja.
 
-> ⚠️ **Hanya untuk pengujian yang sah.** bughound adalah tool offensive (DAST). Gunakan hanya terhadap aset yang berada dalam scope program bounty, lab milik sendiri, atau sistem dengan izin eksplisit. **Scope guard default-deny** menolak target yang tidak terbukti in-scope, dan **tidak ada auto-submit** — report selalu berakhir sebagai draft.
+Tujuannya adalah menyederhanakan proses perburuan bug: menjalankan *engine* tersebut secara terkoordinasi, menormalkan seluruh hasilnya ke dalam satu skema temuan yang seragam, membantu proses triase, lalu menyusun draf laporan yang siap diverifikasi secara manual sebelum diserahkan. Dengan demikian, seorang pemburu bug memperoleh keunggulan banyak alat sekaligus tanpa kehilangan konsistensi hasil maupun kendali atas setiap langkah.
+
+> ⚠️ **Hanya untuk pengujian yang sah.** bughound adalah alat ofensif (DAST). Gunakan hanya terhadap aset yang berada dalam cakupan (*scope*) program bounty, laboratorium milik sendiri, atau sistem yang telah memberikan izin secara eksplisit. *Scope guard* dengan prinsip tolak-bawaan (*default-deny*) akan menolak target yang tidak terbukti berada dalam cakupan, dan **tidak ada pengiriman otomatis (*auto-submit*)** — laporan selalu berakhir sebagai draf.
 
 ## Prinsip yang mengikat
 
