@@ -1,6 +1,6 @@
 # Dokumen bughound
 
-Berkas Markdown di folder ini adalah hasil ekspor dari Claude Docs, disusun agar bisa dibaca langsung di dalam repo (termasuk oleh Claude Code di VS Code). Titik masuk utama tetap `CLAUDE.md` di root repo.
+Sebagian besar berkas Markdown di folder ini adalah hasil ekspor dari Claude Docs; sebagian lain (mis. `guides/`) ditulis langsung di repo. Semuanya disusun agar bisa dibaca langsung di dalam repo (termasuk oleh Claude Code di VS Code). Titik masuk utama tetap `CLAUDE.md` di root repo.
 
 ## Struktur
 
@@ -11,6 +11,7 @@ docs/
   personas/         — 8 mode kerja (persona) yang bisa diminta pengguna
   audit/            — laporan audit keamanan pre-launch (BH-P03)
   adr/              — architecture decision records
+  guides/           — panduan operasional fitur (ditulis langsung di repo)
   BH-CHANGELOG.md   — catatan perkembangan implementasi (apa yang sudah dibangun)
 ```
 
@@ -43,6 +44,12 @@ docs/
 | `BH-P06-CLEANUP` | `personas/BH-P06-CLEANUP.md` |
 | `BH-P07-COMMIT` | `personas/BH-P07-COMMIT.md` |
 | `BH-P08-ARCH` | `personas/BH-P08-ARCH.md` |
+
+### `docs/guides/` — Panduan operasional
+
+| ID | Berkas | Inti |
+| --- | --- | --- |
+| `BH-GUIDE-PROXY` | `guides/BH-GUIDE-PROXY.md` | Menu Proxy: rantai upstream, endpoint echo IP (wajib in-scope), proxy yang bisa dipakai, requirement untuk program bug bounty eksternal. |
 
 ## Catatan ekspor
 
