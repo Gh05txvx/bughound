@@ -1,0 +1,49 @@
+// Build extension Burp bughound (Montoya API) → satu jar siap-load.
+//
+// Montoya API disediakan Burp saat runtime, jadi 'compileOnly' (tidak dibundel).
+// Gson DIBUNDEL (shadow) karena Burp tidak menyediakannya.
+//
+// Build:  gradle shadowJar   (atau ./gradlew shadowJar bila wrapper dibuat)
+// Hasil:  build/libs/bughound-burp.jar  → load di Burp (Extensions → Add → Java)
+
+plugins {
+    id 'java'
+    id 'com.github.johnrengelman.shadow' version '8.1.1'
+}
+
+group = 'bughound.burp'
+version = '0.1.0'
+
+repositories {
+    mavenCentral()
+}
+
+java {
+    // Burp modern berjalan di JDK 17+. Sesuaikan bila perlu.
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+// Sumber memakai teks non-ASCII (em-dash, ellipsis) — paksa UTF-8 saat compile.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+dependencies {
+    // API Burp — disediakan runtime oleh Burp, jangan dibundel.
+    // Bump ke versi terbaru di Maven Central bila perlu; API inti stabil.
+    compileOnly 'net.portswigger.burp.extensions:montoya-api:2023.12.1'
+
+    // Parser JSON — dibundel ke dalam jar via shadow.
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
+
+shadowJar {
+    archiveBaseName = 'bughound-burp'
+    archiveClassifier = ''
+    archiveVersion = ''
+}
+
+// `gradle build` sekalian menghasilkan jar shadow yang di-load ke Burp.
+build.dependsOn shadowJar

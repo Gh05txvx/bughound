@@ -1,0 +1,5 @@
+# Artefak build Gradle — jangan di-commit.
+.gradle/
+build/
+# Wrapper jar (binary) tidak di-commit; buat dengan `gradle wrapper`.
+gradle/wrapper/gradle-wrapper.jar
