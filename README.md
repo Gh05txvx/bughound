@@ -22,6 +22,7 @@ Keamanan adalah batas struktural, bukan tambahan:
 - **Multi-engine via adapter** — recon (subfinder → httpx → katana, gau, dnsx, naabu), DAST (nuclei, ffuf + enrichment robots.txt/OpenAPI, ZAP, `nuclei-dast` fuzzing aktif), SCA klien (retire.js), SAST (semgrep), enumerasi gRPC (grpcurl). Egress tiap engine dipaksa lewat proxy scope-guard.
 - **Orchestrator berantre** — scope guard → job queue → engine worker (rate-limited) → normalisasi → store; error satu engine tak menggagalkan run (fail-soft, tercatat di audit).
 - **Triase → draft report** — konfirmasi/false-positive/abaikan (filter + aksi massal), lengkapi langkah reproduksi & dampak, lalu hasilkan draft (Markdown / cetak-PDF) atau export **HackerOne / Bugcrowd**. Submit tetap manual.
+- **Integrasi Burp Suite** — API JSON baca-saja (`/api/v1/findings`) + extension Montoya ([`burp-ext/`](burp-ext/README.md)) menarik temuan ke tab Burp lalu **Kirim ke Repeater** untuk validasi manual; jalan di **Burp Community** (Pro tak wajib). Onboarding ada di menu **Burp** (`/burp`).
 - **Lapis keamanan** — rate limiter wajib di jalur eksekusi, vault secret terenkripsi (disensor dari log & report), audit trail append-only ber-anchor.
 - **Satu binary** — UI (Go + HTMX) + seluruh aset di-embed, SQLite pure-Go (persisten / in-memory), CGO off.
 
@@ -76,7 +77,7 @@ Flag:
 3. **Scan** → pilih program, isi target/seed (atau tempel spec **OpenAPI/Swagger**, atau isi **upstream proxy / rantai** bila target mewajibkan) → jalankan. Scan jalan di latar belakang; pantau statusnya di tempat.
 4. **Capture** (opsional) → bughound jadi reverse proxy ke satu target in-scope; browsing manual lewat listener lokal, lalu **promote** endpoint terekam jadi scan.
 5. **gRPC / SAST** (opsional) → enumerasi + fuzz gRPC, atau analisis statis kode lokal (`-sast-root`).
-6. **Findings** → triase temuan (konfirmasi / false-positive / abaikan; filter + aksi massal) dan **lengkapi draft** tiap temuan (langkah reproduksi + dampak) agar siap diverifikasi.
+6. **Findings** → triase temuan (konfirmasi / false-positive / abaikan; filter + aksi massal) dan **lengkapi draft** tiap temuan (langkah reproduksi + dampak) agar siap diverifikasi. Validasi manual bisa langsung dari **Burp** — lihat *Integrasi Burp Suite*.
 7. **Reports** → hasilkan **draft** report dari temuan terkonfirmasi (Markdown / cetak-PDF) atau export ke template **HackerOne / Bugcrowd**. Submit tetap **manual** (tanpa auto-submit).
 8. **Audit** → jejak keputusan scope + aktivitas (append-only, ter-anchor).
 
@@ -162,6 +163,32 @@ Halaman **Capture** menjadikan bughound **reverse proxy ke satu target in-scope*
 
 **Keamanan tetap utuh**: gateway memakai transport egress ter-guard yang sama (resolve → tolak IP internal → **pin IP**, bisa ikut rantai upstream), target divalidasi scope guard saat start (**default-deny, fail closed**), dan tiap penerusan **di-scope-check ulang + rate-limited** → **hanya host in-scope** yang pernah diteruskan, bahkan saat browsing manual. Listener loopback bicara HTTP biasa; re-originasi ke target HTTPS ditangani di balik layar (SNI = host target, IP di-pin) → **tak perlu pasang CA cert**. Tanpa auto-submit. Aktivitas tercatat di Audit (`capture.start/stop/promote`, serta penolakan `capture.egress`).
 
+## Integrasi Burp Suite — validasi manual di Repeater
+
+Alur bughound berakhir pada **verifikasi manual**: tool menemukan kandidat bug, kamu memvalidasinya di Burp. Integrasi ini menjembatani keduanya **tanpa pindah-pindah tool** (dari sisi Burp) lewat dua bagian:
+
+- **API JSON baca-saja** di bughound — `GET /api/v1/findings?program=<nama>` (opsi `run_id`, `status`, `severity` dipisah koma, `include_duplicates=1`) dan `GET /api/v1/findings/{id}` (lengkap, termasuk `evidence.request`). Auth **HTTP Basic** dengan akun bughound (GET, tanpa CSRF); tanpa kredensial → `401`. Berguna juga untuk skrip/otomasi lain.
+- **Extension Burp (Montoya)** di [`burp-ext/`](burp-ext/README.md) — menarik temuan satu program ke tab **bughound** di dalam Burp, lalu **Kirim ke Repeater** (request direkonstruksi dari `evidence.request`, atau fallback GET ke URL lokasi) untuk kamu tekan **Send** sendiri.
+
+> **Jalan di Burp Community** — kamu *belum butuh Pro*. Repeater dan memuat extension `.jar` sendiri tersedia di Community; Pro hanya perlu untuk active scanner, Intruder penuh, atau simpan project — bukan syarat alur ini.
+
+Onboarding lengkap (endpoint + contoh `curl` siap-salin + langkah build/load) ada di menu **Burp** pada UI (`/burp`) dan di [`burp-ext/README.md`](burp-ext/README.md).
+
+```bash
+# 1. build extension (butuh JDK 17+ & Gradle 8+)
+cd burp-ext && gradle shadowJar          # -> build/libs/bughound-burp.jar
+
+# 2. Burp -> Extensions -> Add -> type Java -> pilih jar -> muncul tab "bughound"
+
+# 3. di tab bughound: isi URL bughound + user/pass + nama program -> Muat temuan
+#    -> pilih baris -> Kirim ke Repeater -> tekan Send untuk validasi
+
+# (opsional) tarik temuan via skrip, tanpa extension:
+curl -u admin:PASSWORD 'http://127.0.0.1:8787/api/v1/findings?program=nama-program'
+```
+
+**Keamanan tetap utuh.** API dipakai hanya `GET` — extension tak pernah mengubah data bughound, tak memicu scan, dan tak mengirim request ke target otomatis (tanpa auto-submit). Egress / scope guard / rate limiter bughound tetap mengatur scan bughound sendiri; extension ada di luar jalur itu (hanya handoff baca → Repeater). Saat validasi, Repeater mengirim ke mana pun kamu tekan **Send** — pastikan target **in-scope** program-mu (tanggung jawabmu di Burp, sama seperti Repeater biasa). Kredensial hanya di memori extension (tak dipersist); untuk bughound non-lokal taruh di belakang TLS agar Basic auth tak lewat polos.
+
 ## Docker (engine ikut di dalam image)
 
 Karena engine nyata tidak di-bundle ke binary, cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan bughound + engine (nuclei + template `dast/`, subfinder, httpx, katana, ffuf, semgrep; ZAP & retire.js opsional). Di dalam container semua engine ada di `PATH`, jadi `-engine real`/`nuclei,ffuf,zap` langsung jalan.
@@ -205,7 +232,8 @@ internal/
   engine/            kontrak engine + adapter (nuclei, nuclei-dast, ffuf, zap, retire, recon) + mock
   sast/              analisis statis sebagai plugin (registry + mock + semgrep)
   orchestrator/      alur scan dengan penegakan scope dua lapis
-  web/               UI (Go + HTMX + template, aset di-embed)
+  web/               UI (Go + HTMX + template, aset di-embed) + API baca-saja /api/v1
+burp-ext/            extension Burp Suite (Montoya) — tarik temuan → Repeater
 docs/                spesifikasi, PRD, design spec, persona (lihat docs/README.md)
 ```
 
