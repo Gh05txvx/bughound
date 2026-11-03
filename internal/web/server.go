@@ -217,6 +217,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.authDisabled && !authExempt(r) {
 		user, role, ok := s.authUser(r)
 		if !ok {
+			// Klien API (mesin) selalu dapat galat JSON 401, tak pernah redirect HTML.
+			if isAPIPath(r) {
+				writeAPIError(w, http.StatusUnauthorized, "autentikasi diperlukan (sesi login atau HTTP Basic)")
+				return
+			}
 			// Kredensial Basic eksplisit yang gagal → 401 untuk otomasi/CLI.
 			if r.Header.Get("Authorization") != "" {
 				http.Error(w, "autentikasi gagal", http.StatusUnauthorized)
@@ -707,6 +712,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
 	s.mux.HandleFunc("POST /findings/{id}/status", s.handleTriage)
 	s.mux.HandleFunc("POST /findings/{id}/edit", s.handleFindingEdit)
+	// API JSON baca-saja untuk konsumen mesin (extension Burp). Lihat api.go.
+	// Terlindungi otomatis oleh front controller (auth+RBAC baca); GET murni.
+	s.mux.HandleFunc("GET /api/v1/findings", s.handleAPIFindings)
+	s.mux.HandleFunc("GET /api/v1/findings/{id}", s.handleAPIFinding)
 	s.mux.HandleFunc("GET /report", s.handleReport)
 	s.mux.HandleFunc("GET /report/download", s.handleReportDownload)
 	s.mux.HandleFunc("GET /report/print", s.handleReportPrint)
