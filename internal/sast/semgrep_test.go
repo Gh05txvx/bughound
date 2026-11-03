@@ -47,10 +47,15 @@ func TestSemgrepParse(t *testing.T) {
 
 func TestSemgrepArgs(t *testing.T) {
 	joined := strings.Join((&Runner{}).args("/code/root"), " ")
-	for _, want := range []string{"--json", "--config", "auto", "/code/root", "--metrics=off"} {
+	// Default `p/default` + metrics OFF (lihat Runner: `auto` tak kompatibel
+	// dengan --metrics=off, jadi tak boleh jadi default).
+	for _, want := range []string{"--json", "--config", "p/default", "/code/root", "--metrics=off"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args harus memuat %q; dapat %q", want, joined)
 		}
+	}
+	if strings.Contains(joined, " auto ") {
+		t.Errorf("default tak boleh `auto` (tolak saat --metrics=off); dapat %q", joined)
 	}
 	if !strings.Contains(strings.Join((&Runner{Config: "p/golang"}).args("d"), " "), "p/golang") {
 		t.Error("Config custom harus dipakai")

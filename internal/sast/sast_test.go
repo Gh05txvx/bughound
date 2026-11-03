@@ -87,3 +87,27 @@ func TestRunStoresMockFindings(t *testing.T) {
 		t.Errorf("audit harus mencatat start+finish; dapat %d", len(ev))
 	}
 }
+
+// TestRunEmptySubpathLabelsTargetDot: subpath kosong (= seluruh root) harus
+// tetap menyimpan temuan; field wajib `target` diberi label "." (regresi: dulu
+// kosong → store menolak semua temuan dengan "field wajib kosong: target").
+func TestRunEmptySubpathLabelsTargetDot(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMem()
+	res, err := Run(ctx, "/whatever", "", "demo", "run1", []Engine{Mock{}}, st, nil)
+	if err != nil {
+		t.Fatalf("Run subpath kosong: %v", err)
+	}
+	if res.Saved == 0 {
+		t.Fatal("subpath kosong harus tetap menyimpan temuan (bukan 0)")
+	}
+	fs, _ := st.List(ctx, store.Query{Program: "demo"})
+	if len(fs) == 0 {
+		t.Fatal("store kosong setelah run subpath kosong")
+	}
+	for _, f := range fs {
+		if f.Target != "." {
+			t.Errorf("Target = %q, ingin \".\" untuk subpath kosong", f.Target)
+		}
+	}
+}

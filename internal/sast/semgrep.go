@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -16,23 +17,38 @@ import (
 // Runner adalah adapter SAST nyata: menjalankan `semgrep --json` sebagai
 // subprocess lalu menormalkan hasilnya (Parse). OPT-IN — butuh binary semgrep
 // terpasang; tak pernah dijalankan terhadap kode di luar root (dijamin Resolve
-// di jalur eksekusi). Catatan: config "auto"/registry dapat mengunduh ruleset
-// (jaringan); untuk mode offline ketat, set Config ke path ruleset lokal.
+// di jalur eksekusi).
+//
+// Config default `p/default` (ruleset registry semgrep). `auto` sengaja TIDAK
+// dipakai: ia menolak berjalan saat metrik dimatikan ("Cannot create auto
+// config when metrics are off"), dan kami memilih `--metrics=off` agar tak
+// mengirim telemetri soal kode yang dipindai. Ruleset registry diunduh sekali
+// lalu di-cache; untuk mode offline/kustom, set field Config atau env
+// BUGHOUND_SEMGREP_CONFIG ke path ruleset lokal.
 type Runner struct {
 	Bin    string // default "semgrep"
-	Config string // default "auto"
+	Config string // default "p/default" (lihat config())
 }
 
 // Name memenuhi Engine.
 func (r *Runner) Name() string { return "semgrep" }
 
+// config memilih ruleset: field Config bila diisi, lalu env
+// BUGHOUND_SEMGREP_CONFIG, lalu default `p/default`. `auto` sengaja bukan
+// default karena tak kompatibel dengan --metrics=off.
+func (r *Runner) config() string {
+	if strings.TrimSpace(r.Config) != "" {
+		return r.Config
+	}
+	if c := strings.TrimSpace(os.Getenv("BUGHOUND_SEMGREP_CONFIG")); c != "" {
+		return c
+	}
+	return "p/default"
+}
+
 // args menyusun argumen semgrep (dipisah agar bisa diuji tanpa mengeksekusi).
 func (r *Runner) args(dir string) []string {
-	cfg := r.Config
-	if cfg == "" {
-		cfg = "auto"
-	}
-	return []string{"--json", "--quiet", "--metrics=off", "--config", cfg, dir}
+	return []string{"--json", "--quiet", "--metrics=off", "--config", r.config(), dir}
 }
 
 // Analyze menjalankan semgrep pada dir dan mengembalikan temuan ternormalkan.

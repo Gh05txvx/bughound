@@ -123,6 +123,12 @@ func Run(ctx context.Context, dir, srcLabel, program, runID string, engines []En
 	if len(engines) == 0 {
 		return res, errors.New("sast: tak ada engine")
 	}
+	// Subpath kosong = seluruh root (lihat UI "kosong = seluruh root"); beri
+	// label "." agar field wajib `target` pada temuan tak pernah kosong —
+	// store menolak target kosong (BH-SPEC-FINDING).
+	if strings.TrimSpace(srcLabel) == "" {
+		srcLabel = "."
+	}
 	if al != nil {
 		_, _ = al.Append(ctx, audit.Event{Kind: "sast.start", Program: program, RunID: runID, Target: srcLabel, Message: "root: " + dir})
 	}
