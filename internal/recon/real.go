@@ -31,14 +31,10 @@ type RealPipeline struct {
 	Naabu *Naabu
 }
 
-// NewRealPipeline membuat pipeline dengan tool default (binary di PATH), tanpa
-// batas laju tambahan (tiap tool memakai default-nya).
-func NewRealPipeline() *RealPipeline { return NewRealPipelineRate(0) }
-
-// NewRealPipelineRate seperti NewRealPipeline, tetapi menjepit laju request
-// tahap AKTIF (httpx, katana, naabu) ke rate req/dtk (0 = default tool). Tahap
-// pasif (subfinder, gau) dan query DNS (dnsx) tidak menyentuh target sehingga
-// tidak ikut dijepit.
+// NewRealPipelineRate membuat pipeline dengan tool default (binary di PATH) dan
+// menjepit laju request tahap AKTIF (httpx, katana, naabu) ke rate req/dtk
+// (0 = default tool, tanpa batas laju tambahan). Tahap pasif (subfinder, gau)
+// dan query DNS (dnsx) tidak menyentuh target sehingga tidak ikut dijepit.
 func NewRealPipelineRate(rate int) *RealPipeline {
 	return &RealPipeline{
 		Httpx:  &Httpx{rate: rate},

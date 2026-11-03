@@ -46,11 +46,11 @@ func TestHostsFromURLs(t *testing.T) {
 	}
 }
 
-// Tool baru tidak punya proxy (gau pasif, dnsx DNS, naabu TCP mentah) — NewRealPipeline
+// Tool baru tidak punya proxy (gau pasif, dnsx DNS, naabu TCP mentah) — NewRealPipelineRate
 // menyertakannya dan UseProxy tak menyentuhnya.
 func TestNewRealPipelineIncludesNewTools(t *testing.T) {
-	p := NewRealPipeline()
+	p := NewRealPipelineRate(0)
 	if p.Gau == nil || p.Dnsx == nil || p.Naabu == nil {
-		t.Fatal("NewRealPipeline harus menyertakan Gau/Dnsx/Naabu")
+		t.Fatal("NewRealPipelineRate harus menyertakan Gau/Dnsx/Naabu")
 	}
 }

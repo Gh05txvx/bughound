@@ -71,7 +71,7 @@ func TestExportReportAllConfirmed(t *testing.T) {
 func TestExportIncludesImpact(t *testing.T) {
 	f := mk("x", finding.SeverityHigh, finding.StatusConfirmed)
 	f.Impact = "Penyerang membaca metadata internal cloud."
-	for _, p := range Platforms() {
+	for _, p := range []Platform{PlatformHackerOne, PlatformBugcrowd} {
 		if md := ExportFinding(f, p); !strings.Contains(md, f.Impact) {
 			t.Errorf("export %s harus memuat teks dampak yang diisi hunter:\n%s", p.Label(), md)
 		}

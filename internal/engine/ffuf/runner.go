@@ -16,7 +16,7 @@ import (
 // Runner adalah engine ffuf NYATA: mengeksekusi binary ffuf sebagai subprocess,
 // menulis hasil JSON ke berkas sementara, lalu menormalkannya lewat Parse.
 //
-// Wordlist opsional: bila kosong, dipakai wordlist bawaan (DefaultWordlist).
+// Wordlist opsional: bila kosong, dipakai wordlist bawaan (defaultWordlist).
 // Koneksi keluar wajib lewat proxy egress bughound (UseProxy -> ffuf -x),
 // sehingga tiap request diperiksa scope guard SEBELUM koneksi dibuat. Bukan
 // default; aktifkan secara sadar untuk target yang sah.

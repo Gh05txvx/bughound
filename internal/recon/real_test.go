@@ -34,7 +34,7 @@ func TestKatanaProxyArg(t *testing.T) {
 
 // UseProxy harus mengarahkan HANYA tahap aktif (httpx, katana), bukan subfinder.
 func TestRealPipelineUseProxyActiveOnly(t *testing.T) {
-	p := NewRealPipeline()
+	p := NewRealPipelineRate(0)
 	p.UseProxy("127.0.0.1:9000")
 	if p.Httpx.proxyAddr != "127.0.0.1:9000" || p.Katana.proxyAddr != "127.0.0.1:9000" {
 		t.Error("httpx & katana harus diarahkan ke proxy")
@@ -46,7 +46,7 @@ func TestRealPipelineUseProxyActiveOnly(t *testing.T) {
 }
 
 // NewRealPipelineRate menjepit laju tahap AKTIF: -rate-limit pada httpx & katana,
-// -rate pada naabu. NewRealPipeline (rate 0) tidak menambah flag laju.
+// -rate pada naabu. NewRealPipelineRate(0) tidak menambah flag laju.
 func TestRealPipelineRate(t *testing.T) {
 	if strings.Contains(strings.Join((&Httpx{}).args(), " "), "-rate-limit") {
 		t.Error("tanpa rate, httpx tak boleh punya -rate-limit")

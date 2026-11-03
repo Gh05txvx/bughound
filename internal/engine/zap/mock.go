@@ -19,9 +19,6 @@ func (Mock) Scan(_ context.Context, _, program, runID string) ([]*finding.Findin
 	return Parse(bytes.NewReader(sampleJSON), program, runID)
 }
 
-// SampleJSON mengembalikan laporan ZAP sampel (untuk uji/demo).
-func SampleJSON() []byte { return sampleJSON }
-
 var sampleJSON = []byte(`{
   "site": [
     {

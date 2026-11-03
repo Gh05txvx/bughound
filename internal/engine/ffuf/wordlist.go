@@ -9,11 +9,6 @@ import (
 //go:embed default-wordlist.txt
 var defaultWordlist []byte
 
-// DefaultWordlist mengembalikan wordlist bawaan (daftar path/berkas umum) yang
-// dipakai bila pengguna tak menyuplai wordlist. Kecil & generik; override
-// dengan wordlist sendiri untuk cakupan lebih luas.
-func DefaultWordlist() []byte { return defaultWordlist }
-
 // resolveWordlist mengembalikan path wordlist siap pakai. Bila Wordlist diisi,
 // dipakai apa adanya (cleanup no-op). Bila kosong, wordlist bawaan ditulis ke
 // berkas sementara dan cleanup menghapusnya.

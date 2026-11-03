@@ -15,9 +15,6 @@ const (
 	PlatformBugcrowd  Platform = "bugcrowd"
 )
 
-// Platforms mengembalikan platform yang didukung, urut tampil.
-func Platforms() []Platform { return []Platform{PlatformHackerOne, PlatformBugcrowd} }
-
 // Valid melaporkan apakah p didukung.
 func (p Platform) Valid() bool { return p == PlatformHackerOne || p == PlatformBugcrowd }
 
