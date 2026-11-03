@@ -44,6 +44,7 @@
           <a href="/sast{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "sast"}}active{{end}}"><svg class="ico"><use href="#i-code"/></svg>SAST</a>
           <a href="/grpc{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "grpc"}}active{{end}}"><svg class="ico"><use href="#i-share"/></svg>gRPC</a>
           <a href="/capture{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "capture"}}active{{end}}"><svg class="ico"><use href="#i-activity"/></svg>Capture</a>
+          <a href="/proxy{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "proxy"}}active{{end}}"><svg class="ico"><use href="#i-share"/></svg>Proxy</a>
         </div>
         <div class="nav-group">
           <div class="ng-label">Triase</div>

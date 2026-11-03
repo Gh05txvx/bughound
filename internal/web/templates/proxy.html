@@ -1,0 +1,78 @@
+{{define "content"}}
+<div class="grid-2">
+  <form class="card" hx-post="/proxy/check" hx-target="#result" hx-swap="innerHTML">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <h2>Proxy / Egress check</h2>
+    <p class="muted small">Uji rantai proxy & lihat IP yang <b>dilihat target</b> (langsung vs lewat rantai). Hop = infrastruktur proxy-mu (tak menyentuh target scan). Cek IP exit butuh endpoint <b>echo</b> yang lolos scope guard program (default-deny).</p>
+
+    <label>Program <span class="muted small">(untuk scope guard echo)</span></label>
+    <select name="program">
+      <option value="">— pilih program —</option>
+      {{range .Programs}}<option value="{{.}}" {{if eq . $.Program}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+
+    <label>Rantai proxy <span class="muted small">(satu hop per baris, urut; http/https/socks5 · user:pass@ tak ditampilkan)</span></label>
+    <textarea name="upstream_proxy" rows="3" spellcheck="false" placeholder="http://127.0.0.1:8080&#10;socks5://127.0.0.1:9050">{{.Chain}}</textarea>
+
+    <label>Endpoint echo IP <span class="muted small">(opsional · WAJIB in-scope · membalas IP klien, mis. /ip)</span></label>
+    <input type="text" name="echo_url" value="{{.Echo}}" autocomplete="off" spellcheck="false" placeholder="http://echo.lab.test:8080/ip">
+
+    <div class="actions">
+      <button type="submit" class="btn primary">Uji proxy</button>
+      <span class="muted small">kredensial proxy tak dicatat · echo tunduk default-deny</span>
+    </div>
+  </form>
+
+  <div class="card">
+    <h2>Hasil</h2>
+    <div id="result">
+      {{if .Result}}{{template "proxy_result" .Result}}{{else}}
+      <p class="muted">Isi rantai proxy lalu <b>Uji proxy</b>. Setiap hop diuji konektivitasnya; untuk melihat IP exit, isi endpoint echo yang in-scope.</p>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "proxy_result"}}
+{{if .}}
+{{if .Error}}<div class="errors">{{.Error}}</div>{{end}}
+
+{{if .Hops}}
+<h3>Rantai <span class="muted small">({{len .Hops}} hop · koneksi hanya ke proxy, bukan target)</span></h3>
+<table class="tbl">
+  <thead><tr><th>#</th><th>Hop</th><th>IP resolve</th><th>Status</th><th>Latensi</th></tr></thead>
+  <tbody>
+  {{range .Hops}}
+    <tr>
+      <td class="mono">{{.Index}}</td>
+      <td class="mono">{{.Display}}</td>
+      <td class="mono">{{if .ResolvedIPs}}{{range .ResolvedIPs}}{{.}} {{end}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{if .Reachable}}<span class="chip ok">reachable</span>{{else}}<span class="chip warn">gagal</span>{{end}}</td>
+      <td class="mono">{{.LatencyMS}} ms</td>
+    </tr>
+    {{if .Err}}<tr><td></td><td colspan="4" class="muted small mono">{{.Err}}</td></tr>{{end}}
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{if .EchoNote}}<p class="muted small">ℹ️ {{.EchoNote}}</p>{{end}}
+
+{{with .Echo}}
+<h3>IP egress <span class="muted small">(yang dilihat target)</span></h3>
+{{if not .Allowed}}
+<div class="errors">Echo <b>ditolak scope guard</b>: {{.Reason}}. Tambahkan host echo ke <b>in-scope</b> program agar bisa diuji (default-deny · Prinsip #2).</div>
+{{else}}
+<div class="result-summary">
+  <span class="chip">IP sumber (tanpa proxy): <b class="mono">{{if .SourceIP}}{{.SourceIP}}{{else}}—{{end}}</b></span>
+  <span class="chip">IP exit (lewat rantai): <b class="mono">{{if .ExitIP}}{{.ExitIP}}{{else}}—{{end}}</b></span>
+  {{if .Changed}}<span class="chip ok">IP berubah ✓</span>{{else if and .SourceIP .ExitIP}}<span class="chip warn">IP sama</span>{{end}}
+</div>
+{{if .SourceErr}}<p class="muted small mono">sumber: {{.SourceErr}}</p>{{end}}
+{{if .ExitErr}}<p class="muted small mono">exit: {{.ExitErr}}</p>{{end}}
+{{if and .Changed (not .ExitErr)}}<p class="muted small">Rantai proxy mengganti IP yang dilihat target — egress keluar lewat exit node, bukan IP host bughound.</p>{{end}}
+{{end}}
+{{end}}
+{{end}}
+{{end}}

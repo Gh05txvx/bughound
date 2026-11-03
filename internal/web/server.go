@@ -685,6 +685,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /capture/start", s.handleCaptureStart)
 	s.mux.HandleFunc("POST /capture/stop", s.handleCaptureStop)
 	s.mux.HandleFunc("POST /capture/promote", s.handleCapturePromote)
+	s.mux.HandleFunc("GET /proxy", s.handleProxyForm)
+	s.mux.HandleFunc("POST /proxy/check", s.handleProxyCheck)
 	s.mux.HandleFunc("GET /programs", s.handlePrograms)
 	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
@@ -1973,6 +1975,129 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "grpc", "base", page)
 }
 
+// ---- Proxy / Egress check (diagnostik rantai proxy & IP exit) ----
+
+type proxyPage struct {
+	Nav, Title, Program, CSRF string
+	Programs                  []string
+	Chain, Echo               string
+	Result                    *proxyCheckResult
+}
+
+type proxyCheckResult struct {
+	Hops     []egress.HopStatus
+	Echo     *proxyEchoResult
+	EchoNote string
+	Error    string
+}
+
+type proxyEchoResult struct {
+	Allowed                  bool
+	Reason                   string
+	SourceIP, ExitIP         string
+	SourceStatus, ExitStatus int
+	SourceErr, ExitErr       string
+	Changed                  bool
+}
+
+// handleProxyForm menampilkan menu diagnostik proxy.
+func (s *Server) handleProxyForm(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	s.render(w, r, "proxy", "base", proxyPage{
+		Nav: "proxy", Title: "Proxy", Program: program, CSRF: s.csrfToken(r),
+		Programs: s.programNames(r.Context()),
+	})
+}
+
+// handleProxyCheck memvalidasi & menguji rantai proxy, lalu (opsional) mengukur
+// IP yang dilihat target langsung vs lewat rantai memakai endpoint echo yang
+// WAJIB lolos scope guard program (default-deny). State-changing → operator+
+// (middleware authorize). Kredensial proxy tak pernah ditampilkan/dicatat.
+func (s *Server) handleProxyCheck(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	program := strings.TrimSpace(r.FormValue("program"))
+	echo := strings.TrimSpace(r.FormValue("echo_url"))
+	chainLines := splitLines(r.FormValue("upstream_proxy"))
+
+	res := &proxyCheckResult{}
+	hops, err := egress.ParseChain(chainLines)
+	if err != nil {
+		res.Error = "Rantai tak valid: " + err.Error()
+		s.renderPartial(w, r, "proxy", "proxy_result", res)
+		return
+	}
+	res.Hops = egress.TestChain(r.Context(), hops, 8*time.Second)
+
+	if echo != "" {
+		res.Echo, res.EchoNote = s.proxyEchoCheck(r, program, chainLines, echo)
+	}
+
+	reachable := 0
+	for _, h := range res.Hops {
+		if h.Reachable {
+			reachable++
+		}
+	}
+	me, _ := s.currentUser(r)
+	changed := res.Echo != nil && res.Echo.Changed
+	s.auditAppend(r.Context(), audit.Event{
+		Kind: "egress.check", Program: program, Allowed: true, Layer: "egress",
+		Message: fmt.Sprintf("%s uji proxy: %d/%d hop reachable, echo=%t, ip-berubah=%t", me, reachable, len(res.Hops), echo != "", changed),
+	})
+	s.renderPartial(w, r, "proxy", "proxy_result", res)
+}
+
+// proxyEchoCheck mengukur IP yang terlihat target: satu GET langsung dan satu
+// lewat rantai, ke endpoint echo yang sama. Echo WAJIB lolos scope guard program
+// (default-deny — Prinsip #2). Mengembalikan hasil + catatan bila tak bisa.
+func (s *Server) proxyEchoCheck(r *http.Request, program string, chain []string, echo string) (*proxyEchoResult, string) {
+	if program == "" {
+		return nil, "Pilih program dulu agar endpoint echo dicek scope guard (default-deny)."
+	}
+	prog, err := s.store.GetProgram(r.Context(), program)
+	if err != nil {
+		return nil, "Program belum punya scope tersimpan — simpan dulu di halaman Programs."
+	}
+	guard, errs := scope.New(prog.InScope, prog.OutScope)
+	if len(errs) > 0 {
+		return nil, "Scope program tak valid: " + errs[0].Error()
+	}
+	auditSink := func(d egress.Decision) {
+		if d.Allowed {
+			return
+		}
+		s.auditAppend(context.Background(), audit.Event{
+			Kind: "egress.check", Program: program, Target: d.Target,
+			Allowed: false, Reason: string(d.Reason), Layer: "egress",
+		})
+	}
+
+	timeout := 10 * time.Second
+	direct := egress.New(guard, auditSink).Fetch(r.Context(), echo, timeout)
+	out := &proxyEchoResult{
+		Allowed:      direct.Allowed,
+		Reason:       direct.Reason,
+		SourceIP:     egress.ExtractClientIP(direct.Body),
+		SourceStatus: direct.Status,
+		SourceErr:    direct.Err,
+	}
+	if !direct.Allowed {
+		return out, ""
+	}
+	chained := egress.New(guard, auditSink)
+	if err := chained.SetUpstream(chain...); err != nil {
+		out.ExitErr = "rantai tak bisa dibangun: " + err.Error()
+		return out, ""
+	}
+	exit := chained.Fetch(r.Context(), echo, timeout)
+	out.ExitIP, out.ExitStatus, out.ExitErr = egress.ExtractClientIP(exit.Body), exit.Status, exit.Err
+	out.Changed = out.SourceIP != "" && out.ExitIP != "" && out.SourceIP != out.ExitIP
+	return out, ""
+}
+
 // ---- Capture (reverse proxy perekam) ----
 
 // captureSession adalah satu gateway reverse-proxy aktif untuk sebuah program.
@@ -2403,6 +2528,7 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 		"sast":         {"templates/base.html", "templates/sast.html"},
 		"grpc":         {"templates/base.html", "templates/grpc.html"},
 		"capture":      {"templates/base.html", "templates/capture.html"},
+		"proxy":        {"templates/base.html", "templates/proxy.html"},
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
 		"report":       {"templates/base.html", "templates/report.html"},
