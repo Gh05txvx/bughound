@@ -144,6 +144,27 @@ func TestAPIFindingDetail(t *testing.T) {
 	}
 }
 
+// TestBurpPage: halaman onboarding integrasi Burp ter-render dengan konten inti,
+// dan contoh perintah memakai program nyata dari store.
+func TestBurpPage(t *testing.T) {
+	srv, st := newTestServer(t)
+	seedAPIFinding(t, st, "acme", "https://acme.io/a", "GET /a HTTP/1.1\r\n\r\n", finding.SeverityHigh)
+
+	rec := do(t, srv, "GET", "/burp", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /burp = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Integrasi Burp", "/api/v1/findings", "gradle shadowJar", "Community", "Kirim ke Repeater"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("halaman /burp tak memuat %q", want)
+		}
+	}
+	if !strings.Contains(body, "program=acme") {
+		t.Error("contoh perintah tidak memakai program nyata dari store")
+	}
+}
+
 // TestAPIRequiresAuth membuktikan endpoint API terlindungi front controller yang
 // sama: tanpa kredensial → 401 JSON (BUKAN redirect 302 ke /login, yang akan
 // membingungkan klien mesin), dan HTTP Basic yang sah → 200. Inilah jalur yang

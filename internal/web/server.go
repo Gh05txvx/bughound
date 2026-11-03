@@ -716,6 +716,7 @@ func (s *Server) routes() {
 	// Terlindungi otomatis oleh front controller (auth+RBAC baca); GET murni.
 	s.mux.HandleFunc("GET /api/v1/findings", s.handleAPIFindings)
 	s.mux.HandleFunc("GET /api/v1/findings/{id}", s.handleAPIFinding)
+	s.mux.HandleFunc("GET /burp", s.handleBurp)
 	s.mux.HandleFunc("GET /report", s.handleReport)
 	s.mux.HandleFunc("GET /report/download", s.handleReportDownload)
 	s.mux.HandleFunc("GET /report/print", s.handleReportPrint)
@@ -2034,6 +2035,43 @@ func (s *Server) handleProxyForm(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// burpPage: halaman onboarding integrasi Burp (lihat burp.html). Murni
+// informatif — menampilkan endpoint API baca-saja + cara build/load extension.
+type burpPage struct {
+	Nav, Title, Program, CSRF string
+	BaseURL                   string   // skema+host dari request, untuk contoh perintah
+	User                      string   // username login, untuk contoh curl -u
+	Programs                  []string // program yang punya temuan, untuk pilih contoh
+	SampleProgram             string   // program yang dipakai di contoh perintah
+}
+
+// handleBurp menampilkan halaman integrasi Burp: titik masuk di UI untuk API
+// baca-saja + extension. Tidak menjalankan Burp; murni onboarding.
+func (s *Server) handleBurp(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	user, _ := s.currentUser(r)
+	if user == "" {
+		user = "admin" // auth nonaktif / sekadar contoh
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	progs := s.programNames(r.Context())
+	sample := program
+	if sample == "" {
+		if len(progs) > 0 {
+			sample = progs[0]
+		} else {
+			sample = "nama-program"
+		}
+	}
+	s.render(w, r, "burp", "base", burpPage{
+		Nav: "burp", Title: "Integrasi Burp", Program: program, CSRF: s.csrfToken(r),
+		BaseURL: scheme + "://" + r.Host, User: user, Programs: progs, SampleProgram: sample,
+	})
+}
+
 // handleProxyCheck memvalidasi & menguji rantai proxy, lalu (opsional) mengukur
 // IP yang dilihat target langsung vs lewat rantai memakai endpoint echo yang
 // WAJIB lolos scope guard program (default-deny). State-changing → operator+
@@ -2566,6 +2604,7 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 		"grpc":         {"templates/base.html", "templates/grpc.html"},
 		"capture":      {"templates/base.html", "templates/capture.html"},
 		"proxy":        {"templates/base.html", "templates/proxy.html"},
+		"burp":         {"templates/base.html", "templates/burp.html"},
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
 		"report":       {"templates/base.html", "templates/report.html"},

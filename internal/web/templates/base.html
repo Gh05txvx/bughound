@@ -51,6 +51,7 @@
           <div class="ng-label">Triase</div>
           <a href="/findings{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "findings"}}active{{end}}"><svg class="ico"><use href="#i-alert"/></svg>Findings</a>
           <a href="/report{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "report"}}active{{end}}"><svg class="ico"><use href="#i-file"/></svg>Reports</a>
+          <a href="/burp{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "burp"}}active{{end}}"><svg class="ico"><use href="#i-share"/></svg>Burp</a>
         </div>
         <div class="nav-group">
           <div class="ng-label">Sistem</div>
