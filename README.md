@@ -6,12 +6,6 @@
 
 > ⚠️ **Hanya untuk pengujian yang sah.** bughound adalah tool offensive (DAST). Gunakan hanya terhadap aset yang berada dalam scope program bounty, lab milik sendiri, atau sistem dengan izin eksplisit. **Scope guard default-deny** menolak target yang tidak terbukti in-scope, dan **tidak ada auto-submit** — report selalu berakhir sebagai draft.
 
-## Status
-
-**M0 — Fondasi: selesai.** Gate M0 terpenuhi: satu temuan mengalir *scan → normalisasi → tersimpan*; scope guard menolak target di luar scope (lapis input **dan** egress); nol koneksi ke aset nyata.
-
-**M1 & M2 berjalan** (dengan engine mock/target dummy): rate limiter di jalur eksekusi, pipeline recon, multi-engine (nuclei + ffuf), modul report (draft), job queue, vault secret terenkripsi, audit trail berantai, serta triase (aksi massal + filter) dan scope per-program yang persisten. Roadmap M3 ada di PRD.
-
 ## Prinsip yang mengikat
 
 Keamanan adalah batas struktural, bukan tambahan:
@@ -21,14 +15,15 @@ Keamanan adalah batas struktural, bukan tambahan:
 - **Secret disensor** dari evidence dan raw sebelum disimpan; tidak pernah bocor ke store/log/report.
 - **Satu skema temuan seragam** sebagai fondasi; semua engine menulis ke sana.
 
-## Fitur M0
+## Kemampuan
 
-- Skema Temuan Seragam (`BH-SPEC-FINDING`): format JSON berversi, `dedup_key` deterministik.
-- Scope Guard (`BH-SPEC-SCOPE`): domain/wildcard/URL/IP/CIDR, normalisasi punycode & IP, kebijakan port, penegakan dua lapis.
-- Findings store: in-memory & SQLite (persisten), dedup per-program, triase, query terurut severity.
-- Adapter nuclei (JSONL → skema) + engine mock (tanpa jaringan).
-- Orchestrator in-process: scope guard → scan → normalisasi → store + audit trail.
-- UI web (Go + HTMX): input scope, jalankan scan, triase temuan. Binary tunggal.
+- **Skema Temuan Seragam** (`BH-SPEC-FINDING`) — semua engine menormalkan hasil ke satu JSON berversi; `dedup_key` deterministik mengolaps duplikat lintas-engine per program.
+- **Scope Guard dua lapis** (`BH-SPEC-SCOPE`) — domain/wildcard/URL/IP/CIDR, normalisasi punycode & IP, kebijakan port; dicek saat input **dan** saat egress (default-deny, fail-closed).
+- **Multi-engine via adapter** — recon (subfinder → httpx → katana, gau, dnsx, naabu), DAST (nuclei, ffuf + enrichment robots.txt/OpenAPI, ZAP, `nuclei-dast` fuzzing aktif), SCA klien (retire.js), SAST (semgrep), enumerasi gRPC (grpcurl). Egress tiap engine dipaksa lewat proxy scope-guard.
+- **Orchestrator berantre** — scope guard → job queue → engine worker (rate-limited) → normalisasi → store; error satu engine tak menggagalkan run (fail-soft, tercatat di audit).
+- **Triase → draft report** — konfirmasi/false-positive/abaikan (filter + aksi massal), lengkapi langkah reproduksi & dampak, lalu hasilkan draft (Markdown / cetak-PDF) atau export **HackerOne / Bugcrowd**. Submit tetap manual.
+- **Lapis keamanan** — rate limiter wajib di jalur eksekusi, vault secret terenkripsi (disensor dari log & report), audit trail append-only ber-anchor.
+- **Satu binary** — UI (Go + HTMX) + seluruh aset di-embed, SQLite pure-Go (persisten / in-memory), CGO off.
 
 ## Build & jalankan
 
@@ -63,7 +58,7 @@ Flag:
 
 - `-addr` — alamat bind (default `127.0.0.1:8787`, localhost saja).
 - `-db` — path file SQLite (default `bughound.db`; kosongkan untuk in-memory).
-- `-engine` — `mock` (default, tanpa jaringan) atau `real` (engine nyata via proxy scope guard).
+- `-engine` — set engine, dipisah koma: `mock` (default, tanpa jaringan) · `real` · atau daftar `nuclei,ffuf,zap,retire,nuclei-dast` (engine nyata via proxy scope guard). Lihat *Engine yang didukung*.
 - `-admin-user` / `-admin-password` — akun admin awal saat bootstrap (atau env `BUGHOUND_ADMIN_USER` / `BUGHOUND_ADMIN_PASSWORD`). Password kosong = dibuat acak & dicetak ke konsol sekali.
 - `-no-auth` — **nonaktifkan** login & RBAC (akses terbuka). Hanya untuk localhost tepercaya / test.
 - `-key` — path kunci master enkripsi secret (atau env `BUGHOUND_MASTER_KEY`); `-rotate-key` merotasinya.
@@ -71,6 +66,7 @@ Flag:
 - `-ffuf-wordlist` — wordlist untuk engine ffuf nyata (kosong = wordlist bawaan).
 - `-zap-mode` — mode ZAP nyata: `quick` (default) · `baseline` · `full` (spider + active scan via Automation Framework).
 - `-grpc` — engine enumerasi gRPC: `mock` (default) · `real` (grpcurl). `-grpc-plaintext` untuk gRPC tanpa TLS.
+- `-nuclei-templates` / `-custom-templates` — dir template untuk Bank Payload (`BH-SPEC-PAYLOAD`); kosong = auto-deteksi (`nuclei-templates` dari env/`$HOME`).
 - `-version` — cetak versi build lalu keluar.
 
 ## Cara pakai (alur kerja)
@@ -80,7 +76,7 @@ Flag:
 3. **Scan** → pilih program, isi target/seed (atau tempel spec **OpenAPI/Swagger**, atau isi **upstream proxy / rantai** bila target mewajibkan) → jalankan. Scan jalan di latar belakang; pantau statusnya di tempat.
 4. **Capture** (opsional) → bughound jadi reverse proxy ke satu target in-scope; browsing manual lewat listener lokal, lalu **promote** endpoint terekam jadi scan.
 5. **gRPC / SAST** (opsional) → enumerasi + fuzz gRPC, atau analisis statis kode lokal (`-sast-root`).
-6. **Findings** → triase temuan (konfirmasi / false-positive / abaikan; filter + aksi massal).
+6. **Findings** → triase temuan (konfirmasi / false-positive / abaikan; filter + aksi massal) dan **lengkapi draft** tiap temuan (langkah reproduksi + dampak) agar siap diverifikasi.
 7. **Reports** → hasilkan **draft** report dari temuan terkonfirmasi (Markdown / cetak-PDF) atau export ke template **HackerOne / Bugcrowd**. Submit tetap **manual** (tanpa auto-submit).
 8. **Audit** → jejak keputusan scope + aktivitas (append-only, ter-anchor).
 
@@ -118,6 +114,8 @@ bughound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak 
 | **naabu** | recon (port scan TCP) | mock + nyata | `go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest` (butuh libpcap) |
 | **ffuf** | DAST (content discovery) | mock + nyata | `go install github.com/ffuf/ffuf/v2@latest` · wordlist bawaan (override `-ffuf-wordlist`) |
 | **ZAP** | DAST (proxy scanner) | mock + nyata | [OWASP ZAP](https://www.zaproxy.org/download/) (`zap.sh` di PATH) · `-zap-mode quick\|baseline\|full` |
+| **nuclei-dast** | DAST (fuzzing aktif: SQLi/XSS/SSTI/…) | nyata | — pakai `nuclei` + `katana` + template `dast/` · `-engine …,nuclei-dast` |
+| **retire.js** | SCA (library JS sisi-klien) | nyata | `npm i -g retire` (Node 18+) · image: `--build-arg WITH_RETIRE=true` · `-engine …,retire` |
 | **semgrep** | SAST | mock + nyata | `pipx install semgrep` · aktif via `-sast-root` |
 | **grpcurl** | gRPC (enumerasi + fuzz invokasi) | mock + nyata | `go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest` · `-grpc real` |
 
@@ -128,6 +126,7 @@ go run ./cmd/bughound -engine real                       # nuclei + recon nyata
 go run ./cmd/bughound -engine nuclei,ffuf                # ffuf pakai wordlist bawaan
 go run ./cmd/bughound -engine nuclei,ffuf -ffuf-wordlist /path/wordlist.txt
 go run ./cmd/bughound -engine nuclei,zap -zap-mode full  # + ZAP spider & active scan
+go run ./cmd/bughound -engine nuclei,nuclei-dast,retire  # + fuzzing aktif & SCA klien JS
 go run ./cmd/bughound -sast-root /path/ke/repo           # aktifkan SAST (semgrep)
 ```
 
@@ -165,11 +164,12 @@ Halaman **Capture** menjadikan bughound **reverse proxy ke satu target in-scope*
 
 ## Docker (engine ikut di dalam image)
 
-Karena engine nyata tidak di-bundle ke binary, cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan bughound + engine (nuclei, subfinder, httpx, katana, ffuf, semgrep; ZAP opsional). Di dalam container semua engine ada di `PATH`, jadi `-engine real`/`nuclei,ffuf,zap` langsung jalan.
+Karena engine nyata tidak di-bundle ke binary, cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan bughound + engine (nuclei + template `dast/`, subfinder, httpx, katana, ffuf, semgrep; ZAP & retire.js opsional). Di dalam container semua engine ada di `PATH`, jadi `-engine real`/`nuclei,ffuf,zap` langsung jalan.
 
 ```bash
-docker build -t bughound .                                 # lean (tanpa ZAP)
-docker build --build-arg WITH_ZAP=true -t bughound:zap .   # + OWASP ZAP (berat, +JRE)
+docker build -t bughound .                                              # lean (tanpa ZAP/retire)
+docker build --build-arg WITH_ZAP=true -t bughound:zap .                # + OWASP ZAP (berat, +JRE)
+docker build --build-arg WITH_RETIRE=true -t bughound:sca .             # + retire.js (Node, SCA klien)
 
 # default: engine mock (aman), UI di http://127.0.0.1:8787
 docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data bughound
@@ -188,7 +188,7 @@ docker pull ghcr.io/gh05txvx/bughound:latest     # tag versi: :0.2.2, :0.2
 docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data ghcr.io/gh05txvx/bughound:latest
 ```
 
-(Image GHCR = varian lean tanpa ZAP; untuk ZAP build lokal dengan `--build-arg WITH_ZAP=true`.)
+(Image GHCR = varian lean tanpa ZAP & retire.js; untuk keduanya build lokal dengan `--build-arg WITH_ZAP=true` / `--build-arg WITH_RETIRE=true`.)
 
 > **Visibilitas:** paket GHCR default **privat** saat pertama terbit. Agar bisa `docker pull` tanpa login, set paket `bughound` ke **Public** di GitHub → Packages → bughound → *Package settings* → *Change visibility*. Atau tetap privat dan `docker login ghcr.io` dulu.
 
@@ -202,7 +202,7 @@ internal/
   finding/           skema temuan seragam
   scope/             scope guard
   store/             persistensi (interface + Mem + SQLite)
-  engine/            kontrak engine + adapter nuclei (+ mock)
+  engine/            kontrak engine + adapter (nuclei, nuclei-dast, ffuf, zap, retire, recon) + mock
   sast/              analisis statis sebagai plugin (registry + mock + semgrep)
   orchestrator/      alur scan dengan penegakan scope dua lapis
   web/               UI (Go + HTMX + template, aset di-embed)
