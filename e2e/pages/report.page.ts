@@ -16,6 +16,11 @@ export class ReportPage {
     return this.page.getByRole('link', { name: /Cetak/ });
   }
 
+  /** Tombol ekspor platform di kepala report (UNDUH .md untuk submit manual). */
+  exportLink(platform: 'HackerOne' | 'Bugcrowd'): Locator {
+    return this.page.getByRole('link', { name: `Export ${platform}` });
+  }
+
   /**
    * Kontrol yang benar-benar MENGIRIM/submit — harus NOL. Catatan: tombol
    * "Export HackerOne/Bugcrowd" adalah UNDUH (format untuk submit manual),
