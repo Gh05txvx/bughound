@@ -37,3 +37,6 @@ ref/
 
 # Hasil scan lokal (laporan kerja per target, bukan sumber — jangan commit ke repo publik)
 hasil scan/
+
+# Claude Code: data sesi, memory, & settings lokal (transcript + settings.local.json) — jangan commit, apalagi ke repo publik
+.claude/
