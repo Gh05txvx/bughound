@@ -130,11 +130,13 @@ Log ini adalah bukti utama saat audit pre-launch menilai apakah scope guard bena
 
 ## Pertanyaan terbuka
 
-- [ ] Kebijakan port: scope berbasis host mencakup semua port, atau hanya 80/443 kecuali disebut? Menentukan ketat atau longgarnya.
-- [ ] Apex + wildcard: tetap pisah (apex harus didaftarkan sendiri), atau sediakan sintaks yang mencakup keduanya sekaligus?
-- [ ] IP privat/metadata: tolak mutlak, atau izinkan hanya untuk lab yang pengguna tandai eksplisit sebagai milik sendiri?
-- [ ] Format scope platform: apakah perlu importer yang memahami format scope HackerOne/Bugcrowd langsung, atau cukup bentuk kanonik dokumen ini?
-- [ ] Penegakan egress: cukup di aplikasi, atau wajibkan allowlist jaringan di level lingkungan sebagai lapis ketiga?
-- [ ] Resolusi DNS: apakah hostname in-scope yang resolve ke IP out-of-scope (atau IP privat) harus ditolak? (Mencegah DNS rebinding.)
+> Direkonsiliasi dengan implementasi 2026-11-04. `[x]` = sudah diputuskan/diimplementasi, `[ ]` = masih terbuka.
 
-Pertanyaan ini sebaiknya dijawab saat M0. Karena scope guard adalah kontrol keamanan paling kritis, jawaban yang condong ke lebih ketat lebih aman sebagai default.
+- [x] Kebijakan port: **default v1 = scope berbasis host mencakup semua port**, kecuali entri menyebut port eksplisit (lihat §Format di atas). Pengetatan ke 80/443-saja tetap opsi masa depan bila dibutuhkan.
+- [x] Apex + wildcard: **tetap dipisah** — `*.domain` hanya mencakup subdomain (wildcard di posisi paling kiri), apex harus didaftarkan sebagai entri sendiri (`internal/scope/entry.go`). Pilihan yang lebih ketat dan aman.
+- [x] IP privat/metadata: **tolak saat connect kecuali eksplisit in-scope** (IP/CIDR). Dialer egress menolak loopback/privat/link-local/metadata lalu me-*pin* IP yang sudah dicek (anti-rebinding). Lihat `BH-AUDIT-M2` BH-F02, `internal/egress/ssrf_test.go`.
+- [ ] Format scope platform: **importer HackerOne/Bugcrowd belum dibuat**; scope dimasukkan dalam bentuk kanonik dokumen ini. (Ekspor report ke format platform sudah ada; impor scope belum.)
+- [x] Penegakan egress: **di aplikasi (proxy paksa)** — engine aktif dipaksa lewat `-proxy` + env `HTTP(S)_PROXY`/`ALL_PROXY`. Allowlist jaringan / kontainer per scan = hardening opt-in; residual egress non-HTTP diterima untuk threat model saat ini (ADR `BH-ADR-egress-isolation`, BH-F03).
+- [x] Resolusi DNS: **ya, ditolak** — hostname in-scope yang resolve ke IP out-of-scope/privat ditolak saat connect dengan IP-pinning (mencegah DNS rebinding). Lihat BH-F02.
+
+Catatan: jawaban condong ke lebih ketat seperti diarahkan; scope guard tetap default-deny.

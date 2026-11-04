@@ -252,11 +252,13 @@ Karena semua engine bertemu di satu skema, menambah engine baru = menambah satu 
 
 ## Pertanyaan terbuka
 
-- [ ] Penyempurnaan `dedup_key`: apakah perlu memasukkan metode HTTP atau kelas parameter agar tidak salah gabung di path yang sama?
-- [ ] Taksonomi `type`: pakai daftar slug sendiri, ikut penamaan nuclei, atau peta ke standar (mis. WASC/OWASP)? Perlu daftar kanonik.
-- [ ] Severity: sumber utama dari engine atau selalu dihitung ulang dari CVSS bila ada?
-- [ ] Model penyimpanan dedup: simpan duplikat sebagai record terpisah (`duplicate_of`) atau satu temuan dengan daftar kemunculan? (Diputuskan di spec store.)
-- [ ] Ukuran `evidence`: batas panjang request/response yang disimpan inline sebelum dipotong atau dipindah ke blob?
-- [ ] Apakah `program` dan `run_id` cukup, atau perlu `workspace`/`tenant` untuk skenario multi-user nanti?
+> Direkonsiliasi dengan implementasi 2026-11-04. `[x]` = sudah diputuskan/diimplementasi (dengan bukti), `[~]` = sebagian, `[ ]` = masih terbuka.
 
-Pertanyaan ini sebaiknya dijawab saat M0, karena skema ini fondasi yang dirujuk komponen lain.
+- [~] Penyempurnaan `dedup_key`: **parameter sudah masuk** kunci (`sha256(lower(type)|host|path|parameter)`, `internal/finding/dedup.go`); **metode HTTP sengaja belum** dan port dikecualikan. Menambah metode tetap opsi terbuka bila GET vs POST di path+parameter sama perlu dipisah.
+- [~] Taksonomi `type`: keputusan praktis = **slug diturunkan dari id/nama native tiap engine** (mis. template-id nuclei, slug alert ZAP), disatukan lewat skema temuan. **Daftar kanonik tunggal & peta ke standar (WASC/OWASP) belum dibuat** — tetap terbuka bila perlu korelasi lintas-standar.
+- [x] Severity: **sumber utama dari engine**, dipetakan per-adapter ke enum skema (`mapSeverity`/`mapRisk` di tiap `internal/engine/*/parse.go`). Tidak dihitung ulang dari CVSS.
+- [x] Model penyimpanan dedup: **record terpisah dengan `duplicate_of`** menunjuk temuan utama; duplikat disembunyikan dari hitungan/report tetapi tersimpan utuh untuk audit. Ditegakkan per `(program, dedup_key)` di `internal/store` (Mem & SQLite), plus kolaps site-wide untuk isu origin-level.
+- [ ] Ukuran `evidence`: batas panjang request/response inline sebelum dipotong/dipindah ke blob **belum diterapkan** (masih tersimpan apa adanya).
+- [~] `program`/`run_id` vs `workspace`/`tenant`: multi-user hadir lewat **RBAC** (admin/operator/viewer, `internal/auth`) di atas **satu workspace bersama**; `program`+`run_id` tetap pembatas data. Partisi `workspace`/`tenant` sengaja belum ditambah (cukup untuk tim kecil).
+
+Catatan: fondasi skema sudah tegak sejak M0; sisa item di atas adalah penyempurnaan, bukan penghambat.

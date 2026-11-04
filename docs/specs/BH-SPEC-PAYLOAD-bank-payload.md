@@ -153,12 +153,14 @@ Hasilnya, menambah kemampuan deteksi baru = menambah template ke bank (atau mena
 
 ## Pertanyaan terbuka
 
-- [ ] Kapan (atau perlukah) format payload netral sendiri diperkenalkan, untuk cek yang tak bisa diungkapkan engine mana pun? Saat ini sengaja ditunda.
-- [ ] `template_id` global: skema penamaan pasti (`<source>:<native-id>`?) agar unik dan stabil lintas sumber.
-- [ ] Metadata minimum yang mewajibkan sebuah template boleh `enabled` (mis. harus punya `type` dan `severity_default`).
-- [ ] Cara memetakan severity/tag native tiap engine ke nilai seragam katalog (butuh tabel pemetaan, mirip di spec skema temuan).
-- [ ] Profil seleksi: bagaimana pengguna menyimpan preset "jalankan tag X, severity >= Y" per program.
-- [ ] Validasi keamanan template: sejauh mana divalidasi/di-sandbox di v1 vs ditunda, mengingat scope guard sudah jadi jaring pengaman utama.
-- [ ] Storage katalog: file manifest sederhana atau masuk ke store yang sama dengan temuan?
+> Direkonsiliasi dengan implementasi 2026-11-04. `[x]` = sudah diputuskan/diimplementasi, `[~]` = sebagian, `[ ]` = masih terbuka.
 
-Karena bank payload memberi makan engine, sebagian pertanyaan ini bergantung pada keputusan engine/adapter di M0-M1. Yang paling mendesak: skema `template_id` dan metadata minimum, karena keduanya mengikat ke `source_template` di skema temuan.
+- [ ] Format payload netral sendiri: **masih sengaja ditunda** (hanya untuk cek yang tak bisa diungkapkan engine mana pun). Belum diperkenalkan.
+- [x] `template_id` global: skema **`<engine>:<native-id>`** diterapkan (`internal/payload/payload.go`, `source.go`), unik dan stabil lintas sumber (yang pertama menang saat tabrakan id).
+- [x] Metadata minimum untuk boleh `enabled`: diterapkan lewat `hasMinMeta`/`canEnable` — sebuah template hanya `enabled` otomatis bila dari sumber **trusted** DAN metadata minimumnya terpenuhi.
+- [x] Pemetaan severity/tag native → seragam: dilakukan per-adapter engine saat normalisasi ke skema temuan (`mapSeverity` di tiap `internal/engine/*/parse.go`); katalog payload menyimpan `type`/severity selaras skema.
+- [ ] Profil seleksi ("jalankan tag X, severity >= Y" per program): **belum diimplementasi**. Saat ini seleksi lewat `enabled` + tingkat trust sumber.
+- [~] Validasi keamanan template: **model trust diterapkan** (hanya sumber trusted yang auto-`enabled`) dengan scope guard sebagai jaring pengaman runtime utama; **sandbox eksekusi template lebih dalam ditunda** sesuai rencana v1.
+- [x] Storage katalog: **snapshot dibangun saat runtime dari sumber direktori template pluggable** (`nuclei-dir`, `custom-dir` via `DefaultSources`/`Build`) — bukan di store temuan, dan tidak perlu manifest terpisah.
+
+Catatan: yang paling mendesak (skema `template_id` dan metadata minimum) sudah terjawab karena keduanya mengikat ke `source_template` di skema temuan.
