@@ -143,3 +143,26 @@ func TestLoadKeyringEphemeral(t *testing.T) {
 		t.Errorf("tanpa env & path harus ephemeral, dapat %s", src)
 	}
 }
+
+// Key & Keyring tak boleh membocorkan byte kunci lewat fmt. fmt melewati
+// String() untuk field unexported, jadi guard dipasang di tipe Key/Keyring
+// sendiri (bukan sekadar membungkus material dalam Secret).
+func TestKeyKeyringRedactInFmt(t *testing.T) {
+	raw := []byte(strings.Repeat("z", KeySize)) // 'z' = 0x7a -> "122" desimal / "0x7a" di %#v
+	k, err := KeyFromBytes(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kr := NewKeyring(k)
+	for _, s := range []string{
+		fmt.Sprintf("%v", k), fmt.Sprintf("%+v", k), fmt.Sprintf("%#v", k),
+		fmt.Sprintf("%v", kr), fmt.Sprintf("%+v", kr), fmt.Sprintf("%#v", kr),
+	} {
+		if strings.Contains(s, "122") || strings.Contains(s, "0x7a") {
+			t.Errorf("fmt membocorkan byte kunci: %q", s)
+		}
+		if !strings.Contains(s, k.ID()) {
+			t.Errorf("fmt harus menampilkan key-id, bukan byte: %q", s)
+		}
+	}
+}

@@ -27,10 +27,11 @@ const KeySize = 32
 var ErrNoKey = errors.New("secret: tidak ada kunci untuk key-id token (perlu kunci lama untuk dekripsi)")
 
 // Key adalah kunci simetris 32-byte beserta id turunannya (one-way, tidak
-// membocorkan kunci).
+// membocorkan kunci). Material dibungkus Secret; String/GoString meredaksi
+// (fmt melewati String() untuk field unexported, jadi guard dipasang di Key).
 type Key struct {
-	id    string
-	bytes []byte
+	id  string
+	mat Secret
 }
 
 // NewRandomKey membuat kunci acak.
@@ -48,14 +49,18 @@ func KeyFromBytes(b []byte) (Key, error) {
 		return Key{}, fmt.Errorf("secret: kunci harus %d byte, dapat %d", KeySize, len(b))
 	}
 	sum := sha256.Sum256(b)
-	return Key{id: hex.EncodeToString(sum[:4]), bytes: append([]byte(nil), b...)}, nil
+	return Key{id: hex.EncodeToString(sum[:4]), mat: NewSecret(b)}, nil
 }
 
 // ID mengembalikan id kunci (8 hex, turunan hash — bukan kunci itu sendiri).
 func (k Key) ID() string { return k.id }
 
 // Base64 mengembalikan kunci ter-encode (untuk disimpan ke file kunci 0600).
-func (k Key) Base64() string { return base64.StdEncoding.EncodeToString(k.bytes) }
+func (k Key) Base64() string { return base64.StdEncoding.EncodeToString(k.mat.Reveal()) }
+
+// String & GoString meredaksi: Key tak pernah mencetak byte kunci, hanya id.
+func (k Key) String() string   { return "Key(" + k.id + ")" }
+func (k Key) GoString() string { return "secret.Key(" + k.id + ")" }
 
 // Keyring menyimpan kunci aktif (untuk enkripsi) dan kunci lama (untuk dekripsi
 // saat rotasi).
@@ -63,6 +68,12 @@ type Keyring struct {
 	active Key
 	all    map[string]Key
 }
+
+// String & GoString meredaksi: Keyring tak pernah mencetak byte kunci.
+func (r *Keyring) String() string {
+	return fmt.Sprintf("Keyring(active=%s, keys=%d)", r.active.id, len(r.all))
+}
+func (r *Keyring) GoString() string { return r.String() }
 
 // NewKeyring membuat keyring dengan satu kunci aktif.
 func NewKeyring(active Key) *Keyring {
@@ -101,7 +112,7 @@ func (r *Keyring) Rotate(newActive Key) {
 // trail) tanpa mengekspos kunci master itu sendiri.
 func (r *Keyring) Subkey(label string) []byte {
 	h := sha256.New()
-	h.Write(r.active.bytes)
+	h.Write(r.active.mat.Reveal())
 	h.Write([]byte(label))
 	return h.Sum(nil)
 }
@@ -147,7 +158,7 @@ func (r *Keyring) Decrypt(token string) ([]byte, error) {
 }
 
 func newGCM(k Key) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(k.bytes)
+	block, err := aes.NewCipher(k.mat.Reveal())
 	if err != nil {
 		return nil, fmt.Errorf("secret: cipher: %w", err)
 	}
@@ -176,7 +187,7 @@ func NewSecret(v []byte) Secret { return Secret{v: append([]byte(nil), v...)} }
 // Reveal mengembalikan nilai asli (pemanggil bertanggung jawab tak membocorkan).
 func (s Secret) Reveal() []byte { return s.v }
 
-func (Secret) String() string                { return "[REDACTED]" }
-func (Secret) GoString() string               { return "[REDACTED]" }
-func (Secret) MarshalJSON() ([]byte, error)   { return []byte(`"[REDACTED]"`), nil }
-func (Secret) MarshalText() ([]byte, error)   { return []byte("[REDACTED]"), nil }
+func (Secret) String() string               { return "[REDACTED]" }
+func (Secret) GoString() string             { return "[REDACTED]" }
+func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"[REDACTED]"`), nil }
+func (Secret) MarshalText() ([]byte, error) { return []byte("[REDACTED]"), nil }
