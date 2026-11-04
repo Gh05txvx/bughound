@@ -44,6 +44,8 @@ Aturan:
 - Entri yang tidak bisa diurai ditolak saat input (guard fail closed), dan pengguna diberi tahu, bukan diam-diam diabaikan.
 - Skema input disimpan apa adanya untuk audit; pencocokan dilakukan pada bentuk ternormalisasi (bagian berikutnya).
 - Bentuk yang tidak didukung di v1 (mis. regex bebas) ditolak, bukan ditebak maknanya.
+- Entri yang terurai tapi takkan pernah cocok target juga ditolak saat input: port di luar 1-65535, host berlabel kosong (`.acme.io`), dan notasi rentang IP (`10.0.0.1-50`, pakai CIDR). Di out-of-scope, entri semacam itu berarti eksklusi yang mati tanpa peringatan.
+- IP dengan path wajib berskema (`http://203.0.113.10/admin`). Tanpa skema ia ambigu dengan CIDR rusak (`203.0.113.0/33`), jadi ditolak.
 
 ## Normalisasi target & scope
 
@@ -55,13 +57,14 @@ Langkah normalisasi host:
 - **Buang skema** (`https://`, `http://`) dan kredensial userinfo (`user:pass@`).
 - **IDN ke punycode** (`xn--`), lalu bandingkan dalam bentuk punycode. Ini menutup bypass lewat homoglyph/unicode.
 - **Buang titik akhir** (trailing dot) pada FQDN.
-- **Port**: pisahkan host dan port. Kebijakan port default v1: scope berbasis host mencakup semua port kecuali entri menyebut port eksplisit (pertanyaan terbuka bila perlu lebih ketat).
+- **Port**: pisahkan host dan port, lalu tulis tanpa nol di depan (`0443` = `443`). Kebijakan port default v1: scope berbasis host mencakup semua port kecuali entri menyebut port eksplisit. Untuk entri berport, port target dihitung dari skema bila tak ditulis (`https://x` = 443, `http://x` = 80). Bila tetap tak diketahui (`x`, atau skema lain), eksklusi menang saat ragu dan izin tidak diberikan.
 - **Path**: untuk entri URL, bandingkan path setelah dinormalkan (resolusi `.`/`..`, decoding persen yang aman, hilangkan slash ganda).
 
 Langkah normalisasi IP:
 
 - Normalkan representasi (mis. IPv6 dikompres konsisten; tolak atau normalkan bentuk desimal/oktal yang menyesatkan seperti `0x7f.0.0.1`).
 - Bandingkan IP sebagai nilai numerik dalam rentang CIDR, bukan sebagai string.
+- Host yang setelah normalisasi berbentuk IP (`203.0.113.10.`, digit fullwidth): pada **entri** diperlakukan sebagai IP agar eksklusinya bekerja; pada **target** ditolak, karena engine tetap me-resolve-nya lewat DNS sehingga tujuannya tak terbukti IP yang dinilai guard.
 
 Setelah normalisasi, target direpresentasikan sebagai pasangan (host-atau-IP ternormalkan, port, path) yang dipakai algoritma keputusan.
 
@@ -87,7 +90,7 @@ Dibaca sebagai aturan: **tolak bila cocok out-of-scope; jika tidak, izinkan hany
 
 **Pencocokan IP/CIDR:** IP target diuji keanggotaannya dalam rentang CIDR secara numerik.
 
-**Pencocokan URL/path:** entri prefix path cocok bila host sama dan path target berada di bawah prefix (batas segmen), bukan sekadar awalan string.
+**Pencocokan URL/path:** entri prefix path cocok bila host sama dan path target berada di bawah prefix (batas segmen), bukan sekadar awalan string. Host URL boleh berupa IP; ia hanya cocok target IP yang sama.
 
 ## Kasus tepi
 
@@ -100,6 +103,11 @@ Kasus yang sering jadi celah bypass dan cara guard menanganinya:
 | Homoglyph / IDN | `аcme.io` (huruf Cyrillic) menyamar | Dinormalkan ke punycode sebelum dibandingkan |
 | IP menyesatkan | `0x7f.0.0.1`, desimal, oktal | Dinormalkan ke bentuk kanonik atau ditolak |
 | Port tak terduga | Target di port lain | Sesuai kebijakan port (lihat Normalisasi); bila ketat, port di luar daftar ditolak |
+| Port bawaan | Eksklusi `acme.io:80` dilewati `http://acme.io/` | Port target dihitung dari skema |
+| Port tak diketahui | Target `acme.io` melawan entri berport | Eksklusi menang saat ragu; izin tidak diberikan |
+| Port bernol di depan | `https://acme.io:0443/` melewati eksklusi port 443 | Port dikanonkan sebelum dibandingkan |
+| IP tersamar | `203.0.113.10.`, digit fullwidth | Entri menjadi IP; target ditolak |
+| Entri tak pernah cocok | Eksklusi mati tanpa peringatan | Ditolak saat input (lihat Format input scope) |
 | Apex vs wildcard | `acme.io` lolos lewat `*.acme.io` | Apex tidak tercakup wildcard kecuali didaftarkan |
 | Case & trailing dot | `ACME.io`, `acme.io.` | Dinormalkan sebelum dibandingkan |
 | Credential di URL | `user:pass@acme.io` | Userinfo dibuang saat normalisasi; host tetap diuji |
@@ -160,7 +168,7 @@ Bentuk brief Bugcrowd tidak terdokumentasi resmi; ia mengikuti yang dibaca `arka
 | Tipe `OTHER` dan tak dikenal | Tidak diimpor | Dicoba; gagal = tak terwakili |
 | Tak terbaca (teks bebas, disensor, `acme.*`) | Tidak diimpor | Tak terwakili |
 
-Keluaran ditulis ulang dari entri ternormalkan, bukan disalin dari string platform, sehingga yang tersimpan persis yang ditegakkan guard. Pemeriksaan in-scope dijalankan pada teks keluaran itu, karena normalisasi bisa mengubah jenis entri: `169.254.169.254.` adalah host bagi parser, tetapi tanpa titik akhir ia IP. Lolos parser saja tidak cukup: `mailto:a@acme.io`, `10.0.0.1-50`, dan `.acme.io` terurai sebagai host yang tidak akan pernah cocok, jadi host wajib ber-TLD dikenal dan tanpa label kosong.
+Keluaran ditulis ulang dari entri ternormalkan, bukan disalin dari string platform, sehingga yang tersimpan persis yang ditegakkan guard. Pemeriksaan in-scope dijalankan pada hasil urai ulang teks keluaran, yaitu entri yang benar-benar dikompilasi guard. Lolos parser saja tidak cukup: `all` dan `localhost` sah untuk scope tulisan tangan (lab), tetapi pada data program publik itu teks bebas, jadi host impor wajib ber-TLD dikenal.
 
 **Eksklusi tak terwakili menahan impor.** Form tidak diisi sampai pengguna membaca daftarnya dan menyetujuinya. Persetujuan terikat sidik jari data, jadi tidak berlaku untuk data lain. Eksklusi semacam ini tetap tanggung jawab pengguna: guard tidak menghadangnya sampai ditulis sebagai entri.
 

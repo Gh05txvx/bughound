@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"strconv"
 	"strings"
 
 	"golang.org/x/net/publicsuffix"
@@ -29,10 +28,10 @@ import (
 //     diwakili sama sekali masuk Unresolved dan menahan impor sampai ditinjau,
 //     karena eksklusi yang hilang berarti under-blocking.
 //
-// "Lolos parseEntry" BUKAN bukti entri bermakna: "mailto:a@acme.io" dan
-// "10.0.0.1-50" lolos sebagai host yang tak pernah cocok target mana pun. Karena
-// itu hasil parseEntry diperiksa lagi, lalu keluaran ditulis ulang dari field
-// entri ternormalkan, bukan dari string platform.
+// "Lolos parseEntry" belum berarti layak dari data pihak ketiga: "all" dan
+// "localhost" sah untuk scope tulisan tangan (lab), tapi pada daftar program publik
+// itu teks bebas. Karena itu hasil parseEntry diperiksa lagi, lalu keluaran ditulis
+// ulang dari field entri ternormalkan, bukan dari string platform.
 
 // MaxImportBytes menjaga sumber daya, bukan menyaring dump platform (itu ditolak
 // dari bentuknya). Program besar nyata mencapai ~1,3 MiB (5 ribu aset). Form
@@ -313,8 +312,8 @@ func convertOneIn(raw string) (string, error) {
 	if err != nil {
 		return "", errors.New("bentuk tak didukung entri scope")
 	}
-	// Entri URL ber-host IP tak pernah cocok di Guard; satu-satunya padanan yang
-	// tak melebar adalah entri IP pada root.
+	// URL ber-host IP disamakan ke entri IP agar cek IP publik berlaku. Path pada
+	// host IP tak diimpor: keluaran kanonik tak memuat skema yang diwajibkannya.
 	if a, ok := urlHostIP(e); ok {
 		if e.path != "/" {
 			return "", errors.New("path pada host IP tak punya padanan entri scope")
@@ -334,9 +333,6 @@ func convertOneIn(raw string) (string, error) {
 // checkInScope menolak entri yang sah secara sintaks tapi tak layak diterima
 // dari data pihak ketiga.
 func checkInScope(e entry) error {
-	if !validPort(e.port) {
-		return errors.New("port tak valid")
-	}
 	switch e.kind {
 	case kindHostExact, kindURLPrefix:
 		return checkPublicHost(e.host)
@@ -402,8 +398,7 @@ func convertOneOut(raw string) (exclusion, error) {
 	if err != nil {
 		return exclusion{}, err
 	}
-	// Port selalu dibuang: entri ber-port tak cocok target tanpa port, jadi
-	// eksklusi "acme.io:443" takkan menghadang "https://acme.io/".
+	// Port dibuang: eksklusi lebih luas selalu aman, dan wildcard tak bisa memuatnya.
 	host, port, err := splitHostPort(id.host)
 	if err != nil {
 		return exclusion{}, errors.New("bentuk tak didukung entri scope")
@@ -424,24 +419,21 @@ func convertOneOut(raw string) (exclusion, error) {
 		path = path[:strings.LastIndexByte(path[:i], '/')+1]
 		ex.widened = true
 	}
-	e, err := parseEntry(host + path)
-	if err != nil {
-		return exclusion{}, errors.New("bentuk tak didukung entri scope")
-	}
-	switch a, isURLIP := urlHostIP(e); {
-	case isURLIP:
-		// Tanpa skema ini bukan URL melainkan CIDR rusak ("203.0.113.0/24:443"):
-		// menjadikannya satu IP berarti eksklusinya menyusut.
-		if id.scheme == "" && e.path != "/" {
+	var e entry
+	if a, err := netip.ParseAddr(host); err == nil && id.scheme != "" {
+		// Berskema berarti URL: seluruh IP pasti mencakup path-nya.
+		ex.widened = ex.widened || strings.Trim(path, "/") != ""
+		e = entry{kind: kindIP, addr: a}
+	} else {
+		// Tanpa skema, IP ber-path bukan URL melainkan CIDR rusak; parseEntry
+		// menolaknya, jadi eksklusinya tak diam-diam menyusut jadi satu IP.
+		if e, err = parseEntry(host + path); err != nil {
 			return exclusion{}, errors.New("bentuk tak didukung entri scope")
 		}
-		// Entri URL ber-host IP tak pernah cocok di Guard: eksklusi itu takkan
-		// bekerja. Gantinya seluruh IP, yang pasti mencakup aslinya.
-		ex.widened = ex.widened || e.path != "/"
-		e = entry{kind: kindIP, addr: a}
-	case e.kind == kindHostExact || e.kind == kindURLPrefix:
-		if err := checkPublicHost(e.host); err != nil {
-			return exclusion{}, err
+		if e.kind == kindHostExact || e.kind == kindURLPrefix {
+			if err := checkPublicHost(e.host); err != nil {
+				return exclusion{}, err
+			}
 		}
 	}
 	s, _, err := renderEntry(e)
@@ -463,7 +455,7 @@ func wildcardExclusion(host, path string, ex exclusion) (exclusion, error) {
 		return exclusion{}, errors.New("pola tak punya domain jangkar")
 	}
 	e, err := parseEntry("*." + rest[dot+1:])
-	if err != nil || hasEmptyLabel(e.base) {
+	if err != nil {
 		return exclusion{}, errors.New("bentuk tak didukung entri scope")
 	}
 	exact := strings.HasPrefix(host, "*.") && strings.Count(host, "*") == 1
@@ -490,11 +482,7 @@ func wildcardExclusion(host, path string, ex exclusion) (exclusion, error) {
 
 // urlHostIP melaporkan entri URL ber-host IP beserta alamatnya.
 func urlHostIP(e entry) (netip.Addr, bool) {
-	if e.kind != kindURLPrefix {
-		return netip.Addr{}, false
-	}
-	a, err := netip.ParseAddr(e.host)
-	return a, err == nil
+	return e.addr, e.kind == kindURLPrefix && e.addr.IsValid()
 }
 
 // renderEntry menulis entri ternormalkan sebagai teks kanonik: yang tersimpan
@@ -502,9 +490,7 @@ func urlHostIP(e entry) (netip.Addr, bool) {
 // atau query. Teks yang tak bisa diurai ulang ditolak.
 //
 // Entri hasil urai ulang ikut dikembalikan karena itulah yang akan dikompilasi
-// Guard, dan jenisnya bisa berbeda dari masukan: "169.254.169.254." dan
-// "１２７.０.０.１" adalah host bagi parser, tetapi teks kanoniknya berupa IP.
-// Pemeriksaan keamanan wajib memakai entri ini, bukan masukannya.
+// Guard. Pemeriksaan keamanan memakai entri ini, bukan masukannya.
 func renderEntry(e entry) (string, entry, error) {
 	var s string
 	switch e.kind {
@@ -534,29 +520,13 @@ func withPort(host, port string) string {
 	return net.JoinHostPort(host, port)
 }
 
-func validPort(p string) bool {
-	if p == "" {
-		return true
-	}
-	n, err := strconv.Atoi(p)
-	return err == nil && n >= 1 && n <= 65535
-}
-
-// checkPublicHost menolak "host" yang lolos parseEntry tapi takkan pernah cocok
-// target sungguhan: label kosong (".acme.io"), atau nama tanpa TLD nyata (teks
-// bebas tanpa spasi, rentang IP "10.0.0.1-50", "localhost").
+// checkPublicHost menolak nama tanpa TLD nyata ("all", "localhost", "app.internal"):
+// sah untuk scope tulisan tangan, tapi pada data program publik itu teks bebas.
 func checkPublicHost(host string) error {
-	if hasEmptyLabel(host) {
-		return errors.New("host memuat label kosong")
-	}
 	if suffix, icann := publicsuffix.PublicSuffix(host); !icann && !strings.Contains(suffix, ".") {
 		return errors.New("bukan domain publik (TLD tak dikenal)")
 	}
 	return nil
-}
-
-func hasEmptyLabel(host string) bool {
-	return strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") || strings.Contains(host, "..")
 }
 
 func publicAddr(a netip.Addr) bool {

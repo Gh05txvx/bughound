@@ -195,3 +195,26 @@ func TestResultTargetNormalized(t *testing.T) {
 		t.Errorf("Target ternormalkan = %q, ingin acme.io:443/b", r.Target)
 	}
 }
+
+func TestURLPrefixOnIPHost(t *testing.T) {
+	g := mustGuard(t, []string{"http://203.0.113.10/app"}, nil)
+	wantAllow(t, g, "http://203.0.113.10/app/x")
+	wantDeny(t, g, "http://203.0.113.10/other", ReasonNotInScope)
+	wantDeny(t, g, "http://203.0.113.11/app", ReasonNotInScope)
+	wantDeny(t, g, "203.0.113.10", ReasonNotInScope) // path "/" bukan di bawah /app
+}
+
+// Port efektif dihitung dari skema; izin tetap butuh bukti bila tak diketahui.
+func TestEffectivePortFromScheme(t *testing.T) {
+	g := mustGuard(t, []string{"https://acme.io:443/"}, nil)
+	wantAllow(t, g, "https://acme.io/x")
+	wantAllow(t, g, "wss://acme.io/x")
+	wantDeny(t, g, "http://acme.io/x", ReasonNotInScope)
+	wantDeny(t, g, "ftp://acme.io/x", ReasonNotInScope)
+	wantDeny(t, g, "acme.io", ReasonNotInScope)
+
+	r := g.Evaluate("https://acme.io/x")
+	if r.Target != "acme.io/x" {
+		t.Errorf("Target = %q: port efektif tak boleh mengubah bentuk audit", r.Target)
+	}
+}

@@ -25,17 +25,36 @@ type entry struct {
 	raw  string
 	kind entryKind
 
-	host string       // host punycode (kindHostExact, kindURLPrefix)
+	host string       // host punycode (kindHostExact, kindURLPrefix ber-host nama)
 	base string       // basis wildcard tanpa "*." (kindWildcard)
 	port string       // port eksplisit, "" = semua port (kebijakan v1)
 	path string       // prefix path ternormalkan (kindURLPrefix)
-	addr netip.Addr   // kindIP
+	addr netip.Addr   // kindIP, juga kindURLPrefix ber-host IP
 	cidr netip.Prefix // kindCIDR
 }
 
-// parseEntry mengurai satu string scope menjadi entry. Pencocokan dilakukan
-// positif per-bentuk: apa pun yang tidak cocok bentuk yang didukung ditolak.
+// parseEntry mengurai satu string scope menjadi entry, lalu menolak bentuk yang
+// terurai tapi takkan pernah cocok target. Entri semacam itu berbahaya di
+// out-of-scope: eksklusinya mati tanpa peringatan (under-blocking).
 func parseEntry(raw string) (entry, error) {
+	e, err := parseForm(raw)
+	if err != nil {
+		return entry{}, err
+	}
+	port, ok := canonicalPort(e.port)
+	if !ok {
+		return entry{}, fmt.Errorf("port tak valid: %q", raw)
+	}
+	e.port = port
+	if isIPRange(e.host) {
+		return entry{}, fmt.Errorf("rentang IP tak didukung, pakai CIDR: %q", raw)
+	}
+	return e, nil
+}
+
+// parseForm mengenali bentuk entri. Pencocokan dilakukan positif per-bentuk: apa
+// pun yang tidak cocok bentuk yang didukung ditolak.
+func parseForm(raw string) (entry, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
 		return entry{}, errors.New("entri kosong")
@@ -76,11 +95,20 @@ func parseEntry(raw string) (entry, error) {
 		if err != nil {
 			return entry{}, fmt.Errorf("%q: %w", raw, err)
 		}
-		nh, err := normalizeHost(host)
+		nh, addr, err := canonicalHost(host)
 		if err != nil {
 			return entry{}, fmt.Errorf("%q: %w", raw, err)
 		}
-		return entry{raw: raw, kind: kindURLPrefix, host: nh, port: port, path: normalizePath(s[i:])}, nil
+		p := normalizePath(s[i:])
+		if addr.IsValid() {
+			// IP + path tanpa skema ambigu: "203.0.113.0/33" dan "203.0.113.0/24:443"
+			// adalah CIDR rusak, bukan path. Ditolak, bukan ditebak.
+			if p != "/" {
+				return entry{}, fmt.Errorf("IP ber-path wajib berskema, rentang wajib CIDR valid: %q", raw)
+			}
+			return entry{raw: raw, kind: kindIP, addr: addr, port: port}, nil
+		}
+		return entry{raw: raw, kind: kindURLPrefix, host: nh, port: port, path: p}, nil
 	}
 
 	// 5. IP mentah.
@@ -93,12 +121,12 @@ func parseEntry(raw string) (entry, error) {
 	if err != nil {
 		return entry{}, fmt.Errorf("entri scope tak dikenali: %q", raw)
 	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		return entry{raw: raw, kind: kindIP, addr: addr, port: port}, nil
-	}
-	nh, err := normalizeHost(host)
+	nh, addr, err := canonicalHost(host)
 	if err != nil {
 		return entry{}, fmt.Errorf("%q: %w", raw, err)
+	}
+	if addr.IsValid() {
+		return entry{raw: raw, kind: kindIP, addr: addr, port: port}, nil
 	}
 	return entry{raw: raw, kind: kindHostExact, host: nh, port: port}, nil
 }
@@ -111,42 +139,51 @@ func parseURLEntry(raw, s string) (entry, error) {
 	if u.Host == "" {
 		return entry{}, fmt.Errorf("URL scope tanpa host: %q", raw)
 	}
-	host, port := u.Hostname(), u.Port()
-	if addr, err := netip.ParseAddr(host); err == nil {
-		// URL berhost IP: simpan bentuk kanonik IP sebagai host-string.
-		return entry{raw: raw, kind: kindURLPrefix, host: addr.String(), port: port, path: normalizePath(u.Path)}, nil
-	}
-	nh, err := normalizeHost(host)
+	nh, addr, err := canonicalHost(u.Hostname())
 	if err != nil {
 		return entry{}, fmt.Errorf("%q: %w", raw, err)
 	}
-	return entry{raw: raw, kind: kindURLPrefix, host: nh, port: port, path: normalizePath(u.Path)}, nil
+	return entry{raw: raw, kind: kindURLPrefix, host: nh, addr: addr, port: u.Port(), path: normalizePath(u.Path)}, nil
 }
 
 // matches melaporkan apakah target t cocok dengan entri ini. Target hostname
-// hanya cocok dengan entri berbasis host; target IP hanya cocok dengan entri
-// IP/CIDR (tidak ada resolusi DNS di v1).
-func (e entry) matches(t normTarget) bool {
+// hanya cocok dengan entri berhost nama; target IP hanya cocok dengan entri
+// berhost IP atau CIDR (tidak ada resolusi DNS di v1). onUnknownPort adalah hasil
+// bila entri berport tapi port target tak diketahui.
+func (e entry) matches(t normTarget, onUnknownPort bool) bool {
 	switch e.kind {
 	case kindIP:
-		return t.isIP && t.addr == e.addr && portOK(e.port, t.port)
+		return t.isIP && t.addr == e.addr && portOK(e.port, t.effPort, onUnknownPort)
 	case kindCIDR:
 		return t.isIP && e.cidr.Contains(t.addr)
 	case kindHostExact:
-		return !t.isIP && t.host == e.host && portOK(e.port, t.port)
+		return !t.isIP && t.host == e.host && portOK(e.port, t.effPort, onUnknownPort)
 	case kindWildcard:
 		return !t.isIP && isSubdomain(t.host, e.base)
 	case kindURLPrefix:
-		return !t.isIP && t.host == e.host && portOK(e.port, t.port) && pathUnder(e.path, t.path)
+		return e.sameHost(t) && portOK(e.port, t.effPort, onUnknownPort) && pathUnder(e.path, t.path)
 	}
 	return false
 }
 
+// sameHost membandingkan host entri URL dengan target: IP dengan IP, nama dengan
+// nama. Bentuk sama tapi jenis beda tak pernah cocok.
+func (e entry) sameHost(t normTarget) bool {
+	if e.addr.IsValid() {
+		return t.isIP && t.addr == e.addr
+	}
+	return !t.isIP && t.host == e.host
+}
+
 // portOK menerapkan kebijakan port v1: scope berbasis host mencakup semua port
-// kecuali entri menyebut port eksplisit.
-func portOK(entryPort, targetPort string) bool {
+// kecuali entri menyebut port eksplisit. targetPort adalah port efektif target;
+// kosong berarti tak diketahui, dan hasilnya onUnknown.
+func portOK(entryPort, targetPort string, onUnknown bool) bool {
 	if entryPort == "" {
 		return true
+	}
+	if targetPort == "" {
+		return onUnknown
 	}
 	return entryPort == targetPort
 }

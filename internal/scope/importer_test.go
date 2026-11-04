@@ -82,7 +82,7 @@ func TestConvertInRefusesWhatWouldWiden(t *testing.T) {
 		{"169.0.0.0/8", "memuat metadata cloud"},
 		{"169.254.169.254", "metadata cloud"},
 		{"http://169.254.169.254/", "metadata cloud via URL"},
-		// Host bagi parser, tapi teks kanoniknya IP: diperiksa sesudah render.
+		// Bentuk IP tersamar tetap IP.
 		{"169.254.169.254.", "titik akhir menyamarkan metadata"},
 		{"169.254.169.254.:80", "titik akhir + port"},
 		{"127.0.0.1.", "titik akhir menyamarkan loopback"},
@@ -105,10 +105,10 @@ func TestConvertInRefusesWhatWouldWiden(t *testing.T) {
 		{"https://acme.io\\@evil.com/", "backslash parser-differential"},
 		{"ftp://acme.io/", "skema non-web"},
 		{"wss://acme.io", "skema non-web"},
-		{"mailto:a@acme.io", "lolos parseEntry sebagai host semu"},
+		{"mailto:a@acme.io", "bukan host"},
 		{"acme.io:abc", "port bukan angka"},
 		{"http://acme.io:99999/", "port di luar rentang"},
-		{"10.0.0.1-50", "rentang IP jadi host semu"},
+		{"10.0.0.1-50", "rentang IP"},
 		{"all", "teks bebas tanpa spasi"},
 		{"localhost", "bukan domain publik"},
 		{"app.internal", "TLD tak dikenal"},
@@ -184,9 +184,7 @@ func TestConvertOutRefusesWithoutSuperset(t *testing.T) {
 	}
 }
 
-// Bukti utama: eksklusi hasil impor benar-benar dihadang Guard, termasuk bentuk
-// yang akan lolos andai string platform disalin mentah (entri ber-port, URL
-// ber-host IP).
+// Bukti utama: eksklusi hasil impor benar-benar dihadang Guard.
 func TestImportedExclusionsAreEnforcedByGuard(t *testing.T) {
 	data := h1Header +
 		h1Row("*.acme.io", "WILDCARD", "true") +

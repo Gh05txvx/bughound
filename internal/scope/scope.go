@@ -21,6 +21,7 @@ import (
 	"net/netip"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/idna"
@@ -90,13 +91,15 @@ func (g *Guard) Evaluate(target string) Result {
 	}
 	norm := t.String()
 
+	// Port tak diketahui (target tanpa port dan skema): eksklusi menang saat ragu,
+	// sedangkan izin butuh bukti.
 	for _, e := range g.out {
-		if e.matches(t) {
+		if e.matches(t, true) {
 			return Result{Allowed: false, Reason: ReasonOutOfScope, Target: norm, MatchedEntry: e.raw}
 		}
 	}
 	for _, e := range g.in {
-		if e.matches(t) {
+		if e.matches(t, false) {
 			return Result{Allowed: true, Reason: ReasonInScope, Target: norm, MatchedEntry: e.raw}
 		}
 	}
@@ -110,6 +113,8 @@ type normTarget struct {
 	host string     // host punycode huruf kecil, bila !isIP
 	port string     // "" bila tak disebut
 	path string     // path ternormalkan, "/" bila tak ada
+
+	effPort string // port, atau bawaan skema bila tak disebut; "" bila tak diketahui
 }
 
 func (t normTarget) String() string {
@@ -142,7 +147,7 @@ func normalizeTarget(target string) (normTarget, error) {
 		if err != nil || u.Host == "" {
 			return normTarget{}, fmt.Errorf("target URL tak valid: %q", target)
 		}
-		return finishTarget(u.Hostname(), u.Port(), u.Path)
+		return finishTarget(u.Hostname(), u.Port(), u.Path, schemePort(u.Scheme))
 	}
 	hostport, p := s, ""
 	if i := strings.IndexByte(s, '/'); i >= 0 {
@@ -155,18 +160,88 @@ func normalizeTarget(target string) (normTarget, error) {
 	if err != nil {
 		return normTarget{}, err
 	}
-	return finishTarget(host, port, p)
+	return finishTarget(host, port, p, "")
 }
 
-func finishTarget(host, port, rawPath string) (normTarget, error) {
-	if addr, err := netip.ParseAddr(host); err == nil {
-		return normTarget{isIP: true, addr: addr, port: port, path: normalizePath(rawPath)}, nil
+func finishTarget(host, rawPort, rawPath, defaultPort string) (normTarget, error) {
+	port, ok := canonicalPort(rawPort)
+	if !ok {
+		return normTarget{}, fmt.Errorf("port target tak valid: %q", rawPort)
 	}
-	h, err := normalizeHost(host)
+	h, addr, err := canonicalHost(host)
 	if err != nil {
 		return normTarget{}, err
 	}
-	return normTarget{host: h, port: port, path: normalizePath(rawPath)}, nil
+	// Target IP harus literal. Bentuk tersamar ("203.0.113.10.") tetap di-resolve
+	// lewat DNS oleh engine, jadi tujuannya tak terbukti IP yang dinilai di sini.
+	if addr.IsValid() {
+		if _, err := netip.ParseAddr(host); err != nil {
+			return normTarget{}, fmt.Errorf("target IP tersamar: %q", host)
+		}
+	}
+	eff := port
+	if eff == "" {
+		eff = defaultPort
+	}
+	return normTarget{isIP: addr.IsValid(), addr: addr, host: h, port: port, effPort: eff, path: normalizePath(rawPath)}, nil
+}
+
+// schemePort mengembalikan port bawaan skema web; "" bila tak diketahui.
+func schemePort(scheme string) string {
+	switch scheme {
+	case "http", "ws":
+		return "80"
+	case "https", "wss":
+		return "443"
+	}
+	return ""
+}
+
+// canonicalPort memvalidasi port dan menulisnya tanpa nol di depan, agar "0443"
+// tak lolos dari eksklusi port 443. Kosong berarti tak disebut.
+func canonicalPort(p string) (string, bool) {
+	if p == "" {
+		return "", true
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil || n < 1 || n > 65535 {
+		return "", false
+	}
+	return strconv.Itoa(n), true
+}
+
+// canonicalHost menormalkan host menjadi nama atau IP, tepat satu yang terisi.
+// IP dicek lagi sesudah normalisasi: "203.0.113.10." dan digit fullwidth terlihat
+// seperti nama, tapi menunjuk IP yang sama, dan entri IP tak mencocokkan nama.
+func canonicalHost(raw string) (string, netip.Addr, error) {
+	if addr, err := netip.ParseAddr(raw); err == nil {
+		return "", addr, nil
+	}
+	h, err := normalizeHost(raw)
+	if err != nil {
+		return "", netip.Addr{}, err
+	}
+	if addr, err := netip.ParseAddr(h); err == nil {
+		return "", addr, nil
+	}
+	return h, netip.Addr{}, nil
+}
+
+// isIPRange mengenali notasi rentang ("10.0.0.1-50", "10.0.0.1-10.0.0.50"). Ia
+// nama DNS yang sah, tapi maksudnya rentang dan takkan cocok IP mana pun.
+func isIPRange(host string) bool {
+	first, rest, found := strings.Cut(host, "-")
+	if !found {
+		return false
+	}
+	if _, err := netip.ParseAddr(first); err != nil {
+		return false
+	}
+	if _, err := strconv.Atoi(rest); err == nil {
+		return true
+	}
+	_, err := netip.ParseAddr(rest)
+	return err == nil
 }
 
 // normalizeHost menurunkan host ke bentuk kanonik: huruf kecil, tanpa titik
@@ -182,6 +257,10 @@ func normalizeHost(h string) (string, error) {
 	ascii, err := idna.Lookup.ToASCII(h)
 	if err != nil {
 		return "", fmt.Errorf("normalisasi host %q: %w", h, err)
+	}
+	// Label kosong (".acme.io") lolos idna, tapi takkan pernah cocok target.
+	if strings.HasPrefix(ascii, ".") || strings.HasSuffix(ascii, ".") || strings.Contains(ascii, "..") {
+		return "", fmt.Errorf("host %q memuat label kosong", h)
 	}
 	return strings.ToLower(ascii), nil
 }
