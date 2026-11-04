@@ -61,3 +61,30 @@ func TestSemgrepArgs(t *testing.T) {
 		t.Error("Config custom harus dipakai")
 	}
 }
+
+func TestSemgrepParse_DropsRequiresLoginPlaceholder(t *testing.T) {
+	const js = `{"results":[
+	  {"check_id":"rules.a","path":"a.go","start":{"line":3},
+	   "extra":{"message":"m1","severity":"ERROR","lines":"requires login","metadata":{}}},
+	  {"check_id":"rules.b","path":"b.go","start":{"line":5},
+	   "extra":{"message":"m2","severity":"WARNING","lines":"  realCode := 1","metadata":{}}}
+	]}`
+	fs, err := Parse(strings.NewReader(js))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) != 2 {
+		t.Fatalf("harus 2 temuan; dapat %d", len(fs))
+	}
+	// Placeholder registry -> tak jadi evidence, tapi temuan + lokasi tetap ada.
+	if fs[0].Evidence != nil {
+		t.Errorf("'requires login' tak boleh jadi evidence; dapat %+v", fs[0].Evidence)
+	}
+	if fs[0].Location.URL != "a.go:3" {
+		t.Errorf("lokasi harus tetap akurat; dapat %q", fs[0].Location.URL)
+	}
+	// Baris kode sungguhan tetap dipertahankan.
+	if fs[1].Evidence == nil || !strings.Contains(fs[1].Evidence.Matched, "realCode") {
+		t.Errorf("baris kode asli harus jadi evidence; dapat %+v", fs[1].Evidence)
+	}
+}

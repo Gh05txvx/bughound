@@ -127,12 +127,20 @@ func Parse(r io.Reader) ([]*finding.Finding, error) {
 			References:     res.Extra.Metadata.References,
 			Location:       finding.Location{URL: loc},
 		}
-		if m := strings.TrimSpace(res.Extra.Lines); m != "" {
+		if m := strings.TrimSpace(res.Extra.Lines); m != "" && !isPlaceholderLines(m) {
 			f.Evidence = &finding.Evidence{Matched: m}
 		}
 		fs = append(fs, f)
 	}
 	return fs, nil
+}
+
+// isPlaceholderLines melaporkan apakah field `lines` semgrep hanya placeholder
+// registry ("requires login" saat semgrep tak terautentikasi), bukan cuplikan
+// kode sungguhan. Placeholder begini tak berguna sebagai evidence dan tak boleh
+// mengotori report; lokasi file:line tetap akurat lewat Location.
+func isPlaceholderLines(s string) bool {
+	return strings.EqualFold(strings.TrimSpace(s), "requires login")
 }
 
 func mapSemgrepSeverity(s string) finding.Severity {
