@@ -74,6 +74,22 @@ func (o *Orchestrator) UseRecon(r recon.Engine) { o.recon = r }
 // dan menulis ke skema temuan yang sama.
 func (o *Orchestrator) AddEngine(e engine.Engine) { o.engines = append(o.engines, e) }
 
+// ProxyChain adalah rantai proxy upstream (urut hop). String meredaksi
+// kredensial (userinfo) sehingga rantai tak pernah mencetak user:pass bila
+// ter-log atau diformat (safe-by-construction; Prinsip #5).
+type ProxyChain []string
+
+func (pc ProxyChain) String() string {
+	s := "["
+	for i, raw := range pc {
+		if i > 0 {
+			s += " "
+		}
+		s += egress.RedactProxyURL(raw)
+	}
+	return s + "]"
+}
+
 // ScanRequest meminta scan satu program.
 type ScanRequest struct {
 	Program string
@@ -83,7 +99,7 @@ type ScanRequest struct {
 	// ProxyChain (opsional): koneksi keluar engine diteruskan lewat rantai proxy
 	// ini (urut hop) SETELAH lolos scope guard (http/https/socks5). Kosong =
 	// dial langsung.
-	ProxyChain []string
+	ProxyChain ProxyChain
 	// OpenAPISpec (opsional): isi mentah spec OpenAPI/Swagger. Bila ada, diberikan
 	// ke engine OpenAPIAware agar request (termasuk body) dibangkitkan dari spec
 	// dan difuzz. Tiap koneksi tetap lewat proxy egress (scope guard menegakkan).

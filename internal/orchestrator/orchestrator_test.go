@@ -328,3 +328,20 @@ func TestRunScanEgressProxyEnforcesScope(t *testing.T) {
 		t.Error("proxy egress harus menolak koneksi ke evil.test (lapis egress)")
 	}
 }
+
+// ProxyChain.String meredaksi kredensial proxy (Prinsip #5): host tetap
+// tampil, user:pass tidak pernah.
+func TestProxyChainStringRedactsCreds(t *testing.T) {
+	pc := ProxyChain{"http://user:s3cr3t@proxy.local:8080", "socks5://bob:p4ss@127.0.0.1:9050"}
+	s := pc.String()
+	for _, leak := range []string{"s3cr3t", "p4ss", "user", "bob"} {
+		if strings.Contains(s, leak) {
+			t.Errorf("ProxyChain.String membocorkan kredensial %q: %s", leak, s)
+		}
+	}
+	for _, host := range []string{"proxy.local:8080", "127.0.0.1:9050"} {
+		if !strings.Contains(s, host) {
+			t.Errorf("host harus tetap tampil (%s): %s", host, s)
+		}
+	}
+}

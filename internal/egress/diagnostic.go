@@ -48,6 +48,17 @@ func ExtractClientIP(body string) string { return ipRe.FindString(body) }
 
 func redactProxyURL(u *url.URL) string { return strings.ToLower(u.Scheme) + "://" + u.Host }
 
+// RedactProxyURL mengembalikan "scheme://host" dari URL proxy (userinfo & path
+// dibuang) agar aman ditampilkan/di-log; "[proxy]" bila tak bisa diparse. Tak
+// pernah mengecho kredensial (Prinsip #5).
+func RedactProxyURL(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return "[proxy]"
+	}
+	return redactProxyURL(u)
+}
+
 // ParseChain mem-parse & memvalidasi tiap hop (skema didukung + host ada). Error
 // merujuk NOMOR hop, tak pernah meng-echo baris mentah (bisa memuat kredensial).
 func ParseChain(hops []string) ([]*url.URL, error) {
