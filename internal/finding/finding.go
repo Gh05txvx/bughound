@@ -248,7 +248,7 @@ func (f *Finding) Finalize(now time.Time) error {
 		f.CreatedAt = NewTime(now)
 	}
 	if f.DedupKey == "" {
-		f.DedupKey = ComputeDedupKey(f.Type, f.Target, f.Location.URL, f.Location.Parameter)
+		f.DedupKey = ComputeDedupKey(f.Type, f.Target, f.Location.URL, f.Location.Method, f.Location.Parameter)
 	}
 	if f.Evidence != nil {
 		f.Evidence.clampFields()

@@ -8,32 +8,48 @@ import (
 	"strings"
 )
 
-// ComputeDedupKey menghitung dedup_key deterministik sesuai resep v1 di
-// BH-SPEC-FINDING:
+// ComputeDedupKey menghitung dedup_key deterministik di BH-SPEC-FINDING:
 //
-//	sha256( lower(type) + "|" + host(target) + "|" + path(location.url) + "|" + (parameter|"") )
+//	sha256( lower(type) | host(target) | path(location.url) | METHOD | (parameter|"") )
+//
+// METHOD (GET/POST/...) ikut menentukan identitas agar dua isu berbeda pada
+// path+parameter yang sama tetapi method berbeda (mis. GET vs POST) tidak salah
+// gabung. Method dinormalkan ke huruf besar; kosong (engine yang tak
+// melaporkannya, mis. ffuf/retire/SAST) tetap kosong, jadi perilaku untuk
+// engine itu tak berubah satu sama lain.
 //
 // Yang sengaja TIDAK masuk kunci: run_id, source_engine, timestamp, payload,
-// dan nilai query. Dengan begitu isu yang sama pada parameter yang sama tetap
-// satu temuan walau ditemukan dua engine atau di dua run berbeda.
+// dan nilai query. Dengan begitu isu yang sama pada parameter+method yang sama
+// tetap satu temuan walau ditemukan dua engine atau di dua run berbeda.
 //
-// Pengecualian: untuk tipe SITE-WIDE (lihat siteWide) path dikeluarkan dari
-// kunci. Isu origin-level seperti header CSP/HSTS absen atau CORS permisif
-// dilaporkan engine (mis. ZAP) sekali per URL yang dirayapi, padahal satu origin
-// = satu misconfig. Mengabaikan path membuat semua instance terkolaps jadi satu
-// temuan utama; sisanya ditandai duplikat oleh store (disembunyikan dari hitungan
-// & report, tetap tersimpan utuh untuk audit).
-func ComputeDedupKey(typ, target, locationURL, parameter string) string {
+// Pengecualian: untuk tipe SITE-WIDE (lihat siteWide) path DAN method
+// dikeluarkan dari kunci (identitas = origin). Isu origin-level seperti header
+// CSP/HSTS absen atau CORS permisif dilaporkan engine (mis. ZAP) sekali per URL
+// yang dirayapi, padahal satu origin = satu misconfig. Mengabaikan path & method
+// membuat semua instance terkolaps jadi satu temuan utama; sisanya ditandai
+// duplikat oleh store (disembunyikan dari hitungan & report, tetap tersimpan
+// utuh untuk audit).
+func ComputeDedupKey(typ, target, locationURL, method, parameter string) string {
 	path := pathOf(locationURL)
+	meth := normMethod(method)
 	if siteWide(typ) {
 		path = "" // identitas = origin, bukan path
+		meth = "" // isu origin-level tak spesifik per method
 	}
 	raw := strings.ToLower(strings.TrimSpace(typ)) + "|" +
 		hostOf(target) + "|" +
 		path + "|" +
+		meth + "|" +
 		parameter
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])
+}
+
+// normMethod menormalkan method HTTP ke huruf besar tanpa spasi tepi (mis.
+// "get" -> "GET"); string kosong tetap kosong. Menjaga kunci konsisten walau
+// engine melaporkan casing berbeda.
+func normMethod(m string) string {
+	return strings.ToUpper(strings.TrimSpace(m))
 }
 
 // siteWideTypes: tipe isu yang identitasnya ORIGIN (host), bukan path tertentu.

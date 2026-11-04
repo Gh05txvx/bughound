@@ -254,7 +254,7 @@ Karena semua engine bertemu di satu skema, menambah engine baru = menambah satu 
 
 > Direkonsiliasi dengan implementasi 2026-11-04. `[x]` = sudah diputuskan/diimplementasi (dengan bukti), `[~]` = sebagian, `[ ]` = masih terbuka.
 
-- [~] Penyempurnaan `dedup_key`: **parameter sudah masuk** kunci (`sha256(lower(type)|host|path|parameter)`, `internal/finding/dedup.go`); **metode HTTP sengaja belum** dan port dikecualikan. Menambah metode tetap opsi terbuka bila GET vs POST di path+parameter sama perlu dipisah.
+- [x] Penyempurnaan `dedup_key`: kunci kini `sha256(lower(type)|host|path|method|parameter)` (`internal/finding/dedup.go`) — **metode HTTP ikut** agar GET vs POST pada path+parameter sama tak salah gabung; method dinormalkan huruf besar, kosong (ffuf/retire/SAST) tetap kosong, dan untuk tipe site-wide path+method diabaikan (identitas = origin). Port tetap sengaja dikecualikan.
 - [~] Taksonomi `type`: keputusan praktis = **slug diturunkan dari id/nama native tiap engine** (mis. template-id nuclei, slug alert ZAP), disatukan lewat skema temuan. **Daftar kanonik tunggal & peta ke standar (WASC/OWASP) belum dibuat** — tetap terbuka bila perlu korelasi lintas-standar.
 - [x] Severity: **sumber utama dari engine**, dipetakan per-adapter ke enum skema (`mapSeverity`/`mapRisk` di tiap `internal/engine/*/parse.go`). Tidak dihitung ulang dari CVSS.
 - [x] Model penyimpanan dedup: **record terpisah dengan `duplicate_of`** menunjuk temuan utama; duplikat disembunyikan dari hitungan/report tetapi tersimpan utuh untuk audit. Ditegakkan per `(program, dedup_key)` di `internal/store` (Mem & SQLite), plus kolaps site-wide untuk isu origin-level.

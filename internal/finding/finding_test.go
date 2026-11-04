@@ -37,44 +37,53 @@ func sha256Hex(s string) string {
 }
 
 func TestComputeDedupKey_CanonicalForm(t *testing.T) {
-	// type di-lowercase, host diambil dari target, path tanpa query, parameter apa adanya.
-	got := ComputeDedupKey("SSRF", "https://api.acme.io", "https://api.acme.io/fetch?x=1", "url")
-	want := sha256Hex("ssrf|api.acme.io|/fetch|url")
+	// type di-lowercase, host diambil dari target, path tanpa query, method
+	// (kosong di sini) lalu parameter apa adanya.
+	got := ComputeDedupKey("SSRF", "https://api.acme.io", "https://api.acme.io/fetch?x=1", "", "url")
+	want := sha256Hex("ssrf|api.acme.io|/fetch||url")
 	if got != want {
 		t.Fatalf("dedup_key canonical salah\n got=%s\nwant=%s", got, want)
 	}
 }
 
 func TestComputeDedupKey_StableAcrossRunEngineQuery(t *testing.T) {
-	a := ComputeDedupKey("xss", "https://acme.io", "https://acme.io/search?q=1", "q")
-	b := ComputeDedupKey("xss", "https://acme.io", "https://acme.io/search?q=9999&z=2", "q")
+	a := ComputeDedupKey("xss", "https://acme.io", "https://acme.io/search?q=1", "GET", "q")
+	b := ComputeDedupKey("xss", "https://acme.io", "https://acme.io/search?q=9999&z=2", "GET", "q")
 	if a != b {
 		t.Fatalf("nilai query seharusnya tidak memengaruhi dedup_key: %s != %s", a, b)
 	}
 }
 
 func TestComputeDedupKey_HostCaseInsensitive(t *testing.T) {
-	a := ComputeDedupKey("xss", "https://ACME.io", "https://ACME.io/x", "p")
-	b := ComputeDedupKey("xss", "https://acme.io", "https://acme.io/x", "p")
+	a := ComputeDedupKey("xss", "https://ACME.io", "https://ACME.io/x", "", "p")
+	b := ComputeDedupKey("xss", "https://acme.io", "https://acme.io/x", "", "p")
 	if a != b {
 		t.Fatalf("host seharusnya case-insensitive: %s != %s", a, b)
 	}
 }
 
 func TestComputeDedupKey_TypeCaseInsensitive(t *testing.T) {
-	if ComputeDedupKey("XSS", "https://acme.io", "https://acme.io/x", "p") !=
-		ComputeDedupKey("xss", "https://acme.io", "https://acme.io/x", "p") {
+	if ComputeDedupKey("XSS", "https://acme.io", "https://acme.io/x", "", "p") !=
+		ComputeDedupKey("xss", "https://acme.io", "https://acme.io/x", "", "p") {
 		t.Fatal("type seharusnya di-lowercase sebelum hashing")
 	}
 }
 
-func TestComputeDedupKey_DiffersByTypePathParam(t *testing.T) {
-	base := ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/a", "p")
+func TestComputeDedupKey_MethodCaseInsensitive(t *testing.T) {
+	if ComputeDedupKey("xss", "https://acme.io", "https://acme.io/x", "post", "p") !=
+		ComputeDedupKey("xss", "https://acme.io", "https://acme.io/x", "POST", "p") {
+		t.Fatal("method seharusnya dinormalkan huruf besar sebelum hashing")
+	}
+}
+
+func TestComputeDedupKey_DiffersByTypePathParamMethod(t *testing.T) {
+	base := ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/a", "GET", "p")
 	cases := map[string]string{
-		"type beda":  ComputeDedupKey("xss", "https://acme.io", "https://acme.io/a", "p"),
-		"path beda":  ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/b", "p"),
-		"param beda": ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/a", "q"),
-		"host beda":  ComputeDedupKey("ssrf", "https://other.io", "https://other.io/a", "p"),
+		"type beda":   ComputeDedupKey("xss", "https://acme.io", "https://acme.io/a", "GET", "p"),
+		"path beda":   ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/b", "GET", "p"),
+		"param beda":  ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/a", "GET", "q"),
+		"method beda": ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/a", "POST", "p"),
+		"host beda":   ComputeDedupKey("ssrf", "https://other.io", "https://other.io/a", "GET", "p"),
 	}
 	for name, got := range cases {
 		if got == base {
@@ -83,9 +92,9 @@ func TestComputeDedupKey_DiffersByTypePathParam(t *testing.T) {
 	}
 }
 
-// Tipe site-wide (header policy, CORS) mengabaikan path: instance per-URL dari
-// satu origin terkolaps jadi satu dedup_key.
-func TestComputeDedupKey_SiteWideIgnoresPath(t *testing.T) {
+// Tipe site-wide (header policy, CORS) mengabaikan path DAN method: instance
+// per-URL/method dari satu origin terkolaps jadi satu dedup_key.
+func TestComputeDedupKey_SiteWideIgnoresPathAndMethod(t *testing.T) {
 	siteWide := []string{
 		"content-security-policy-csp-header-not-set",
 		"cross-domain-misconfiguration",
@@ -93,20 +102,20 @@ func TestComputeDedupKey_SiteWideIgnoresPath(t *testing.T) {
 		"x-content-type-options-header-missing",
 	}
 	for _, typ := range siteWide {
-		a := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/", "")
-		b := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/ftp/quarantine", "")
-		c := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/sitemap.xml", "")
+		a := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/", "GET", "")
+		b := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/ftp/quarantine", "POST", "")
+		c := ComputeDedupKey(typ, "https://acme.io", "https://acme.io/sitemap.xml", "", "")
 		if a != b || a != c {
-			t.Errorf("%s: path berbeda pada origin sama harus satu dedup_key; %s/%s/%s", typ, a[:8], b[:8], c[:8])
+			t.Errorf("%s: path/method berbeda pada origin sama harus satu dedup_key; %s/%s/%s", typ, a[:8], b[:8], c[:8])
 		}
 		// Origin berbeda tetap terpisah.
-		if other := ComputeDedupKey(typ, "https://other.io", "https://other.io/", ""); other == a {
+		if other := ComputeDedupKey(typ, "https://other.io", "https://other.io/", "GET", ""); other == a {
 			t.Errorf("%s: origin berbeda tak boleh terkolaps", typ)
 		}
 	}
 	// Non-site-wide tetap sensitif-path (jaring pengaman regresi).
-	if x := ComputeDedupKey("exposed-path", "https://acme.io", "https://acme.io/a", ""); x ==
-		ComputeDedupKey("exposed-path", "https://acme.io", "https://acme.io/b", "") {
+	if x := ComputeDedupKey("exposed-path", "https://acme.io", "https://acme.io/a", "", ""); x ==
+		ComputeDedupKey("exposed-path", "https://acme.io", "https://acme.io/b", "", "") {
 		t.Error("exposed-path harus tetap membedakan path")
 	}
 }
@@ -134,7 +143,7 @@ func TestFinalize_SetsDerivedFields(t *testing.T) {
 	if f.CreatedAt.IsZero() {
 		t.Error("created_at seharusnya terisi")
 	}
-	want := ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/fetch", "url")
+	want := ComputeDedupKey("ssrf", "https://acme.io", "https://acme.io/fetch", "", "url")
 	if f.DedupKey != want {
 		t.Errorf("dedup_key=%q, want %q", f.DedupKey, want)
 	}
