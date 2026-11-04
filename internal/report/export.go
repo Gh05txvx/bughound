@@ -151,6 +151,9 @@ func exportHackerOne(f *finding.Finding) string {
 	if len(f.CWE) > 0 {
 		fmt.Fprintf(&b, "- **Weakness (CWE):** %s\n", strings.Join(f.CWE, ", "))
 	}
+	if f.OWASP != "" {
+		fmt.Fprintf(&b, "- **OWASP (2021):** %s\n", f.OWASP.Label())
+	}
 	fmt.Fprintf(&b, "- **Severity:** %s\n", h1Rating(f.Severity))
 	if f.CVSS != nil && f.CVSS.Vector != "" {
 		fmt.Fprintf(&b, "- **CVSS:** %.1f `%s`\n", f.CVSS.Score, f.CVSS.Vector)
@@ -199,6 +202,9 @@ func exportBugcrowd(f *finding.Finding) string {
 	fmt.Fprintf(&b, "- **Target:** %s\n", assetOf(f))
 	fmt.Fprintf(&b, "- **Priority:** %s\n", bugcrowdPriority(f.Severity))
 	fmt.Fprintf(&b, "- **Bug type (petakan ke VRT):** %s\n", f.Type)
+	if f.OWASP != "" {
+		fmt.Fprintf(&b, "- **OWASP (2021):** %s\n", f.OWASP.Label())
+	}
 	if len(f.CWE) > 0 {
 		fmt.Fprintf(&b, "- **CWE:** %s\n", strings.Join(f.CWE, ", "))
 	}

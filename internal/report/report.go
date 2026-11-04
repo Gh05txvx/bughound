@@ -111,6 +111,9 @@ func renderMarkdown(r Report) string {
 	for i, f := range r.Items {
 		fmt.Fprintf(&b, "### %d. %s `%s`\n\n", i+1, f.Title, f.Severity)
 		fmt.Fprintf(&b, "- **Type:** %s\n", f.Type)
+		if f.OWASP != "" {
+			fmt.Fprintf(&b, "- **OWASP:** %s\n", f.OWASP.Label())
+		}
 		fmt.Fprintf(&b, "- **Target:** %s\n", f.Target)
 		loc := f.Location.URL
 		if f.Location.Parameter != "" {

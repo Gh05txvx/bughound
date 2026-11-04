@@ -48,9 +48,11 @@ Satu temuan adalah objek JSON dengan field berikut. "Wajib" berarti harus ada di
 | cvss | object | tidak | `{ version, vector, score }` bila ada |
 | cwe | string\[\] | tidak | Daftar id CWE, mis. `["CWE-79"]` |
 | tags | string\[\] | tidak | Label bebas untuk filter |
+| owasp | string | tidak | Kategori OWASP Top 10 2021 (mis. `A03:2021`); aditif, hasil klasifikasi best-effort dari cwe/tags/type. `type` native tetap sumber presisi & basis dedup |
 | location | object | ya | Lokasi spesifik temuan (lihat bagian Struktur) |
 | evidence | object | tidak | Bukti: request/response, payload, referensi screenshot |
 | reproduction | string\[\] | tidak | Langkah reproduksi terurut |
+| impact | string | tidak | Dampak konkret untuk report; diisi saat triase/lengkapi-draft |
 | source\_engine | string | ya | Engine asal, mis. `nuclei`, `zap` |
 | source\_template | string | tidak | Id template/rule asal (mis. id template nuclei) |
 | references | string\[\] | tidak | Tautan referensi (CVE, dokumentasi) |
@@ -221,6 +223,12 @@ Aturan praktis:
 
 Store harus menyimpan `schema_version` per temuan agar data lama tetap terbaca setelah skema naik versi.
 
+### Riwayat versi
+
+- `1.0` — skema awal (M0).
+- `1.1` — tambah `impact` (dampak konkret untuk report; aditif).
+- `1.2` — tambah `owasp` (kategori OWASP Top 10 2021; aditif, hasil klasifikasi best-effort).
+
 ## Pemetaan engine ke skema
 
 Setiap engine punya satu adapter yang mengubah output mentahnya menjadi temuan skema. Adapter bertanggung jawab mengisi field wajib; sisanya diisi bila tersedia.
@@ -255,7 +263,7 @@ Karena semua engine bertemu di satu skema, menambah engine baru = menambah satu 
 > Direkonsiliasi dengan implementasi 2026-11-04. `[x]` = sudah diputuskan/diimplementasi (dengan bukti), `[~]` = sebagian, `[ ]` = masih terbuka.
 
 - [x] Penyempurnaan `dedup_key`: kunci kini `sha256(lower(type)|host|path|method|parameter)` (`internal/finding/dedup.go`) — **metode HTTP ikut** agar GET vs POST pada path+parameter sama tak salah gabung; method dinormalkan huruf besar, kosong (ffuf/retire/SAST) tetap kosong, dan untuk tipe site-wide path+method diabaikan (identitas = origin). Port tetap sengaja dikecualikan.
-- [~] Taksonomi `type`: keputusan praktis = **slug diturunkan dari id/nama native tiap engine** (mis. template-id nuclei, slug alert ZAP), disatukan lewat skema temuan. **Daftar kanonik tunggal & peta ke standar (WASC/OWASP) belum dibuat** — tetap terbuka bila perlu korelasi lintas-standar.
+- [x] Taksonomi `type`: **tetap slug native per-engine** (template-id nuclei, slug alert ZAP, dll) sebagai sumber presisi + basis dedup; **tidak** dibuat daftar kanonik tunggal. Korelasi lintas-engine ditangani field **aditif** `owasp` (OWASP Top 10 2021) hasil classifier best-effort (CWE → kata kunci tag/type) di `Finalize` — lihat `internal/finding/owasp.go`; tampil di finding detail, report, & export H1/Bugcrowd. Peta WASC sengaja tak dibuat (OWASP dipilih sebagai standar tunggal).
 - [x] Severity: **sumber utama dari engine**, dipetakan per-adapter ke enum skema (`mapSeverity`/`mapRisk` di tiap `internal/engine/*/parse.go`). Tidak dihitung ulang dari CVSS.
 - [x] Model penyimpanan dedup: **record terpisah dengan `duplicate_of`** menunjuk temuan utama; duplikat disembunyikan dari hitungan/report tetapi tersimpan utuh untuk audit. Ditegakkan per `(program, dedup_key)` di `internal/store` (Mem & SQLite), plus kolaps site-wide untuk isu origin-level.
 - [x] Ukuran `evidence`: **batas inline diterapkan** — tiap sub-field tekstual dipotong di `Finding.Finalize` pada batas rune (maks 32 KiB/field) dengan penanda jumlah byte yang dibuang; `screenshot_ref` (referensi, bukan konten) tak dipotong. Batas longgar agar request tetap bisa diputar ulang (mis. ke Burp). Lihat `internal/finding/finding.go` (`clampFields`/`clampText`).

@@ -20,8 +20,9 @@ import (
 //
 // 1.0 → 1.1 (MINOR, aditif): menambah field opsional `impact` (dampak, diisi
 // hunter saat triase untuk melengkapi draft report). Konsumen lama tetap bisa
-// membaca; temuan lama (schema_version 1.0, tanpa impact) tetap valid.
-const CurrentSchemaVersion = "1.1"
+// membaca; temuan lama (schema_version 1.0, tanpa impact) tetap valid. 1.2
+// menambah field `owasp` (klasifikasi OWASP 2021, aditif) — tetap kompatibel.
+const CurrentSchemaVersion = "1.2"
 
 // Severity: tingkat keparahan temuan. Enum tertutup (BH-SPEC-FINDING).
 type Severity string
@@ -217,6 +218,7 @@ type Finding struct {
 	CVSS       *CVSS      `json:"cvss,omitempty"`
 	CWE        []string   `json:"cwe,omitempty"`
 	Tags       []string   `json:"tags,omitempty"`
+	OWASP      OWASP      `json:"owasp,omitempty"` // kategori OWASP 2021 (aditif, hasil klasifikasi)
 
 	Location     Location  `json:"location"`
 	Evidence     *Evidence `json:"evidence,omitempty"`
@@ -252,6 +254,9 @@ func (f *Finding) Finalize(now time.Time) error {
 	}
 	if f.Evidence != nil {
 		f.Evidence.clampFields()
+	}
+	if f.OWASP == OWASPNone {
+		f.OWASP = ClassifyOWASP(f)
 	}
 	return f.Validate()
 }
