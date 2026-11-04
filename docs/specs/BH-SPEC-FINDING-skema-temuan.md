@@ -258,7 +258,7 @@ Karena semua engine bertemu di satu skema, menambah engine baru = menambah satu 
 - [~] Taksonomi `type`: keputusan praktis = **slug diturunkan dari id/nama native tiap engine** (mis. template-id nuclei, slug alert ZAP), disatukan lewat skema temuan. **Daftar kanonik tunggal & peta ke standar (WASC/OWASP) belum dibuat** — tetap terbuka bila perlu korelasi lintas-standar.
 - [x] Severity: **sumber utama dari engine**, dipetakan per-adapter ke enum skema (`mapSeverity`/`mapRisk` di tiap `internal/engine/*/parse.go`). Tidak dihitung ulang dari CVSS.
 - [x] Model penyimpanan dedup: **record terpisah dengan `duplicate_of`** menunjuk temuan utama; duplikat disembunyikan dari hitungan/report tetapi tersimpan utuh untuk audit. Ditegakkan per `(program, dedup_key)` di `internal/store` (Mem & SQLite), plus kolaps site-wide untuk isu origin-level.
-- [ ] Ukuran `evidence`: batas panjang request/response inline sebelum dipotong/dipindah ke blob **belum diterapkan** (masih tersimpan apa adanya).
+- [x] Ukuran `evidence`: **batas inline diterapkan** — tiap sub-field tekstual dipotong di `Finding.Finalize` pada batas rune (maks 32 KiB/field) dengan penanda jumlah byte yang dibuang; `screenshot_ref` (referensi, bukan konten) tak dipotong. Batas longgar agar request tetap bisa diputar ulang (mis. ke Burp). Lihat `internal/finding/finding.go` (`clampFields`/`clampText`).
 - [~] `program`/`run_id` vs `workspace`/`tenant`: multi-user hadir lewat **RBAC** (admin/operator/viewer, `internal/auth`) di atas **satu workspace bersama**; `program`+`run_id` tetap pembatas data. Partisi `workspace`/`tenant` sengaja belum ditambah (cukup untuk tim kecil).
 
 Catatan: fondasi skema sudah tegak sejak M0; sisa item di atas adalah penyempurnaan, bukan penghambat.

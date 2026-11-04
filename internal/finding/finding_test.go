@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // validFinding mengembalikan temuan minimal yang sah untuk dijadikan dasar uji.
@@ -249,5 +250,49 @@ func TestJSON_RoundTrip(t *testing.T) {
 	}
 	if g.Evidence == nil || g.Evidence.Matched != "ami-id" {
 		t.Error("evidence tidak bertahan round-trip")
+	}
+}
+
+func TestFinalizeClampsOversizedEvidence(t *testing.T) {
+	big := strings.Repeat("A", 40*1024) // > maxEvidenceField (32 KiB)
+	f := validFinding()
+	f.Evidence = &Evidence{Request: big, ResponseExcerpt: "kecil", ScreenshotRef: big}
+	if err := f.Finalize(time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	if len(f.Evidence.Request) > maxEvidenceField {
+		t.Errorf("Request harus dipotong <= %d byte; dapat %d", maxEvidenceField, len(f.Evidence.Request))
+	}
+	if !strings.Contains(f.Evidence.Request, "dipotong") {
+		t.Error("field terpotong harus memuat penanda pemotongan")
+	}
+	if f.Evidence.ResponseExcerpt != "kecil" {
+		t.Errorf("field pendek tak boleh diubah; dapat %q", f.Evidence.ResponseExcerpt)
+	}
+	// ScreenshotRef = referensi (path/URL), bukan konten -> tak dipotong.
+	if len(f.Evidence.ScreenshotRef) != len(big) {
+		t.Errorf("ScreenshotRef tak boleh dipotong; dapat %d byte", len(f.Evidence.ScreenshotRef))
+	}
+
+	// Idempoten: Finalize ulang tak memotong lagi.
+	before := f.Evidence.Request
+	if err := f.Finalize(time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Finalize ulang: %v", err)
+	}
+	if f.Evidence.Request != before {
+		t.Error("clamp harus idempoten; pemanggilan kedua mengubah isi")
+	}
+}
+
+func TestClampTextRuneSafe(t *testing.T) {
+	// Pemotongan tak boleh memenggal karakter multibyte: hasil tetap UTF-8 valid
+	// dan tidak melebihi batas byte.
+	s := strings.Repeat("é", 20*1024) // 'é' = 2 byte -> 40 KiB, > batas
+	out := clampText(s, maxEvidenceField)
+	if !utf8.ValidString(out) {
+		t.Error("hasil clamp harus UTF-8 valid (tak memenggal rune)")
+	}
+	if len(out) > maxEvidenceField {
+		t.Errorf("hasil harus <= %d byte; dapat %d", maxEvidenceField, len(out))
 	}
 }

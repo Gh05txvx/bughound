@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // CurrentSchemaVersion adalah versi skema yang ditulis komponen saat ini.
@@ -157,6 +158,44 @@ type Evidence struct {
 	ScreenshotRef   string `json:"screenshot_ref,omitempty"`
 }
 
+// maxEvidenceField membatasi panjang (byte) tiap sub-field evidence tekstual
+// yang disimpan inline. Request/response dari engine bisa sangat besar;
+// menyimpannya utuh membengkakkan store dan report tanpa menambah nilai
+// verifikasi. Batas ini cukup longgar untuk menjaga request tetap bisa diputar
+// ulang (mis. ke Burp) sekaligus mencegah bloat respons raksasa. (Menjawab
+// pertanyaan terbuka BH-SPEC-FINDING soal batas ukuran evidence.)
+const maxEvidenceField = 32 * 1024
+
+// clampFields memotong tiap sub-field evidence tekstual yang melampaui
+// maxEvidenceField, pada batas rune (tak memenggal karakter UTF-8), lalu
+// menambah penanda jumlah byte yang dibuang. Idempoten. ScreenshotRef hanya
+// referensi (path/URL), bukan konten, jadi tidak dipotong.
+func (e *Evidence) clampFields() {
+	e.Request = clampText(e.Request, maxEvidenceField)
+	e.ResponseExcerpt = clampText(e.ResponseExcerpt, maxEvidenceField)
+	e.Payload = clampText(e.Payload, maxEvidenceField)
+	e.Matched = clampText(e.Matched, maxEvidenceField)
+}
+
+// clampText memotong s ke paling banyak limit byte (termasuk penanda) pada batas
+// rune, lalu menambah penanda jumlah byte yang dibuang. Mengembalikan s apa
+// adanya bila sudah <= limit, sehingga aman dipanggil berulang (idempoten).
+func clampText(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	const markerBudget = 80 // ruang cadangan untuk penanda pemotongan
+	budget := limit - markerBudget
+	if budget < 0 {
+		budget = 0
+	}
+	cut := budget
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + fmt.Sprintf("\n…[evidence dipotong: %d byte dihapus, batas %d]", len(s)-cut, limit)
+}
+
 // Finding adalah satu catatan ternormalisasi: satu isu keamanan pada satu
 // lokasi, dalam bentuk yang sama apa pun engine asalnya.
 //
@@ -210,6 +249,9 @@ func (f *Finding) Finalize(now time.Time) error {
 	}
 	if f.DedupKey == "" {
 		f.DedupKey = ComputeDedupKey(f.Type, f.Target, f.Location.URL, f.Location.Parameter)
+	}
+	if f.Evidence != nil {
+		f.Evidence.clampFields()
 	}
 	return f.Validate()
 }
