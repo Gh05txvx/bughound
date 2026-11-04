@@ -145,19 +145,22 @@ Aturan keamanan: sebelum masuk `evidence`, nilai header otentikasi, token, dan k
 Resep default v1:
 
 ```text
-dedup_key = sha256( lower(type) + "|" + host(target) + "|" + path(location.url) + "|" + (location.parameter | "") )
+dedup_key = sha256( lower(type) + "|" + host(target) + "|" + path(location.url) + "|" + upper(location.method) + "|" + (location.parameter | "") )
 ```
 
 - `type`: jenis kerentanan (bukan judul bebas).
-- `host(target)`: host dari target, tanpa skema dan tanpa port default.
+- `host(target)`: host dari target, tanpa skema dan **tanpa port** (port sengaja dikecualikan dari kunci).
 - `path(location.url)`: path URL, tanpa query string (nilai query berubah-ubah).
+- `location.method`: metode HTTP, dinormalkan huruf besar; kosong bila tak relevan (mis. ffuf/retire/SAST). Memisahkan mis. `GET` vs `POST` pada path+parameter yang sama agar tak salah gabung.
 - `location.parameter`: nama parameter bila ada, string kosong bila tidak.
 
-Yang **tidak** masuk kunci: `run_id`, `source_engine`, timestamp, payload spesifik, dan nilai query. Dengan begitu, isu XSS yang sama pada parameter yang sama tetap satu temuan walau ditemukan dua engine berbeda atau di dua run berbeda.
+Untuk tipe **site-wide** (isu tingkat origin: header keamanan absen, CSP, CORS, dll. — lihat `siteWide()` di `internal/finding/dedup.go`), `path` **dan** `method` diabaikan (identitas = origin), sehingga kemunculan di banyak URL mengolaps jadi satu.
+
+Yang **tidak** masuk kunci: `run_id`, `source_engine`, timestamp, payload spesifik, nilai query, dan port target. Dengan begitu, isu XSS yang sama pada parameter yang sama tetap satu temuan walau ditemukan dua engine berbeda atau di dua run berbeda.
 
 Saat dedup terjadi, temuan baru diberi `status = duplicate` dan `duplicate_of` menunjuk temuan utama; atau implementasi boleh menyimpan satu temuan dengan daftar kemunculan. Keputusan penyimpanan itu ada di spec store, tapi kunci dan maknanya tetap sesuai dokumen ini.
 
-Catatan: resep ini sengaja sederhana dan bisa salah gabung (mis. dua isu beda di path sama). Penyempurnaan kunci adalah pertanyaan terbuka di bawah.
+Catatan: resep tetap sengaja sederhana. Penyempurnaan `method` (agar `GET` vs `POST` tak salah gabung) dan kolaps site-wide **sudah diterapkan** di `internal/finding/dedup.go` (lihat checklist "Pertanyaan terbuka" di bawah).
 
 ## Contoh temuan
 
