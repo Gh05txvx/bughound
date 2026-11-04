@@ -128,6 +128,52 @@ Setiap keputusan guard yang menolak dicatat ke audit trail dengan: waktu, target
 
 Log ini adalah bukti utama saat audit pre-launch menilai apakah scope guard benar-benar menegakkan batas.
 
+## Importer format platform
+
+Scope program bisa diimpor dari data platform alih-alih diketik. Importer (`internal/scope/importer.go`) hanya **menghasilkan teks**: ia tidak mengambil keputusan (tetap tugas guard) dan tidak menyimpan apa pun. Hasilnya mengisi form scope editor untuk ditinjau, lalu lewat jalur simpan biasa yang fail-closed. Tidak ada koneksi keluar: pengguna memuat atau menempel datanya sendiri, satu program per impor.
+
+| Sumber | Bentuk | Bukti in-scope |
+| --- | --- | --- |
+| HackerOne, tombol **Download CSV** | `identifier,asset_type,…` | `eligible_for_submission` = `true` |
+| HackerOne API | `GET /v1/hackers/programs/{handle}/structured_scopes` | `eligible_for_submission` = `true` |
+| Bugcrowd, dokumen brief | `data.scope[].targets[]` | `inScope` = `true` pada grup |
+| `bounty-targets-data` | satu objek program | tercantum di `in_scope` dan tidak ditandai `eligible_for_submission` = `false` |
+
+Bentuk brief Bugcrowd tidak terdokumentasi resmi; ia mengikuti yang dibaca `arkadiyt/bounty-targets`. Status yang tidak jelas tidak pernah menjadi izin: aset tanpa bukti in-scope diperlakukan sebagai out-of-scope.
+
+**Invarian arah pembulatan.** Data platform lebih longgar dari bahasa scope ini. Saat sebuah aset tidak bisa diwakili persis, in-scope hanya boleh **menyempit** (ragu = tidak diimpor, default deny menutupnya) dan out-of-scope hanya boleh **melebar** (ragu = diperluas), karena eksklusi yang hilang berarti under-blocking.
+
+| Kasus | In-scope | Out-of-scope |
+| --- | --- | --- |
+| Host, `*.domain`, IP, CIDR | Apa adanya, ternormalkan | Apa adanya; `*.x` ditambah apex `x`, kecuali `x` eksplisit in-scope |
+| Titik di depan (`.x`) | Tidak diimpor | Sama dengan `*.x` |
+| Port | Dipertahankan | Dibuang |
+| Path `/x/*` | Prefix `/x` | Prefix `/x` |
+| Pola lain atau encoding di path | Tidak diimpor | Dipotong ke batas segmen |
+| Query, fragment, userinfo | Tidak diimpor | Dibuang |
+| Wildcard tengah/parsial (`api.*.x`, `a*.x`) | Tidak diimpor | Melebar ke `*.x` |
+| URL ber-host IP | Hanya pada root, jadi entri IP | Jadi entri seluruh IP |
+| Suffix publik (`*.com`, `*.github.io`), CIDR lebih lebar dari /8 (IPv4) atau /32 (IPv6) | Tidak diimpor | Apa adanya |
+| IP/CIDR non-publik (privat, loopback, metadata) | Tidak diimpor; tulis manual bila sengaja | Apa adanya |
+| Skema selain http/https | Tidak diimpor | Hostnya dipakai |
+| Tipe mobile, source code, hardware | Tidak diimpor | Dilewati |
+| Tipe `OTHER` dan tak dikenal | Tidak diimpor | Dicoba; gagal = tak terwakili |
+| Tak terbaca (teks bebas, disensor, `acme.*`) | Tidak diimpor | Tak terwakili |
+
+Keluaran ditulis ulang dari entri ternormalkan, bukan disalin dari string platform, sehingga yang tersimpan persis yang ditegakkan guard. Pemeriksaan in-scope dijalankan pada teks keluaran itu, karena normalisasi bisa mengubah jenis entri: `169.254.169.254.` adalah host bagi parser, tetapi tanpa titik akhir ia IP. Lolos parser saja tidak cukup: `mailto:a@acme.io`, `10.0.0.1-50`, dan `.acme.io` terurai sebagai host yang tidak akan pernah cocok, jadi host wajib ber-TLD dikenal dan tanpa label kosong.
+
+**Eksklusi tak terwakili menahan impor.** Form tidak diisi sampai pengguna membaca daftarnya dan menyetujuinya. Persetujuan terikat sidik jari data, jadi tidak berlaku untuk data lain. Eksklusi semacam ini tetap tanggung jawab pengguna: guard tidak menghadangnya sampai ditulis sebagai entri.
+
+**Ditolak seluruhnya, tanpa hasil parsial:** format tak dikenal, data terpotong (`links.next` pada API, baris CSV tak utuh), lebih dari satu program, target tanpa status in/out (respons `targets_url` Bugcrowd), dan data di atas 4 MiB.
+
+**Penggabungan dengan isi form:** in-scope **diganti** (entri lama bisa jadi aset yang sudah dicabut program, dan yang digantikan ditampilkan), out-of-scope **digabung** (eksklusi tulisan tangan tidak boleh hilang).
+
+**In-scope yang tertimpa eksklusi dilaporkan.** Pola lazim "`www.x` in-scope, `*.x` out-of-scope" membuat entri itu mati karena out-of-scope menang. Importer tidak melonggarkan eksklusinya; ia menyebut entri dan eksklusi pemicunya agar pengguna yang memutuskan.
+
+**Audit:** setiap percobaan dicatat sebagai `program.import` (berhasil, ditahan, gagal) beserta jumlah dan sidik jari data, tanpa isi datanya. Penyimpanan scope dicatat sebagai `program.save`.
+
+**Batasan:** aturan teks bebas di policy program tidak terbaca, dan apex wildcard in-scope tidak ditambahkan otomatis (sejalan aturan wildcard di atas). Hunter tetap wajib membaca brief program.
+
 ## Pertanyaan terbuka
 
 > Direkonsiliasi dengan implementasi 2026-11-04. `[x]` = sudah diputuskan/diimplementasi, `[ ]` = masih terbuka.
@@ -135,7 +181,7 @@ Log ini adalah bukti utama saat audit pre-launch menilai apakah scope guard bena
 - [x] Kebijakan port: **default v1 = scope berbasis host mencakup semua port**, kecuali entri menyebut port eksplisit (lihat §Format di atas). Pengetatan ke 80/443-saja tetap opsi masa depan bila dibutuhkan.
 - [x] Apex + wildcard: **tetap dipisah** — `*.domain` hanya mencakup subdomain (wildcard di posisi paling kiri), apex harus didaftarkan sebagai entri sendiri (`internal/scope/entry.go`). Pilihan yang lebih ketat dan aman.
 - [x] IP privat/metadata: **tolak saat connect kecuali eksplisit in-scope** (IP/CIDR). Dialer egress menolak loopback/privat/link-local/metadata lalu me-*pin* IP yang sudah dicek (anti-rebinding). Lihat `BH-AUDIT-M2` BH-F02, `internal/egress/ssrf_test.go`.
-- [ ] Format scope platform: **importer HackerOne/Bugcrowd belum dibuat**; scope dimasukkan dalam bentuk kanonik dokumen ini. (Ekspor report ke format platform sudah ada; impor scope belum.)
+- [x] Format scope platform: **importer HackerOne/Bugcrowd dibuat** (lihat §Importer format platform). Bentuk kanonik dokumen ini tetap satu-satunya yang disimpan dan ditegakkan.
 - [x] Penegakan egress: **di aplikasi (proxy paksa)** — engine aktif dipaksa lewat `-proxy` + env `HTTP(S)_PROXY`/`ALL_PROXY`. Allowlist jaringan / kontainer per scan = hardening opt-in; residual egress non-HTTP diterima untuk threat model saat ini (ADR `BH-ADR-egress-isolation`, BH-F03).
 - [x] Resolusi DNS: **ya, ditolak** — hostname in-scope yang resolve ke IP out-of-scope/privat ditolak saat connect dengan IP-pinning (mencegah DNS rebinding). Lihat BH-F02.
 

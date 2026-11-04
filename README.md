@@ -75,7 +75,7 @@ Flag:
 ## Cara pakai (alur kerja)
 
 1. **Jalankan** `go run ./cmd/bughound` → **login** dengan akun admin yang kata sandinya tercetak di konsol saat pertama jalan → buka http://127.0.0.1:8787 (default engine **mock**: tanpa jaringan, aman dicoba).
-2. **Programs** → buat program & isi **scope** (in-scope + out-of-scope). Wajib: semua target dicek scope guard (default-deny).
+2. **Programs** → buat program & isi **scope** (in-scope + out-of-scope), diketik atau **diimpor** dari HackerOne (Download CSV / API) dan Bugcrowd. Hasil impor mengisi form untuk ditinjau, baru berlaku setelah disimpan. Wajib: semua target dicek scope guard (default-deny).
 3. **Scan** → pilih program, isi target/seed (atau tempel spec **OpenAPI/Swagger**, atau isi **upstream proxy / rantai** bila target mewajibkan) → jalankan. Scan jalan di latar belakang; pantau statusnya di tempat.
 4. **Capture** (opsional) → bughound jadi reverse proxy ke satu target in-scope; browsing manual lewat listener lokal, lalu **promote** endpoint terekam jadi scan.
 5. **gRPC / SAST** (opsional) → enumerasi + fuzz gRPC, atau analisis statis kode lokal (`-sast-root`).

@@ -162,6 +162,13 @@ a.btn:hover { text-decoration: none; }
 .errors ul { margin: 6px 0; }
 .list { margin: 6px 0; padding-left: 18px; }
 .list li { margin: 2px 0; }
+.import-items { overflow-wrap: anywhere; }
+.import-report { margin-bottom: 16px; }
+.import-report details { margin-top: 10px; }
+.import-report summary, .import-box summary { cursor: pointer; color: var(--fg-dim); }
+.import-report summary:hover, .import-box summary:hover { color: var(--fg); }
+.import-box { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.import-box textarea { margin-top: 8px; }
 
 /* ---- filter & bulk bar ---- */
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }

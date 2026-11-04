@@ -14,8 +14,32 @@
 </div>
 {{end}}
 
+{{with .Import}}
+{{if .Held}}
+<div class="errors">
+  <h4>Impor ditahan · {{len .Unresolved}} eksklusi tak bisa diwakili</h4>
+  <p>Program mengecualikan aset di bawah, tetapi bentuknya tak bisa jadi entri scope, jadi guard tak akan menghadangnya. Baca satu per satu dan tulis padanannya sendiri di Out-of-scope bila perlu.</p>
+  {{template "import_items" .Unresolved}}
+  <label class="check"><input type="checkbox" name="ack_unresolved" value="{{.Digest}}" form="scope-form"><span>Saya sudah membaca daftar ini dan menangani eksklusinya sendiri</span></label>
+  <div class="actions"><button class="btn primary" type="submit" form="scope-form" formaction="/programs/import" formnovalidate>Lanjutkan impor</button></div>
+</div>
+{{else}}
+<div class="card import-report">
+  <h2>Hasil impor · {{.Format}}</h2>
+  <p><b>{{len .InScope}}</b> in-scope · <b>{{len .OutScope}}</b> out-of-scope. <b>Belum disimpan:</b> tinjau kolom di bawah, uji dengan Pratinjau, lalu klik Simpan scope.</p>
+  <p class="muted small">In-scope menggantikan isi form; out-of-scope digabung dengan yang sudah ada. Wildcard <span class="mono">*.x</span> tak mencakup apex <span class="mono">x</span>: tambahkan sendiri bila program mengizinkannya.</p>
+  {{if .Unresolved}}<details open><summary>Eksklusi tak terwakili yang kamu setujui ({{len .Unresolved}})</summary>{{template "import_items" .Unresolved}}</details>{{end}}
+  {{if .Shadowed}}<details open><summary>In-scope yang tertimpa eksklusi ({{len .Shadowed}})</summary><p class="muted small">Out-of-scope menang, jadi guard menolak entri ini. Bila program memang mengizinkannya, sempitkan eksklusi pemicunya.</p>{{template "import_items" .Shadowed}}</details>{{end}}
+  {{if .Replaced}}<details open><summary>Entri in-scope lama yang digantikan ({{len .Replaced}})</summary><ul class="list import-items">{{range .Replaced}}<li class="mono">{{.}}</li>{{end}}</ul></details>{{end}}
+  {{if .Widened}}<details><summary>Eksklusi yang diperluas agar tetap efektif ({{len .Widened}})</summary>{{template "import_items" .Widened}}</details>{{end}}
+  {{if .Skipped}}<details><summary>Tidak diimpor ({{len .Skipped}})</summary>{{template "import_items" .Skipped}}</details>{{end}}
+  {{if .Notes}}<details><summary>Instruksi program per aset ({{len .Notes}})</summary>{{template "import_items" .Notes}}</details>{{end}}
+</div>
+{{end}}
+{{end}}
+
 <div class="grid-2">
-  <form class="card" method="post" action="/programs">
+  <form class="card" id="scope-form" method="post" action="/programs">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <label>Nama program</label>
     <input type="text" name="name" value="{{.Name}}" autocomplete="off" required {{if not .IsNew}}readonly{{end}}>
@@ -33,6 +57,14 @@
       <button class="btn primary" type="submit">Simpan scope</button>
       <button class="btn" type="button" hx-post="/programs/preview" hx-target="#preview" hx-include="closest form">Pratinjau</button>
     </div>
+
+    <details class="import-box"{{if .PlatformData}} open{{end}}>
+      <summary>Impor dari platform (HackerOne / Bugcrowd)</summary>
+      <p class="muted small">Muat atau tempel satu program: CSV HackerOne (<b>Download CSV</b> di tab Scope), JSON API <span class="mono">structured_scopes</span>, JSON brief Bugcrowd, atau satu objek <span class="mono">bounty-targets-data</span>. Hasilnya mengisi kolom di atas untuk ditinjau; tak ada yang tersimpan sebelum kamu klik Simpan scope. Aturan teks bebas di policy program tak ikut terbaca, jadi tetap baca brief-nya.</p>
+      <input type="file" accept=".csv,.json,text/csv,application/json" aria-label="Muat berkas scope" onchange="bhLoadFile(this, 'platform-data')">
+      <textarea id="platform-data" name="platform_data" rows="6" spellcheck="false" aria-label="Data scope platform">{{.PlatformData}}</textarea>
+      <div class="actions"><button class="btn" type="submit" formaction="/programs/import" formnovalidate>Konversi ke scope</button></div>
+    </details>
   </form>
 
   <div class="card">
@@ -42,4 +74,10 @@
     </div>
   </div>
 </div>
+{{end}}
+
+{{define "import_items"}}
+<ul class="list import-items">
+  {{range .}}<li><span class="mono">{{.Asset}}</span>{{if .Type}} <span class="muted small">{{.Type}}</span>{{end}} <span class="muted">· {{.Detail}}</span></li>{{end}}
+</ul>
 {{end}}

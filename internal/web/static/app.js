@@ -40,3 +40,13 @@ function bhCopyFallback(text, done) {
     // Diam saja: menyalin adalah kemudahan, bukan jalur kritis.
   }
 }
+
+// bhLoadFile memuat berkas ke textarea di sisi browser: server cukup menerima
+// form biasa, dan isi berkas masih bisa dilihat serta disunting sebelum dikirim.
+function bhLoadFile(input, targetId) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function () { document.getElementById(targetId).value = reader.result; };
+  reader.readAsText(file);
+}

@@ -702,6 +702,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
 	s.mux.HandleFunc("POST /programs/delete", s.handleProgramDelete)
 	s.mux.HandleFunc("POST /programs/preview", s.handleProgramPreview)
+	s.mux.HandleFunc("POST /programs/import", s.handleProgramImport)
 	s.mux.HandleFunc("GET /payloads", s.handlePayloads)
 	s.mux.HandleFunc("POST /payloads/refresh", s.handlePayloadsRefresh)
 	s.mux.HandleFunc("GET /scan", s.handleScanForm)
@@ -1241,6 +1242,9 @@ type programEditPage struct {
 	Targets  string
 	IsNew    bool
 	Errors   []string
+
+	PlatformData string        // data platform yang ditempel, dipertahankan saat impor ditahan
+	Import       *importReport // ringkasan impor untuk ditinjau; nil bila tak ada
 }
 
 func (s *Server) handleProgramEdit(w http.ResponseWriter, r *http.Request) {
@@ -1287,7 +1291,102 @@ func (s *Server) handleProgramSave(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	me, _ := s.currentUser(r)
+	s.auditAppend(r.Context(), audit.Event{Kind: "program.save", Program: name, Allowed: true,
+		Message: fmt.Sprintf("%s menyimpan scope: %d in-scope, %d out-of-scope", me, len(inScope), len(outScope))})
 	http.Redirect(w, r, "/programs", http.StatusSeeOther)
+}
+
+// importReport adalah ringkasan impor yang ditinjau di scope editor.
+type importReport struct {
+	scope.ImportResult
+	Held     bool     // ditahan: Unresolved belum disetujui, form tak diisi
+	Replaced []string // entri in-scope lama di form yang digantikan hasil impor
+}
+
+// handleProgramImport mengonversi data scope platform lalu mengisi form scope
+// editor untuk ditinjau. Handler ini TIDAK menyimpan apa pun: entri baru berlaku
+// hanya setelah pengguna menekan Simpan, lewat handleProgramSave yang fail-closed.
+//
+// Penggabungan mengikuti arah aman yang sama dengan importer: in-scope DIGANTI
+// (entri lama bisa jadi aset yang sudah dicabut program), out-of-scope DIGABUNG
+// (eksklusi yang ditulis pengguna tak boleh hilang karena impor).
+//
+// Bila ada eksklusi tak terwakili, form tak diisi sampai pengguna menyetujui
+// daftarnya. Persetujuan terikat ke Digest, jadi tak berlaku untuk data lain.
+func (s *Server) handleProgramImport(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	raw := r.FormValue("platform_data")
+	page := programEditPage{
+		Nav: "programs", Title: "Scope editor", CSRF: s.csrfToken(r), Program: name, Name: name,
+		InScope: r.FormValue("in_scope"), OutScope: r.FormValue("out_scope"), Targets: r.FormValue("targets"),
+		PlatformData: raw, IsNew: true,
+	}
+	if name != "" {
+		if _, err := s.store.GetProgram(r.Context(), name); err == nil {
+			page.IsNew = false
+		}
+	}
+	me, _ := s.currentUser(r)
+
+	res, err := scope.ImportPlatform(raw)
+	if err != nil {
+		page.Errors = append(page.Errors, "Impor gagal: "+err.Error())
+		s.auditAppend(r.Context(), audit.Event{Kind: "program.import", Program: name, Allowed: false,
+			Reason: err.Error(), Message: me + " gagal mengimpor scope platform"})
+		s.render(w, r, "program_edit", "base", page)
+		return
+	}
+
+	summary := fmt.Sprintf("%s · %d in-scope, %d out-of-scope, %d eksklusi tak terwakili · sha256 %s",
+		res.Format, len(res.InScope), len(res.OutScope), len(res.Unresolved), res.Digest)
+	report := &importReport{ImportResult: res}
+	page.Import = report
+	if len(res.Unresolved) > 0 && r.FormValue("ack_unresolved") != res.Digest {
+		report.Held = true
+		s.auditAppend(r.Context(), audit.Event{Kind: "program.import", Program: name, Allowed: false,
+			Reason: "eksklusi tak terwakili belum disetujui", Message: me + " · " + summary})
+		s.render(w, r, "program_edit", "base", page)
+		return
+	}
+
+	imported := make(map[string]bool, len(res.InScope))
+	for _, e := range res.InScope {
+		imported[e] = true
+	}
+	for _, e := range splitLines(page.InScope) {
+		if !imported[e] {
+			report.Replaced = append(report.Replaced, e)
+		}
+	}
+	page.InScope = strings.Join(res.InScope, "\n")
+	page.OutScope = appendMissingLines(page.OutScope, res.OutScope)
+	page.PlatformData = ""
+	s.auditAppend(r.Context(), audit.Event{Kind: "program.import", Program: name, Allowed: true, Message: me + " · " + summary})
+	s.render(w, r, "program_edit", "base", page)
+}
+
+// appendMissingLines menambahkan entri yang belum ada ke isi textarea, tanpa
+// mengubah baris yang sudah ditulis pengguna (termasuk komentar).
+func appendMissingLines(text string, entries []string) string {
+	have := map[string]bool{}
+	for _, line := range splitLines(text) {
+		have[line] = true
+	}
+	lines := []string{}
+	if t := strings.TrimRight(text, " \t\r\n"); t != "" {
+		lines = append(lines, t)
+	}
+	for _, e := range entries {
+		if !have[e] {
+			lines = append(lines, e)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // handleProgramDelete menghapus definisi scope sebuah program. Yang dibuang HANYA

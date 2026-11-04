@@ -9,7 +9,8 @@ Pengujian end-to-end alur pengguna lewat browser (persona **BH-P05-E2E**).
 > 3. Bind **localhost** saja.
 > 4. **Egress diblok** di dua tempat: env proxy mati pada proses server, dan
 >    pengaman di browser (`fixtures/test.ts`) meng-abort request non-lokal.
-> Target yang dipakai hanya domain dummy (`demo.test`, `acme.test`).
+> Target yang dipakai hanya domain dummy (`demo.test`, `acme.test`; spec impor
+> memakai `example.com` karena importer menolak TLD tak dikenal).
 
 ## Jalankan
 
@@ -36,6 +37,7 @@ tests/    skenario per alur (2 teratas = kritis, selalu dijalankan)
   scan-flow.spec.ts         happy-path scan (engine mock)
   triage.spec.ts            filter severity + konfirmasi massal
   program-scope.spec.ts     buat program + scope, prefill scan
+  program-import.spec.ts    impor scope platform: tinjau dulu, tahan eksklusi tak terwakili
 pages/    page object per layar (selector berbasis peran/teks)
 fixtures/ fixture test + pengaman egress browser
 utils/    helper seed (scan mock, konfirmasi)
