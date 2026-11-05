@@ -131,6 +131,7 @@ Guard tidak boleh bisa dinonaktifkan lewat konfigurasi biasa. Tidak ada flag "le
 Setiap keputusan guard yang menolak dicatat ke audit trail dengan: waktu, target (ternormalkan), program, run\_id, alasan (out-of-scope / tidak in-scope / gagal urai), dan entri scope yang memicu (bila penolakan karena out-of-scope).
 
 - Penolakan di lapis egress diperlakukan sebagai sinyal penting: bila sering terjadi, itu bisa menandakan bug di tahap perencanaan atau upaya penyalahgunaan.
+- Kolom lapis membedakan `input` (saat perencanaan), `egress` (request ditahan sebelum koneksi dibuat), dan `finding` (temuan di luar scope dibuang sesudah engine selesai). `finding` menilai hasil, jadi bukan bukti koneksinya diblok. Entri lama dari sebelum pemisahan ini tetap berlabel `egress`.
 - Audit trail scope tidak boleh bisa dihapus diam-diam (sejalan prinsip audit trail bughound).
 - Target yang diizinkan boleh dicatat ringkas (minimal jumlah/agregat) agar jejak lengkap tersedia untuk audit (BH-P03-APPSEC), tanpa membebani log.
 

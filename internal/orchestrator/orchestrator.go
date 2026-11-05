@@ -27,8 +27,9 @@ import (
 type Layer string
 
 const (
-	LayerInput  Layer = "input"  // saat perencanaan, sebelum masuk antrean scan
-	LayerEgress Layer = "egress" // saat temuan/koneksi keluar hendak diterima
+	LayerInput   Layer = "input"   // saat perencanaan, sebelum masuk antrean scan
+	LayerEgress  Layer = "egress"  // tepat sebelum koneksi keluar: request diblok
+	LayerFinding Layer = "finding" // temuan dibuang sesudah engine selesai: bukan bukti koneksinya diblok
 )
 
 // AuditEvent adalah satu entri audit trail untuk keputusan scope.
@@ -238,10 +239,11 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 				continue
 			}
 			for _, f := range findings {
-				// Lapis 2 — penegakan egress.
+				// Penjaga terakhir: temuan di luar scope tak disimpan. Ini menilai hasil,
+				// bukan koneksi, jadi dicatat terpisah dari penolakan egress.
 				dd := o.guard.Evaluate(f.Location.URL)
 				if !dd.Allowed {
-					eev := o.auditEvent(req.Program, runID, dd, LayerEgress)
+					eev := o.auditEvent(req.Program, runID, dd, LayerFinding)
 					o.audit(eev)
 					res.Denied = append(res.Denied, eev)
 					continue

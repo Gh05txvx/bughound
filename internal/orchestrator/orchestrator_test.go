@@ -173,14 +173,19 @@ func TestRunScanEgressBlocks(t *testing.T) {
 	if fs, _ := st.List(context.Background(), store.Query{Program: "demo"}); len(fs) != 0 {
 		t.Errorf("store harus kosong; dapat %d", len(fs))
 	}
-	var egressDeny bool
+	// Temuan dinilai sesudah engine selesai, jadi tak boleh tercatat sebagai
+	// koneksi yang diblok: lapis egress hanya untuk penolakan sebelum koneksi.
+	var findingDeny bool
 	for _, e := range audit {
-		if e.Layer == LayerEgress && !e.Allowed {
-			egressDeny = true
+		if !e.Allowed && e.Layer == LayerFinding {
+			findingDeny = true
+		}
+		if !e.Allowed && e.Layer == LayerEgress {
+			t.Errorf("temuan tercatat sebagai penolakan koneksi: %+v", e)
 		}
 	}
-	if !egressDeny {
-		t.Error("harus ada audit egress-deny untuk temuan di luar scope")
+	if !findingDeny {
+		t.Error("harus ada audit penolakan temuan di luar scope")
 	}
 }
 
