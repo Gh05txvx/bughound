@@ -2,11 +2,15 @@ package retire
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"bughound/internal/egress"
+	"bughound/internal/scope"
 )
 
 const sampleOutput = `{
@@ -177,4 +181,38 @@ func hasTag(tags []string, t string) bool {
 		}
 	}
 	return false
+}
+
+// Lihat TestProxiedClientWorksThroughOpenedTunnel di adapter ffuf: klien yang
+// memverifikasi gagal diam-diam di host yang TLS-nya dibuka proxy egress.
+func TestHTTPClientWorksThroughOpenedTunnel(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "var a=1;")
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "https://")
+	g, errs := scope.New([]string{"127.0.0.1"}, []string{"https://" + host + "/admin"})
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	addr, stop, err := egress.New(g, nil).Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+
+	r := &Runner{}
+	r.UseProxy(addr)
+	client, err := r.httpClient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Get(srv.URL + "/app.js")
+	if err != nil {
+		t.Fatalf("GET lewat tunnel terbuka: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, ingin 200", resp.StatusCode)
+	}
 }

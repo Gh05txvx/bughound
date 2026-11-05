@@ -14,6 +14,7 @@ package retire
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -128,8 +129,10 @@ func (r *Runner) runRetire(ctx context.Context, dir string) ([]byte, error) {
 }
 
 // httpClient membuat client yang menyalurkan request lewat proxy egress bila ada.
+// Sertifikat tak diverifikasi, sama seperti engine: proxy membuka TLS host yang punya
+// eksklusi ber-path, dan klien yang memverifikasi akan gagal diam-diam di sana.
 func (r *Runner) httpClient() (*http.Client, error) {
-	tr := &http.Transport{}
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	if r.proxyAddr != "" {
 		pu, err := url.Parse("http://" + r.proxyAddr)
 		if err != nil {

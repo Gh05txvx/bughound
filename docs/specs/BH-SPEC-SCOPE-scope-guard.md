@@ -107,6 +107,7 @@ Kasus yang sering jadi celah bypass dan cara guard menanganinya:
 | Port tak diketahui | Target `acme.io` melawan entri berport | Eksklusi menang saat ragu; izin tidak diberikan |
 | Port bernol di depan | `https://acme.io:0443/` melewati eksklusi port 443 | Port dikanonkan sebelum dibandingkan |
 | IP tersamar | `203.0.113.10.`, digit fullwidth | Entri menjadi IP; target ditolak |
+| Eksklusi ber-path di HTTPS | CONNECT hanya memperlihatkan `host:port`, jadi `/admin` lolos lewat tunnel | `host:port` itu dibuka dan tiap request dinilai; yang tak terbaca sebagai HTTP/1 ditutup |
 | Entri tak pernah cocok | Eksklusi mati tanpa peringatan | Ditolak saat input (lihat Format input scope) |
 | Apex vs wildcard | `acme.io` lolos lewat `*.acme.io` | Apex tidak tercakup wildcard kecuali didaftarkan |
 | Case & trailing dot | `ACME.io`, `acme.io.` | Dinormalkan sebelum dibandingkan |
@@ -123,6 +124,8 @@ Memeriksa scope hanya saat input tidak cukup. Target bisa berubah di tengah jala
 2. **Saat egress, tepat sebelum koneksi keluar.** Setiap permintaan yang akan dikirim engine worker ke jaringan diperiksa ulang terhadap guard. Ini menutup target yang muncul di runtime (redirect, link baru) yang tidak terlihat saat perencanaan.
 
 Lapis kedua adalah yang membuat jaminan "tidak pernah menyentuh aset luar scope" benar-benar struktural: sekalipun ada bug di tahap sebelumnya, koneksi keluar tetap dihadang. Idealnya diperkuat lagi dengan pembatasan jaringan di level lingkungan (allowlist egress), sebagai pertahanan berlapis.
+
+Di HTTPS, CONNECT hanya memperlihatkan `host:port`, jadi tunnel buta tak bisa menegakkan eksklusi ber-path. Karena itu `host:port` yang punya eksklusi ber-path dibuka: proxy mengakhiri koneksi klien dan menilai tiap request lewat gerbang yang sama dengan HTTP biasa. Host lain tetap tunnel buta. Tak ada jalan mundur: koneksi yang tak terbaca sebagai HTTP/1 ditutup, bukan diteruskan. Alasan dan batasannya ada di ADR `BH-ADR-egress-isolation`.
 
 Guard tidak boleh bisa dinonaktifkan lewat konfigurasi biasa. Tidak ada flag "lewati scope guard" untuk kenyamanan; mematikannya (bila ada, untuk pengujian internal) harus jelas, tercatat, dan tidak mungkin aktif di jalur produksi.
 

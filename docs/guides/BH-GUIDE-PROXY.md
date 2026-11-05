@@ -35,7 +35,7 @@ engine/bughound → hop1 → hop2 → … → hopN → target
 
 | Skema | Transport | Catatan |
 | --- | --- | --- |
-| `http://` | HTTP `CONNECT` | proxy HTTP biasa (Burp, Squid, dll). Host-level (tanpa MITM) → tak perlu pasang CA cert. |
+| `http://` | HTTP `CONNECT` | proxy HTTP biasa (Burp, Squid, dll). Tak perlu pasang CA cert. |
 | `https://` | HTTP `CONNECT` over TLS | koneksi ke proxy-nya terenkripsi. |
 | `socks5://` | SOCKS5 | DNS di-resolve sisi bughound (lihat §6). |
 | `socks5h://` | SOCKS5 | sama; resolusi target tetap di-pin di hulu. |
@@ -119,7 +119,7 @@ Banyak program menuntut traffic datang dari **IP statis terdaftar** (VPN program
 ## 6. Catatan teknis & batasan
 
 - **Resolusi & IP-pin di hulu.** Target di-resolve ke IP di host bughound lalu di-*pin* (anti DNS-rebinding), baru koneksi ke IP itu diteruskan lewat rantai. Jadi `socks5` vs `socks5h` tak mengubah resolusi target (sudah di-pin); DNS target terjadi di sisi bughound, bukan di exit node.
-- **Host-level pada HTTPS.** Untuk target HTTPS (tunnel CONNECT), scope guard menegakkan di level host:port (tanpa membongkar TLS). Tak perlu CA cert.
+- **Path pada HTTPS.** Tunnel CONNECT hanya menegakkan host:port. Host:port yang punya eksklusi ber-path dibuka agar tiap request dinilai, dan hanya HTTP/1 yang lewat di sana; host lain tetap tunnel buta. Tak perlu CA cert: sertifikatnya sekali pakai dan engine memang tak memverifikasi target.
 - **Hop = infra, bukan target.** Konektivitas hop tidak di-scope-check (hop memang proxy milikmu, sering loopback seperti Burp/Tor). Hanya **target & echo** yang melewati scope guard.
 - **Fail-closed.** Hop/skema tak valid, atau echo out-of-scope → ditolak; tak ada koneksi diam-diam.
 - **Audit.** Tiap uji tercatat `egress.check` (ringkasan hop, echo?, ip-berubah?); penolakan echo dicatat dengan alasan. Tanpa kredensial.

@@ -106,6 +106,24 @@ func (g *Guard) Evaluate(target string) Result {
 	return Result{Allowed: false, Reason: ReasonNotInScope, Target: norm}
 }
 
+// PathScoped melaporkan apakah host:port target punya eksklusi ber-path. Keputusan
+// untuk target seperti itu butuh path tiap request, jadi egress tak boleh
+// meneruskannya sebagai tunnel buta. Entri in-scope tak perlu dilihat: CONNECT yang
+// lolos sudah membuktikan path akar in-scope, dan entri itu mencakup seluruh path.
+// Target tak terurai dijawab true: ragu berarti buka, bukan tunnel buta.
+func (g *Guard) PathScoped(target string) bool {
+	t, err := normalizeTarget(target)
+	if err != nil {
+		return true
+	}
+	for _, e := range g.out {
+		if e.kind == kindURLPrefix && e.path != "/" && e.sameHost(t) && portOK(e.port, t.effPort, true) {
+			return true
+		}
+	}
+	return false
+}
+
 // normTarget adalah target yang sudah dinormalkan ke bentuk kanonik.
 type normTarget struct {
 	isIP bool

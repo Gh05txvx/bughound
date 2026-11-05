@@ -3,6 +3,7 @@ package ffuf
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"io"
 	"net/http"
 	"net/url"
@@ -45,6 +46,8 @@ func (r *Runner) robotsPaths(ctx context.Context, target string) []string {
 
 // proxiedClient membuat http.Client yang menyalurkan SEMUA request lewat proxy
 // egress (http.Transport.Proxy), sehingga scope guard mengevaluasi tiap koneksi.
+// Sertifikat tak diverifikasi, sama seperti engine: proxy membuka TLS host yang punya
+// eksklusi ber-path, dan klien yang memverifikasi akan gagal diam-diam di sana.
 func proxiedClient(proxyAddr string, timeout time.Duration) (*http.Client, error) {
 	pu, err := url.Parse("http://" + proxyAddr)
 	if err != nil {
@@ -52,7 +55,7 @@ func proxiedClient(proxyAddr string, timeout time.Duration) (*http.Client, error
 	}
 	return &http.Client{
 		Timeout:   timeout,
-		Transport: &http.Transport{Proxy: http.ProxyURL(pu)},
+		Transport: &http.Transport{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 	}, nil
 }
 

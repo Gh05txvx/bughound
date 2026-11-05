@@ -6,13 +6,15 @@
 // SETIAP request diperiksa ke scope guard SEBELUM koneksi diteruskan — inilah
 // penegakan egress "sebelum koneksi" (BH-SPEC-SCOPE lapis 2) untuk engine luar.
 //
-// Catatan: untuk HTTPS (CONNECT), proxy hanya melihat host:port (tanpa MITM),
-// jadi penegakan pada tunnel bersifat host-level. Egress non-HTTP tidak lewat
-// sini dan memerlukan lapis OS (pertahanan berlapis).
+// Untuk HTTPS (CONNECT), proxy hanya melihat host:port, jadi penegakan pada tunnel
+// buta bersifat host-level. Host:port yang punya eksklusi ber-path dibuka agar tiap
+// request dinilai (intercept.go). Egress non-HTTP tidak lewat sini dan memerlukan
+// lapis OS (pertahanan berlapis).
 package egress
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
@@ -39,9 +41,14 @@ type Proxy struct {
 	guard     *scope.Guard
 	audit     func(Decision)
 	transport http.RoundTripper
+	tunnel    *http.Transport // jalur keluar tunnel yang dibuka
 	dialer    *net.Dialer
 	finalDial dialFunc // nil = dial langsung; selain itu lewat proxy upstream
 	lookupIP  func(ctx context.Context, host string) ([]netip.Addr, error)
+
+	certOnce sync.Once
+	cert     tls.Certificate
+	certErr  error
 
 	mu     sync.Mutex
 	denied []Decision
@@ -63,6 +70,16 @@ func New(guard *scope.Guard, audit func(Decision)) *Proxy {
 	// Semua dial (HTTP forward & CONNECT) lewat dialer ter-guard: anti SSRF ke
 	// IP internal + anti DNS rebinding (IP yang dicek = IP yang disambung).
 	p.transport = &http.Transport{DialContext: p.dialGuarded}
+	// Tunnel buta menyerahkan TLS ke engine, yang tak memverifikasi target karena
+	// target uji sering bersertifikat tak valid. Jalur ini mengambil alih peran itu.
+	// Keaslian tujuan tetap dijaga dialer ter-guard, bukan sertifikat. Kompresi tak
+	// ditambahkan agar request dan respons sampai apa adanya.
+	p.tunnel = &http.Transport{
+		DialContext:        p.dialGuarded,
+		TLSClientConfig:    &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS10},
+		DisableCompression: true,
+		IdleConnTimeout:    30 * time.Second,
+	}
 	return p
 }
 
@@ -178,6 +195,12 @@ func (p *Proxy) record(d Decision) {
 
 func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Request proxy HTTP biasa memakai URL absolut (http://host/path).
+	p.forward(w, r, p.transport)
+}
+
+// forward adalah gerbang per-request: HTTP biasa dan tunnel yang dibuka sama-sama
+// lewat sini, sehingga hanya ada satu aturan penegakan.
+func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, rt http.RoundTripper) {
 	d := p.guard.Evaluate(r.URL.String())
 	p.record(Decision{Method: r.Method, Host: r.URL.Hostname(), Target: d.Target, Allowed: d.Allowed, Reason: d.Reason})
 	if !d.Allowed {
@@ -186,12 +209,17 @@ func (p *Proxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.RequestURI = "" // wajib kosong untuk RoundTrip
-	resp, err := p.transport.RoundTrip(r)
+	resp, err := rt.RoundTrip(r)
 	if err != nil {
 		http.Error(w, "egress gagal: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+	// Sesudah 101 yang lewat bukan HTTP lagi, jadi tak ada request yang bisa dinilai.
+	if resp.StatusCode == http.StatusSwitchingProtocols {
+		http.Error(w, "egress ditolak: upgrade protokol tak didukung", http.StatusBadGateway)
+		return
+	}
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
@@ -209,6 +237,15 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		http.Error(w, "proxy: hijack tak didukung", http.StatusInternalServerError)
+		return
+	}
+	if p.guard.PathScoped(r.Host) {
+		client, rw, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+		p.serveOpened(client, rw.Reader, r.Host)
 		return
 	}
 	dest, err := p.dialGuarded(r.Context(), "tcp", r.Host)

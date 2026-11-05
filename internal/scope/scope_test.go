@@ -218,3 +218,70 @@ func TestEffectivePortFromScheme(t *testing.T) {
 		t.Errorf("Target = %q: port efektif tak boleh mengubah bentuk audit", r.Target)
 	}
 }
+
+func TestPathScoped(t *testing.T) {
+	g := mustGuard(t, []string{"*.acme.io", "acme.io", "203.0.113.0/24", "https://api.acme.io/v1"},
+		[]string{"https://app.acme.io/admin", "shop.acme.io/cart", "https://port.acme.io:8443/x", "http://203.0.113.10/admin",
+			"root.acme.io", "https://slash.acme.io/", "off.acme.io:8080", "*.dev.acme.io"})
+	cases := map[string]bool{
+		"app.acme.io:443":   true,  // eksklusi ber-path berskema
+		"app.acme.io:8443":  true,  // entri tanpa port berlaku di semua port
+		"APP.acme.io:443":   true,  // host dinormalkan
+		"shop.acme.io:443":  true,  // bentuk tanpa skema, keluaran importer
+		"port.acme.io:8443": true,  // port cocok
+		"port.acme.io:443":  false, // eksklusi hanya untuk port lain
+		"port.acme.io":      true,  // port tak diketahui: ragu berarti buka
+		"203.0.113.10:443":  true,  // host IP
+		"203.0.113.11:443":  false, // IP lain
+		"acme.io:443":       false, // host lain, tak ada eksklusi ber-path
+		"root.acme.io:443":  false, // eksklusi host tanpa path sudah cukup di CONNECT
+		"slash.acme.io:443": false, // path akar setara seluruh host
+		"off.acme.io:80":    false, // eksklusi berport tanpa path
+		"x.dev.acme.io:443": false, // wildcard tak punya path
+		"api.acme.io:443":   false, // entri in-scope ber-path bukan eksklusi
+		"acme.io:notaport":  true,  // tak terurai: ragu berarti buka
+		"":                  true,
+	}
+	for target, want := range cases {
+		if got := g.PathScoped(target); got != want {
+			t.Errorf("PathScoped(%q) = %v, ingin %v", target, got, want)
+		}
+	}
+}
+
+// Invarian penutup celah: URL yang ditolak guard tak boleh punya host:port yang
+// lolos CONNECT tanpa dibuka, karena tunnel buta tak bisa menghadangnya.
+func TestPathScopedCoversEveryDenial(t *testing.T) {
+	ins := [][]string{{"acme.io"}, {"*.acme.io", "acme.io"}, {"203.0.113.10"}, {"203.0.113.0/24"}, {"https://acme.io/"}, {"acme.io:443"}}
+	outs := [][]string{
+		{"https://acme.io/admin"}, {"acme.io/admin"}, {"http://acme.io/admin"}, {"https://acme.io:443/admin"}, {"https://acme.io:8443/admin"},
+		{"https://acme.io/admin/"}, {"https://acme.io/a/b/c"}, {"https://203.0.113.10/admin"}, {"http://203.0.113.10:8443/admin"},
+	}
+	authorities := []string{"acme.io:443", "acme.io:80", "acme.io:8443", "203.0.113.10:443", "203.0.113.10:8443"}
+	paths := []string{"/", "/admin", "/admin/", "/admin/x", "/administrator", "/a/b/c", "/a/b/c/d", "/%61dmin", "/x/../admin"}
+	checked := 0
+	for _, in := range ins {
+		for _, out := range outs {
+			g := mustGuard(t, in, out)
+			for _, a := range authorities {
+				if !g.Evaluate(a).Allowed {
+					continue // CONNECT sendiri sudah ditolak
+				}
+				for _, scheme := range []string{"http", "https"} {
+					for _, p := range paths {
+						u := scheme + "://" + a + p
+						if r := g.Evaluate(u); !r.Allowed && r.Reason == ReasonOutOfScope {
+							checked++
+							if !g.PathScoped(a) {
+								t.Errorf("in=%v out=%v: %s ditolak tapi %s tak dibuka", in, out, u, a)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("tak ada kombinasi teruji")
+	}
+}

@@ -8,6 +8,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"bughound/internal/egress"
+	"bughound/internal/scope"
 )
 
 func TestParseRobotsPaths(t *testing.T) {
@@ -99,5 +103,32 @@ func TestMergeWordlistDedupsAndAppends(t *testing.T) {
 	}
 	if n := strings.Count(string(s), "ftp\n"); n != 1 {
 		t.Errorf("ftp tak boleh dobel (dedup thd base); muncul %dx:\n%s", n, s)
+	}
+}
+
+// Proxy egress membuka TLS host yang punya eksklusi ber-path dengan sertifikat
+// sekali pakai. Klien yang memverifikasi akan gagal diam-diam dan recall turun.
+func TestProxiedClientWorksThroughOpenedTunnel(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "User-agent: *\nDisallow: /rahasia\n")
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "https://")
+	g, errs := scope.New([]string{"127.0.0.1"}, []string{"https://" + host + "/admin"})
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	addr, stop, err := egress.New(g, nil).Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+
+	client, err := proxiedClient(addr, 3*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := robotsPathsFrom(context.Background(), client, srv.URL); len(got) != 1 || got[0] != "rahasia" {
+		t.Errorf("robotsPathsFrom = %v, ingin [rahasia]", got)
 	}
 }
