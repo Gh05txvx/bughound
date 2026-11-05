@@ -3,6 +3,7 @@ package egress
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -130,6 +131,82 @@ func TestAudit_ProxyEnforcesIPURLExclusion(t *testing.T) {
 	}
 }
 
+// Nama in-scope bisa menunjuk IP publik yang dikecualikan. Tak ada koneksi nyata di
+// sini: finalDial hanya mencatat tujuan, jadi IP ini tak pernah dihubungi.
+func TestAudit_DialNeverReachesExcludedPublicIP(t *testing.T) {
+	cases := []struct {
+		name string
+		out  []string
+		ips  []string
+		port string
+		want string // tujuan dial; kosong berarti ditolak
+	}{
+		{"IP dikecualikan", []string{"203.0.113.10"}, []string{"203.0.113.10"}, "443", ""},
+		{"CIDR dikecualikan", []string{"203.0.113.0/24"}, []string{"203.0.113.77"}, "443", ""},
+		{"IP ter-map ke IPv6", []string{"203.0.113.10"}, []string{"::ffff:203.0.113.10"}, "443", ""},
+		{"port yang dikecualikan", []string{"203.0.113.10:8443"}, []string{"203.0.113.10"}, "8443", ""},
+		{"port lain tetap boleh", []string{"203.0.113.10:8443"}, []string{"203.0.113.10"}, "443", "203.0.113.10:443"},
+		{"eksklusi ber-path tak menutup IP", []string{"https://203.0.113.10/admin"}, []string{"203.0.113.10"}, "443", "203.0.113.10:443"},
+		{"IP lain dari nama yang sama dipakai", []string{"203.0.113.10"}, []string{"203.0.113.10", "203.0.113.11"}, "443", "203.0.113.11:443"},
+		{"IP lain yang tak dikecualikan", []string{"203.0.113.99"}, []string{"203.0.113.10"}, "443", "203.0.113.10:443"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := New(guardWith(t, []string{"demo.test"}, tc.out), nil)
+			p.lookupIP = func(context.Context, string) ([]netip.Addr, error) {
+				var ips []netip.Addr
+				for _, s := range tc.ips {
+					ips = append(ips, netip.MustParseAddr(s))
+				}
+				return ips, nil
+			}
+			var got string
+			p.finalDial = func(_ context.Context, _, addr string) (net.Conn, error) {
+				got = addr
+				return nil, errors.New("stub: tak ada koneksi nyata")
+			}
+			_, err := p.dialGuarded(context.Background(), "tcp", "demo.test:"+tc.port)
+			if got != tc.want {
+				t.Fatalf("tujuan dial = %q, ingin %q", got, tc.want)
+			}
+			if tc.want != "" {
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "egress ditolak") {
+				t.Errorf("harus ditolak, dapat: %v", err)
+			}
+			d := p.Denials()
+			if len(d) != 1 || d[0].Reason != scope.ReasonOutOfScope {
+				t.Errorf("penolakan = %+v, ingin satu out-of-scope", d)
+			}
+		})
+	}
+}
+
+// Dari sisi klien: nama lolos guard saat request, lalu ditahan saat dial.
+func TestAudit_ProxyBlocksNameResolvingToExcludedIP(t *testing.T) {
+	p := New(guardWith(t, []string{"demo.test"}, []string{"203.0.113.10"}), nil)
+	p.lookupIP = func(context.Context, string) ([]netip.Addr, error) {
+		return []netip.Addr{netip.MustParseAddr("203.0.113.10")}, nil
+	}
+	var dials atomic.Int32
+	p.finalDial = func(context.Context, string, string) (net.Conn, error) {
+		dials.Add(1)
+		return nil, errors.New("stub: tak ada koneksi nyata")
+	}
+	resp, err := proxyClient(t, startProxy(t, p)).Get("http://demo.test/")
+	if err != nil {
+		t.Fatalf("harus mendapat respons: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Errorf("status = %d, ingin 502", resp.StatusCode)
+	}
+	if n := dials.Load(); n != 0 {
+		t.Errorf("%d dial sampai ke IP yang dikecualikan", n)
+	}
+}
+
 // Request HTTP tanpa port memakai port 80, jadi eksklusi port 80 berlaku. lookupIP
 // dipasang agar kegagalan test pun tak pernah menyentuh jaringan.
 func TestAudit_ProxyEnforcesDefaultPortExclusion(t *testing.T) {
@@ -174,8 +251,9 @@ func TestAudit_IPAllowedHonoursPort(t *testing.T) {
 		{"192.168.1.5", "80", false}, // izin hanya untuk port itu
 		{"172.16.0.9", "3000", true},
 		{"172.16.0.9", "80", false},
-		{"8.8.8.8", "8080", true},    // IP publik tak dinilai di sini
+		{"8.8.8.8", "8080", true},    // IP publik yang tak dikecualikan
 		{"10.0.0.8", "bukan", false}, // port tak valid: fail closed
+		{"8.8.8.8", "bukan", false},  // berlaku juga untuk IP publik
 	}
 	for _, c := range cases {
 		if got := p.ipAllowed(netip.MustParseAddr(c.ip), c.port); got != c.want {

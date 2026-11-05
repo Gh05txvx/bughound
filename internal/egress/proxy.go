@@ -95,6 +95,7 @@ func (p *Proxy) dialGuarded(ctx context.Context, network, addr string) (net.Conn
 	if err != nil {
 		return nil, fmt.Errorf("egress: resolusi %q gagal: %w", host, err)
 	}
+	reason := scope.Reason("ip-internal")
 	for _, ip := range ips {
 		if p.ipAllowed(ip, port) {
 			dest := net.JoinHostPort(ip.String(), port)
@@ -103,8 +104,11 @@ func (p *Proxy) dialGuarded(ctx context.Context, network, addr string) (net.Conn
 			}
 			return p.dialer.DialContext(ctx, network, dest)
 		}
+		if !isSpecialIP(ip) {
+			reason = scope.ReasonOutOfScope
+		}
 	}
-	p.record(Decision{Method: "DIAL", Host: host, Target: host, Allowed: false, Reason: scope.Reason("ip-internal")})
+	p.record(Decision{Method: "DIAL", Host: host, Target: host, Allowed: false, Reason: reason})
 	return nil, fmt.Errorf("egress ditolak: %q menuju IP internal/terlarang (anti-SSRF / DNS rebinding)", host)
 }
 
@@ -115,14 +119,17 @@ func (p *Proxy) resolve(ctx context.Context, host string) ([]netip.Addr, error) 
 	return p.lookupIP(ctx, host)
 }
 
-// ipAllowed: IP publik biasa diizinkan (host sudah lolos scope guard); IP
-// internal/khusus hanya bila eksplisit in-scope untuk port tujuan. Port ikut
-// dinilai agar eksklusi satu port tak menutup port lain di IP yang sama.
+// ipAllowed menilai IP hasil resolve untuk port tujuan. Host sudah lolos scope
+// guard, jadi IP publik boleh kecuali dikecualikan; IP internal/khusus wajib
+// eksplisit in-scope. Port ikut dinilai agar eksklusi satu port tak menutup port
+// lain di IP yang sama.
 func (p *Proxy) ipAllowed(ip netip.Addr, port string) bool {
-	if !isSpecialIP(ip) {
-		return true
+	ip = ip.Unmap() // bentuk ::ffff:a.b.c.d tak cocok entri IPv4-nya
+	d := p.guard.Evaluate(net.JoinHostPort(ip.String(), port))
+	if isSpecialIP(ip) {
+		return d.Allowed
 	}
-	return p.guard.Evaluate(net.JoinHostPort(ip.String(), port)).Allowed
+	return d.Allowed || d.Reason == scope.ReasonNotInScope
 }
 
 func isSpecialIP(a netip.Addr) bool {

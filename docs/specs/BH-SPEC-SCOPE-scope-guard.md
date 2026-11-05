@@ -108,6 +108,7 @@ Kasus yang sering jadi celah bypass dan cara guard menanganinya:
 | Port bernol di depan | `https://acme.io:0443/` melewati eksklusi port 443 | Port dikanonkan sebelum dibandingkan |
 | IP tersamar | `203.0.113.10.`, digit fullwidth | Entri menjadi IP; target ditolak |
 | Eksklusi ber-path di HTTPS | CONNECT hanya memperlihatkan `host:port`, jadi `/admin` lolos lewat tunnel | `host:port` itu dibuka dan tiap request dinilai; yang tak terbaca sebagai HTTP/1 ditutup |
+| Nama menuju IP yang dikecualikan | `app.acme.io` in-scope, tapi resolve ke `203.0.113.10` yang out-of-scope | Ditolak saat connect; IP lain dari nama yang sama tetap boleh. Eksklusi ber-path pada IP tak berlaku untuk request lewat nama, karena guard tak memetakan nama ke IP saat menilai path |
 | Port pada IP privat | Eksklusi `10.0.0.5:8080` menutup port lain, atau izin berport tak berlaku saat connect | Dinilai per port tujuan. Entri ber-path tak memberi izin, karena saat connect belum ada path |
 | Entri tak pernah cocok | Eksklusi mati tanpa peringatan | Ditolak saat input (lihat Format input scope) |
 | Apex vs wildcard | `acme.io` lolos lewat `*.acme.io` | Apex tidak tercakup wildcard kecuali didaftarkan |
