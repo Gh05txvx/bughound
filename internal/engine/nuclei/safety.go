@@ -37,18 +37,39 @@ const (
 	browserUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
-// destructiveExcludeTags adalah tag nuclei yang TIDAK PERNAH dikirim engine DAST
-// bughound: payload yang berpotensi merusak atau menurunkan layanan target.
-// Daftar sengaja konservatif dan bisa diperluas; non-destruktif ini struktural.
-var destructiveExcludeTags = []string{"dos"}
+// destructiveExcludeTags adalah tag nuclei yang TIDAK PERNAH dikirim engine
+// bughound: payload yang berpotensi merusak/menurunkan layanan target atau
+// membajak request pengguna lain. dos = denial-of-service; smuggling = request
+// smuggling/desync. Daftar sengaja konservatif; non-destruktif ini struktural.
+var destructiveExcludeTags = []string{"dos", "smuggling"}
+
+// destructiveExcludeIDs adalah template unsafe individual yang mengubah keadaan
+// target (unggah/tulis) sehingga tak non-destruktif, tapi tak tertangkap tag di
+// atas. CVE-2021-30118: unggah webshell .aspx (Kaseya). CVE-2023-46747: smuggling
+// AJP F5 yang membuat admin lalu menjalankan perintah. Dikecualikan per-ID, bukan
+// via tag intrusive, agar ratusan template intrusive non-destruktif lain tetap jalan.
+var destructiveExcludeIDs = []string{"CVE-2021-30118", "CVE-2023-46747"}
+
+// nonDestructiveArgs mengembalikan argumen nuclei yang menolak template/payload
+// destruktif. Dipakai jalur plain runner maupun -dast agar kebijakan ini satu
+// sumber dan tak bisa lepas di salah satu jalur.
+func nonDestructiveArgs() []string {
+	var a []string
+	if len(destructiveExcludeTags) > 0 {
+		a = append(a, "-exclude-tags", strings.Join(destructiveExcludeTags, ","))
+	}
+	if len(destructiveExcludeIDs) > 0 {
+		a = append(a, "-exclude-id", strings.Join(destructiveExcludeIDs, ","))
+	}
+	return a
+}
 
 // nucleiExtraArgs mengembalikan argumen keamanan untuk `nuclei -dast`. Non-
 // destruktif selalu disertakan; argumen stealth hanya saat Stealth aktif.
 func (s Safety) nucleiExtraArgs() []string {
-	args := []string{
+	args := append([]string{
 		"-no-interactsh", // tanpa callback blind/OAST ke pihak ketiga
-		"-exclude-tags", strings.Join(destructiveExcludeTags, ","),
-	}
+	}, nonDestructiveArgs()...)
 	if s.Stealth {
 		args = append(args,
 			"-c", strconv.Itoa(stealthConcurrency),
@@ -95,6 +116,6 @@ func (s Safety) Describe() string {
 	if s.Stealth {
 		mode = fmt.Sprintf("stealth(rate≤%d,c%d,UA-browser)", stealthRateLimit, stealthConcurrency)
 	}
-	return fmt.Sprintf("non-destruktif[no-interactsh,exclude=%s,aggression=low] + %s",
-		strings.Join(destructiveExcludeTags, ","), mode)
+	return fmt.Sprintf("non-destruktif[no-interactsh,exclude-tags=%s,exclude-id=%d,aggression=low] + %s",
+		strings.Join(destructiveExcludeTags, ","), len(destructiveExcludeIDs), mode)
 }

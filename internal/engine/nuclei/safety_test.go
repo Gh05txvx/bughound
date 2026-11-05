@@ -55,6 +55,20 @@ func TestSafetyStandardRespectsRate(t *testing.T) {
 	}
 }
 
+// Template unsafe destruktif ditolak: tag smuggling (desync) + 2 ID yang menulis
+// ke target (webshell/F5). Wajib ada apa pun profilnya.
+func TestSafetyExcludesDestructiveUnsafe(t *testing.T) {
+	for _, st := range []bool{false, true} {
+		r := &DASTRunner{RateLimit: 25, proxyAddr: "x:1", Safety: Safety{Stealth: st}}
+		a := strings.Join(r.nucleiArgs("l"), " ")
+		for _, want := range []string{"-exclude-tags dos,smuggling", "-exclude-id CVE-2021-30118,CVE-2023-46747"} {
+			if !strings.Contains(a, want) {
+				t.Errorf("stealth=%v: nucleiArgs tak memuat %q; got: %s", st, want, a)
+			}
+		}
+	}
+}
+
 // maxURLs lebih kecil saat stealth (cakupan dipersempit).
 func TestSafetyMaxURLs(t *testing.T) {
 	if (Safety{Stealth: true}).maxURLs() >= (Safety{}).maxURLs() {

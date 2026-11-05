@@ -82,6 +82,43 @@ func tlsTarget(t *testing.T) (*httptest.Server, *seenRequests, string) {
 }
 
 // insecureClient meniru engine: lewat proxy, tak memverifikasi sertifikat.
+// Balasan 200 CONNECT wajib membawa header (Proxy-Agent), bukan status-line
+// telanjang: klien rawhttp nuclei mem-Peek 5 byte sesudah status-line dan menggantung
+// bila hanya ada CRLF, membuat template unsafe mati tiap scan. Diuji di jalur tunnel
+// buta (tulis balasan sesudah dial) dan jalur dibuka (tulis balasan lalu serveOpened).
+func TestIntercept_ConnectReplyCarriesHeader(t *testing.T) {
+	_, _, host := tlsTarget(t)
+	cases := []struct {
+		name string
+		out  []string
+	}{
+		{"tunnel buta", nil},
+		{"dibuka", []string{"https://" + host + "/admin"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := startProxy(t, New(guardWith(t, []string{"127.0.0.1"}, tc.out), nil))
+			conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			conn.SetDeadline(time.Now().Add(5 * time.Second))
+			fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)
+			resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodConnect})
+			if err != nil {
+				t.Fatalf("baca respons CONNECT: %v", err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, ingin 200", resp.StatusCode)
+			}
+			if resp.Header.Get("Proxy-Agent") == "" {
+				t.Errorf("balasan CONNECT tanpa header Proxy-Agent (klien rawhttp bisa menggantung di Peek)")
+			}
+		})
+	}
+}
+
 func insecureClient(t *testing.T, addr string) *http.Client {
 	t.Helper()
 	pu, _ := url.Parse("http://" + addr)

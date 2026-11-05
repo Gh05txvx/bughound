@@ -72,6 +72,9 @@ func (r *Runner) buildArgs(target string) []string {
 	if sev := joinNonEmpty(r.Severity); sev != "" {
 		args = append(args, "-severity", sev)
 	}
+	// Non-destruktif struktural: berlaku juga di plain runner, bukan hanya -dast.
+	// Tanpa ini, template unsafe destruktif (smuggling, unggah webshell) ikut jalan.
+	args = append(args, nonDestructiveArgs()...)
 	return args
 }
 

@@ -233,6 +233,14 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, rt http.RoundTri
 	io.Copy(w, resp.Body)
 }
 
+// connectEstablished adalah balasan 200 untuk CONNECT. Header Proxy-Agent sengaja
+// disertakan: klien raw nuclei (rawhttp) mem-Peek 5 byte sesudah status-line untuk
+// melewati duplikat status-line, dan memblok bila balasan hanya status-line + CRLF
+// (tunnel tetap terbuka, byte tak kunjung datang) — membuat template unsafe
+// menggantung sampai timeout dan 0 request terkirim. Satu baris header apa pun
+// membuatnya langsung lanjut. Balasan ini hanya ke klien; target tak melihatnya.
+const connectEstablished = "HTTP/1.1 200 Connection Established\r\nProxy-Agent: bughound\r\n\r\n"
+
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	// r.Host berbentuk host:port. Scope guard dievaluasi atas host tujuan.
 	d := p.guard.Evaluate(r.Host)
@@ -252,7 +260,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+		_, _ = client.Write([]byte(connectEstablished))
 		p.serveOpened(client, rw.Reader, r.Host)
 		return
 	}
@@ -266,7 +274,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		dest.Close()
 		return
 	}
-	_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+	_, _ = client.Write([]byte(connectEstablished))
 	go pipe(dest, client)
 	go pipe(client, dest)
 }

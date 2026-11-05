@@ -39,7 +39,20 @@ func TestRunnerBuildArgsNoSelection(t *testing.T) {
 	// Seleksi kosong → tak ada flag -tags/-severity (jalankan semua template).
 	r := &Runner{Tags: []string{"", "  "}, Severity: nil}
 	got := strings.Join(r.buildArgs("https://demo.test"), " ")
-	if strings.Contains(got, "-tags") || strings.Contains(got, "-severity") {
+	// " -tags " (berspasi awal) membedakan flag seleksi dari "-exclude-tags".
+	if strings.Contains(got, " -tags ") || strings.Contains(got, "-severity") {
 		t.Errorf("seleksi kosong tak boleh memunculkan flag; dapat: %s", got)
+	}
+}
+
+// Non-destruktif berlaku juga di plain runner, dengan atau tanpa seleksi template.
+func TestRunnerBuildArgsNonDestructive(t *testing.T) {
+	for _, r := range []*Runner{{}, {Tags: []string{"cve"}, Severity: []string{"high"}}} {
+		got := strings.Join(r.buildArgs("https://demo.test"), " ")
+		for _, want := range []string{"-exclude-tags dos,smuggling", "-exclude-id CVE-2021-30118,CVE-2023-46747"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("buildArgs tak memuat %q; dapat: %s", want, got)
+			}
+		}
 	}
 }
