@@ -96,7 +96,7 @@ func (p *Proxy) dialGuarded(ctx context.Context, network, addr string) (net.Conn
 		return nil, fmt.Errorf("egress: resolusi %q gagal: %w", host, err)
 	}
 	for _, ip := range ips {
-		if p.ipAllowed(ip) {
+		if p.ipAllowed(ip, port) {
 			dest := net.JoinHostPort(ip.String(), port)
 			if p.finalDial != nil {
 				return p.finalDial(ctx, network, dest) // lewat upstream (ke IP yang sudah di-pin)
@@ -116,12 +116,13 @@ func (p *Proxy) resolve(ctx context.Context, host string) ([]netip.Addr, error) 
 }
 
 // ipAllowed: IP publik biasa diizinkan (host sudah lolos scope guard); IP
-// internal/khusus hanya bila eksplisit in-scope sebagai IP/CIDR.
-func (p *Proxy) ipAllowed(ip netip.Addr) bool {
+// internal/khusus hanya bila eksplisit in-scope untuk port tujuan. Port ikut
+// dinilai agar eksklusi satu port tak menutup port lain di IP yang sama.
+func (p *Proxy) ipAllowed(ip netip.Addr, port string) bool {
 	if !isSpecialIP(ip) {
 		return true
 	}
-	return p.guard.Evaluate(ip.String()).Allowed
+	return p.guard.Evaluate(net.JoinHostPort(ip.String(), port)).Allowed
 }
 
 func isSpecialIP(a netip.Addr) bool {

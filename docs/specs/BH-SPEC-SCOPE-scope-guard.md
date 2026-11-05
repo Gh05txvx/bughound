@@ -108,6 +108,7 @@ Kasus yang sering jadi celah bypass dan cara guard menanganinya:
 | Port bernol di depan | `https://acme.io:0443/` melewati eksklusi port 443 | Port dikanonkan sebelum dibandingkan |
 | IP tersamar | `203.0.113.10.`, digit fullwidth | Entri menjadi IP; target ditolak |
 | Eksklusi ber-path di HTTPS | CONNECT hanya memperlihatkan `host:port`, jadi `/admin` lolos lewat tunnel | `host:port` itu dibuka dan tiap request dinilai; yang tak terbaca sebagai HTTP/1 ditutup |
+| Port pada IP privat | Eksklusi `10.0.0.5:8080` menutup port lain, atau izin berport tak berlaku saat connect | Dinilai per port tujuan. Entri ber-path tak memberi izin, karena saat connect belum ada path |
 | Entri tak pernah cocok | Eksklusi mati tanpa peringatan | Ditolak saat input (lihat Format input scope) |
 | Apex vs wildcard | `acme.io` lolos lewat `*.acme.io` | Apex tidak tercakup wildcard kecuali didaftarkan |
 | Case & trailing dot | `ACME.io`, `acme.io.` | Dinormalkan sebelum dibandingkan |
@@ -192,7 +193,7 @@ Keluaran ditulis ulang dari entri ternormalkan, bukan disalin dari string platfo
 
 - [x] Kebijakan port: **default v1 = scope berbasis host mencakup semua port**, kecuali entri menyebut port eksplisit (lihat §Format di atas). Pengetatan ke 80/443-saja tetap opsi masa depan bila dibutuhkan.
 - [x] Apex + wildcard: **tetap dipisah** — `*.domain` hanya mencakup subdomain (wildcard di posisi paling kiri), apex harus didaftarkan sebagai entri sendiri (`internal/scope/entry.go`). Pilihan yang lebih ketat dan aman.
-- [x] IP privat/metadata: **tolak saat connect kecuali eksplisit in-scope** (IP/CIDR). Dialer egress menolak loopback/privat/link-local/metadata lalu me-*pin* IP yang sudah dicek (anti-rebinding). Lihat `BH-AUDIT-M2` BH-F02, `internal/egress/ssrf_test.go`.
+- [x] IP privat/metadata: **tolak saat connect kecuali eksplisit in-scope** untuk port tujuan (IP, `IP:port`, CIDR, atau URL ber-host IP tanpa path). Dialer egress menolak loopback/privat/link-local/metadata lalu me-*pin* IP yang sudah dicek (anti-rebinding). Lihat `BH-AUDIT-M2` BH-F02, `internal/egress/ssrf_test.go`.
 - [x] Format scope platform: **importer HackerOne/Bugcrowd dibuat** (lihat §Importer format platform). Bentuk kanonik dokumen ini tetap satu-satunya yang disimpan dan ditegakkan.
 - [x] Penegakan egress: **di aplikasi (proxy paksa)** — engine aktif dipaksa lewat `-proxy` + env `HTTP(S)_PROXY`/`ALL_PROXY`. Allowlist jaringan / kontainer per scan = hardening opt-in; residual egress non-HTTP diterima untuk threat model saat ini (ADR `BH-ADR-egress-isolation`, BH-F03).
 - [x] Resolusi DNS: **ya, ditolak** — hostname in-scope yang resolve ke IP out-of-scope/privat ditolak saat connect dengan IP-pinning (mencegah DNS rebinding). Lihat BH-F02.
