@@ -40,10 +40,18 @@ type ffufResult struct {
 const (
 	catchAllMinHits     = 10  // grup dominan minimal sebesar ini baru dianggap wildcard
 	catchAllMinFraction = 0.6 // dan minimal menyumbang 60% dari seluruh hasil
+
+	// authWallMinHits adalah ambang grup dinding auth (lihat authWallFingerprintOf).
+	// Sengaja jauh di atas catchAllMinHits: sidik jarinya mengabaikan panjang, jadi
+	// grup kecil bisa saja rute terproteksi NYATA (API yang membalas 404 untuk path
+	// tak dikenal dan 401 yang menggemakan path untuk rute nyata) — justru itu yang
+	// dicari brute route API. Dinding sungguhan di prefix populer menghasilkan
+	// ratusan hingga ribuan hit; di bawah ambang, kebisingannya masih terbatas.
+	authWallMinHits = 100
 )
 
 // Parse membaca output ffuf (JSON) dan mengembalikan temuan ternormalkan, setelah
-// kalibrasi catch-all menekan respons wildcard (lihat calibrate).
+// kalibrasi menekan respons massal yang bukan endpoint nyata (lihat calibrate).
 func Parse(r io.Reader, program, runID string) ([]*finding.Finding, error) {
 	var out ffufOutput
 	if err := json.NewDecoder(r).Decode(&out); err != nil {
@@ -67,37 +75,52 @@ type item struct {
 	f   *finding.Finding
 }
 
-// calibrate menekan grup respons dominan (catch-all / SPA wildcard) bila melewati
-// ambang, mengganti ratusan path semu dengan satu temuan info. Hasil lain —
-// endpoint dengan sidik jari berbeda (ukuran/kata lain) — dipertahankan utuh.
+// calibrate menekan respons massal yang bukan endpoint nyata dan menggantinya dengan
+// satu temuan info per pola, agar penekanan tetap terlihat. Dua pola dinilai
+// berurutan: catch-all (respons identik), lalu dinding auth (401/403 sebentuk,
+// panjang berubah). Hasil lain — endpoint dengan sidik jari berbeda — tetap utuh.
 func calibrate(items []item, program, runID string) []*finding.Finding {
-	if len(items) < catchAllMinHits {
-		return collect(items)
+	var notes []*finding.Finding
+	rest, sample, n := splitDominant(items, fingerprintOf, catchAllMinHits)
+	if n > 0 {
+		notes = append(notes, wildcardNote(sample, n, len(items), program, runID))
 	}
+	rest, sample, n = splitDominant(rest, authWallFingerprintOf, authWallMinHits)
+	if n > 0 {
+		notes = append(notes, authWallNote(sample, n, len(items), program, runID))
+	}
+	return append(collect(rest), notes...)
+}
+
+// splitDominant memisahkan grup terbesar menurut key bila grup itu minimal minHits
+// dan menyumbang minimal catchAllMinFraction dari items. Mengembalikan sisa item,
+// satu contoh dari grup, dan ukuran grup (0 = tak ada yang ditekan). Key kosong
+// berarti item itu tak ikut dinilai.
+func splitDominant(items []item, key func(ffufResult) string, minHits int) (rest []item, sample ffufResult, n int) {
 	counts := map[string]int{}
 	for _, it := range items {
-		counts[fingerprintOf(it.res)]++
-	}
-	domFP, domN := "", 0
-	for fp, n := range counts {
-		if n > domN {
-			domFP, domN = fp, n
+		if k := key(it.res); k != "" {
+			counts[k]++
 		}
 	}
-	if domN < catchAllMinHits || float64(domN)/float64(len(items)) < catchAllMinFraction {
-		return collect(items) // tak ada pola wildcard yang meyakinkan
+	dom, domN := "", 0
+	for k, c := range counts {
+		if c > domN {
+			dom, domN = k, c
+		}
 	}
-
-	kept := make([]*finding.Finding, 0, len(items)-domN+1)
-	var sample ffufResult
+	if domN < minHits || float64(domN)/float64(len(items)) < catchAllMinFraction {
+		return items, ffufResult{}, 0 // tak ada pola yang meyakinkan
+	}
+	rest = make([]item, 0, len(items)-domN)
 	for _, it := range items {
-		if fingerprintOf(it.res) == domFP {
-			sample = it.res // simpan satu contoh untuk ringkasan
+		if key(it.res) == dom {
+			sample = it.res
 			continue
 		}
-		kept = append(kept, it.f)
+		rest = append(rest, it)
 	}
-	return append(kept, wildcardNote(sample, domN, len(items), program, runID))
+	return rest, sample, domN
 }
 
 func collect(items []item) []*finding.Finding {
@@ -112,6 +135,21 @@ func collect(items []item) []*finding.Finding {
 // identik. Kombinasi ini stabil untuk halaman catch-all yang byte-nya sama.
 func fingerprintOf(res ffufResult) string {
 	return fmt.Sprintf("%d|%d|%d", res.Status, res.Length, res.Words)
+}
+
+// authWallFingerprintOf adalah sidik jari longgar untuk dinding auth: panjang
+// diabaikan karena banyak gateway menggemakan path di body (mis. Spring Boot:
+// {"status":401,"path":"/api/x"}), sehingga panjang berubah per path sementara
+// bentuknya tetap. Content-type juga diabaikan: gateway bisa menurunkannya dari
+// ekstensi path. Hanya 401/403 (selainnya key kosong): rute 200 nyata sering
+// kebetulan sebentuk, mis. JSON tanpa spasi selalu 1 kata.
+func authWallFingerprintOf(res ffufResult) string {
+	switch res.Status {
+	case 401, 403:
+		return fmt.Sprintf("%d|%d|%d", res.Status, res.Words, res.Lines)
+	default:
+		return ""
+	}
 }
 
 func mapResult(res ffufResult, program, runID string) (*finding.Finding, error) {
@@ -149,6 +187,40 @@ func mapResult(res ffufResult, program, runID string) (*finding.Finding, error) 
 // sehingga penekanan TERLIHAT & dapat diaudit (bukan drop diam-diam) dan hunter
 // tahu persis pola apa yang disaring.
 func wildcardNote(sample ffufResult, suppressed, total int, program, runID string) *finding.Finding {
+	note := calibrationNote(sample, suppressed, total, program, runID)
+	note.Type = "content-discovery-wildcard"
+	note.Title = fmt.Sprintf("Kalibrasi ffuf: %d path ditekan (respons catch-all seragam)", suppressed)
+	note.Description = fmt.Sprintf("Server membalas %d dari %d path uji dengan respons identik "+
+		"(HTTP %d · %d bytes · %d kata) — indikasi catch-all/SPA wildcard. Temuan path untuk "+
+		"pola ini ditekan sebagai kemungkinan positif palsu; verifikasi manual bila ada path "+
+		"spesifik yang diragukan.", suppressed, total, sample.Status, sample.Length, sample.Words)
+	note.Evidence = &finding.Evidence{
+		Matched: fmt.Sprintf("HTTP %d · %d bytes · %d kata · %d/%d path seragam", sample.Status, sample.Length, sample.Words, suppressed, total),
+	}
+	return note
+}
+
+// authWallNote merangkum dinding auth yang ditekan. Tipenya sendiri, bukan tipe
+// catch-all: kunci dedup catatan di akar target hanya bisa berbeda lewat tipe, jadi
+// satu target dengan kedua pola tetap menampilkan dua catatan.
+func authWallNote(sample ffufResult, suppressed, total int, program, runID string) *finding.Finding {
+	note := calibrationNote(sample, suppressed, total, program, runID)
+	note.Type = "content-discovery-auth-wall"
+	note.Title = fmt.Sprintf("Kalibrasi ffuf: %d path ditekan (dinding auth HTTP %d)", suppressed, sample.Status)
+	note.Description = fmt.Sprintf("Server membalas %d dari %d path uji dengan HTTP %d yang sebentuk "+
+		"(%d kata, %d baris), hanya panjangnya berubah — indikasi gateway auth yang menggemakan path "+
+		"di body, bukan %d endpoint nyata. Contoh: %s. Temuan path untuk pola ini ditekan; rute nyata "+
+		"di balik dinding tak terbedakan tanpa kredensial, verifikasi manual bila ada path spesifik "+
+		"yang diragukan.", suppressed, total, sample.Status, sample.Words, sample.Lines, suppressed, sample.URL)
+	note.Evidence = &finding.Evidence{
+		Matched: fmt.Sprintf("HTTP %d · %d kata · %d baris · %d/%d path sebentuk", sample.Status, sample.Words, sample.Lines, suppressed, total),
+	}
+	return note
+}
+
+// calibrationNote membangun kerangka catatan kalibrasi; Type, Title, Description,
+// dan Evidence diisi pemanggil sesuai pola yang ditekan.
+func calibrationNote(sample ffufResult, suppressed, total int, program, runID string) *finding.Finding {
 	base := baseOf(sample.URL)
 	raw, _ := json.Marshal(struct {
 		Suppressed int   `json:"suppressed"`
@@ -159,25 +231,16 @@ func wildcardNote(sample ffufResult, suppressed, total int, program, runID strin
 	}{suppressed, total, sample.Status, sample.Length, sample.Words})
 
 	return &finding.Finding{
-		Program: program,
-		RunID:   runID,
-		Target:  firstNonEmpty(sample.Host, base),
-		Type:    "content-discovery-wildcard",
-		Title:   fmt.Sprintf("Kalibrasi ffuf: %d path ditekan (respons catch-all seragam)", suppressed),
-		Description: fmt.Sprintf("Server membalas %d dari %d path uji dengan respons identik "+
-			"(HTTP %d · %d bytes · %d kata) — indikasi catch-all/SPA wildcard. Temuan path untuk "+
-			"pola ini ditekan sebagai kemungkinan positif palsu; verifikasi manual bila ada path "+
-			"spesifik yang diragukan.", suppressed, total, sample.Status, sample.Length, sample.Words),
+		Program:      program,
+		RunID:        runID,
+		Target:       firstNonEmpty(sample.Host, base),
 		Severity:     finding.SeverityInfo,
 		Confidence:   finding.ConfidenceHigh,
 		Tags:         []string{"content-discovery", "calibration"},
 		Location:     finding.Location{URL: base},
 		SourceEngine: "ffuf",
 		Status:       finding.StatusNew,
-		Evidence: &finding.Evidence{
-			Matched: fmt.Sprintf("HTTP %d · %d bytes · %d kata · %d/%d path seragam", sample.Status, sample.Length, sample.Words, suppressed, total),
-		},
-		Raw: raw,
+		Raw:          raw,
 	}
 }
 
