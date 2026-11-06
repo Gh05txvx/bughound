@@ -40,3 +40,10 @@ hasil scan/
 
 # Claude Code: data sesi, memory, & settings lokal (transcript + settings.local.json) — jangan commit, apalagi ke repo publik
 .claude/
+
+# Dokumen internal — lokal saja, jangan commit ke repo publik (dipindah dari repo 2026-11-06)
+/CLAUDE.md
+/docs/adr/
+/docs/audit/
+/docs/personas/
+/docs/product/

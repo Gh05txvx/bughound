@@ -56,7 +56,7 @@ Tiap rilis = single binary lintas-platform (linux/darwin/windows) + `SHA256SUMS.
 6. Audit trail HMAC-chain append-only + **anchoring eksternal** (BH-F06): trunkasi/rollback/penghapusan total store terdeteksi.
 7. Satu skema temuan seragam untuk semua engine.
 
-**Audit pre-launch (`BH-P03-APPSEC`)** — laporan di `audit/BH-AUDIT-M2-pre-launch.md`. Semua temuan **High/Medium/Low** diremediasi (BH-F01 CSRF+auth, BH-F02 rebinding, BH-F04 parser, BH-F05 reveal-audit, BH-F06 anchoring, BH-F07 rotasi; BH-F03 dimitigasi Opsi C + ADR). Tersisa: Info (F08/F09), BH-F03 (defense-in-depth), Option A (allowlist OS). Perbaikan tambahan dari E2E: CSRF menerima `Origin: null` (form non-HTMX same-origin di Chromium) tanpa melemahkan pertahanan (token + Sec-Fetch-Site).
+**Audit pre-launch (`BH-P03-APPSEC`)** — laporan audit dikelola internal (tak disertakan di repo publik). Semua temuan **High/Medium/Low** diremediasi (BH-F01 CSRF+auth, BH-F02 rebinding, BH-F04 parser, BH-F05 reveal-audit, BH-F06 anchoring, BH-F07 rotasi; BH-F03 dimitigasi Opsi C + ADR). Tersisa: Info (F08/F09), BH-F03 (defense-in-depth), Option A (allowlist OS). Perbaikan tambahan dari E2E: CSRF menerima `Origin: null` (form non-HTMX same-origin di Chromium) tanpa melemahkan pertahanan (token + Sec-Fetch-Site).
 
 ## Rilis & CI
 

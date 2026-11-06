@@ -80,7 +80,7 @@ Jujur soal yang **belum** dilakukan BugHound — ini desain, bukan bug:
 - **Bukan scanner baru.** BugHound tidak menemukan apa yang engine di bawahnya tak bisa temukan; kualitas recall mengikuti engine + template yang dipasang.
 - **Engine tidak di-bundle ke binary.** Untuk scan nyata, pasang tool-nya sendiri atau pakai image Docker (engine sudah di dalam). Default `-engine mock` tak menyentuh jaringan.
 - **OpenAPI = perluasan endpoint.** Tiap endpoint di-expand jadi target (probe + template). Fuzzing per-method/body yang lebih dalam (mis. `nuclei -im openapi`) belum didukung.
-- **"Identify your traffic" belum otomatis.** Bila RoE mewajibkan header/User-Agent penanda khusus, engine mengirim UA-nya sendiri — perlu penanganan manual (lihat [`docs/product/BH-DOC-pilot-baseline.md`](docs/product/BH-DOC-pilot-baseline.md) §0.3).
+- **"Identify your traffic" belum otomatis.** Bila RoE mewajibkan header/User-Agent penanda khusus, engine mengirim UA-nya sendiri — perlu penanganan manual.
 - **Tidak menjadwal sendiri.** Pembatasan jam uji dari RoE dijadwalkan manual oleh operator.
 - **Format payload netral sendiri ditunda.** Payload tetap format native engine + satu katalog metadata; format netral tunggal belum dibangun (lihat `BH-SPEC-PAYLOAD`).
 
@@ -331,7 +331,7 @@ Keamanan adalah **batas struktural, bukan tambahan**. Prinsip yang mengikat selu
 - **Satu skema temuan seragam** sebagai fondasi; semua engine menulis ke sana.
 
 > [!IMPORTANT]
-> Scope guard menegakkan **DI MANA** (in/out), bukan **APAKAH otomasi diizinkan**: sebuah aset bisa in-scope tapi program tetap melarang scanner. Keputusan izin *automated scanning* dibaca manusia dari Rules of Engagement — lihat lembar [`docs/product/BH-DOC-pilot-baseline.md`](docs/product/BH-DOC-pilot-baseline.md) §0. Saat diakses dari luar localhost, taruh di belakang TLS (agar HTTP Basic tak lewat polos) dan **jangan** pakai `-no-auth`. Petakan port Docker ke `127.0.0.1` saja.
+> Scope guard menegakkan **DI MANA** (in/out), bukan **APAKAH otomasi diizinkan**: sebuah aset bisa in-scope tapi program tetap melarang scanner. Keputusan izin *automated scanning* dibaca manusia dari Rules of Engagement (keputusan manual operator, di luar penegakan teknis). Saat diakses dari luar localhost, taruh di belakang TLS (agar HTTP Basic tak lewat polos) dan **jangan** pakai `-no-auth`. Petakan port Docker ke `127.0.0.1` saja.
 
 ## Build dan rilis
 
