@@ -4,12 +4,22 @@ Log rekayasa: **apa yang sudah dibangun** di repo (pelengkap spec/PRD yang menya
 
 ## Status ringkas
 
-Fondasi **M0**, MVP **M1**, triase & multi-engine **M2**: **selesai**. **M3** (pengerasan & rilis) berjalan: audit pre-launch lolos + diremediasi, export platform, dashboard, SAST plugin, adapter engine nyata (ffuf, ZAP). Empat rilis publik: **v0.1.0 → v0.2.0**.
+Fondasi **M0**, MVP **M1**, triase & multi-engine **M2**: **selesai**. **M3** (pengerasan & rilis) berjalan: audit pre-launch lolos + diremediasi, export platform, dashboard, SAST plugin, adapter engine nyata (ffuf, ZAP). Rilis publik: **v0.1.0 → v0.3.2** (lintas-platform + `SHA256SUMS.txt`).
 
 ## Rilis
 
 | Tag | Isi inti |
 | --- | --- |
+| `v0.3.2` | Brand "BugHound" diseragamkan (UI/docs/report); impor scope HackerOne/Bugcrowd; preset template per program; kategori OWASP 2021 + metode HTTP & clamp ukuran evidence di temuan; sejumlah pengerasan egress/scope |
+| `v0.3.1` | Pengerasan secret (redaksi master key & kredensial proxy chain, bungkus master key dengan Secret); buang dead code (BH-P06); ringkas intro README |
+| `v0.3.0` | Rilis besar: RBAC + login wajib, redesign UI, Bank Payload + seleksi template, throttle laju per-engine; dashboard (monitor scan live, hapus temuan/program); kualitas ffuf (kalibrasi catch-all SPA + dedup site-wide + enrichment robots.txt/OpenAPI); adapter retire.js (SCA klien) & nuclei-dast (fuzzing aktif); integrasi Burp (API baca-saja + extension); M3 lengkapi-draft; menu Proxy |
+| `v0.2.7` | Capture: reverse proxy perekam (browsing manual → scan) |
+| `v0.2.6` | Proxy upstream & rantai (chain) egress |
+| `v0.2.5` | gRPC fuzz invokasi metode read-only (deteksi akses tanpa auth) |
+| `v0.2.4` | Scan ter-arah OpenAPI/Swagger + enumerasi gRPC |
+| `v0.2.3` | Recon naabu + gau + dnsx (image GHCR 9-engine) |
+| `v0.2.2` | Docker (engine di dalam image) + publish image ke GHCR |
+| `v0.2.1` | Adapter engine nyata ffuf + ZAP (mode scan & wordlist bawaan) |
 | `v0.2.0` | SAST sebagai plugin (analisis statis lokal; minor bump) |
 | `v0.1.2` | Export report ke template HackerOne/Bugcrowd + Dashboard |
 | `v0.1.1` | Perbaikan CSRF (Origin: null) + anchoring audit (BH-F06) |
