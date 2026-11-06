@@ -16,9 +16,9 @@ import burp.api.montoya.MontoyaApi;
 public class BughoundExtension implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
-        api.extension().setName("bughound");
+        api.extension().setName("BugHound");
         BughoundPanel panel = new BughoundPanel(api);
-        api.userInterface().registerSuiteTab("bughound", panel);
-        api.logging().logToOutput("bughound: extension dimuat — buka tab 'bughound'.");
+        api.userInterface().registerSuiteTab("BugHound", panel);
+        api.logging().logToOutput("bughound: extension dimuat — buka tab 'BugHound'.");
     }
 }

@@ -18,7 +18,7 @@ Menu ini **diagnostik**, bukan jalur scan. Rantai yang kamu masukkan di sini tid
 
 - **Echo tunduk scope guard program** (default-deny, `BH-SPEC-SCOPE`). Host echo yang tidak terbukti in-scope **ditolak** — sama seperti engine nyata.
 - **Kredensial proxy** (`user:pass@`) **disensor** dari UI, pesan error, dan audit (`egress.check`). Tak pernah bocor.
-- **IP-pinning / anti-SSRF**: target di-resolve & di-*pin* di host bughound sebelum rantai; IP privat/internal ditolak kecuali eksplisit in-scope.
+- **IP-pinning / anti-SSRF**: target di-resolve & di-*pin* di host BugHound sebelum rantai; IP privat/internal ditolak kecuali eksplisit in-scope.
 - **Bounded**: diagnostik ini sekali-jalan (timeout 8 dtk/hop, 10 dtk/echo) — bukan flood. Rate limiter wajib berlaku di **scan**, diatur di form Scan.
 
 ---
@@ -37,7 +37,7 @@ engine/bughound → hop1 → hop2 → … → hopN → target
 | --- | --- | --- |
 | `http://` | HTTP `CONNECT` | proxy HTTP biasa (Burp, Squid, dll). Tak perlu pasang CA cert. |
 | `https://` | HTTP `CONNECT` over TLS | koneksi ke proxy-nya terenkripsi. |
-| `socks5://` | SOCKS5 | DNS di-resolve sisi bughound (lihat §6). |
+| `socks5://` | SOCKS5 | DNS di-resolve sisi BugHound (lihat §6). |
 | `socks5h://` | SOCKS5 | sama; resolusi target tetap di-pin di hulu. |
 
 **Kredensial:** sematkan di URL → `skema://user:pass@host:port`. Didukung untuk HTTP (`Proxy-Authorization: Basic`) dan SOCKS5 (auth user/pass). **Ditampilkan tersensor** menjadi `skema://host:port`.
@@ -70,15 +70,15 @@ socks5://127.0.0.1:9050
 | **Proxy korporat / Squid** | `http://proxy.corp.local:3128` | wajib di jaringan kantor. |
 | **Proxy komersial (residential/datacenter)** | `socks5://user:pass@host:port` atau `http://...` | **exit IP statis** yang di-allowlist program bug bounty. |
 
-> **Catatan:** bughound hanya meneruskan egress HTTP/HTTPS lewat proxy (CONNECT/SOCKS). Egress non-HTTP (mis. DNS mentah engine) tidak lewat sini — itu urusan lapis OS (pertahanan berlapis).
+> **Catatan:** BugHound hanya meneruskan egress HTTP/HTTPS lewat proxy (CONNECT/SOCKS). Egress non-HTTP (mis. DNS mentah engine) tidak lewat sini — itu urusan lapis OS (pertahanan berlapis).
 
 ---
 
 ## 4. Endpoint echo IP
 
-**Tujuan:** sebuah URL yang membalas **IP klien yang dilihat server**. bughound mengambil token IP pertama dari body (teks polos atau JSON). Dengan membandingkan echo *langsung* vs *lewat rantai*, kamu tahu IP exit benar berubah.
+**Tujuan:** sebuah URL yang membalas **IP klien yang dilihat server**. BugHound mengambil token IP pertama dari body (teks polos atau JSON). Dengan membandingkan echo *langsung* vs *lewat rantai*, kamu tahu IP exit benar berubah.
 
-**Requirement wajib:** host echo **harus in-scope** di program (default-deny). Kalau tidak, echo **ditolak scope guard** — itu disengaja (Prinsip #2: bughound tak menyentuh aset di luar scope, bahkan untuk diagnostik). Jadi:
+**Requirement wajib:** host echo **harus in-scope** di program (default-deny). Kalau tidak, echo **ditolak scope guard** — itu disengaja (Prinsip #2: BugHound tak menyentuh aset di luar scope, bahkan untuk diagnostik). Jadi:
 
 > Endpoint echo adalah **infrastruktur diagnostikmu**, bukan bagian target. Untuk memakainya, **tambahkan host echo ke daftar in-scope** program secara sadar.
 
@@ -102,7 +102,7 @@ Banyak program menuntut traffic datang dari **IP statis terdaftar** (VPN program
 1. **Exit IP statis** — siapkan upstream proxy yang IP keluarnya = IP yang di-allowlist program (VPS/jump box via `ssh -D`, atau proxy komersial statis). Rantai Tor/residential-rotating **tidak cocok** untuk program yang mewajibkan IP tetap.
 2. **Scope presisi** — isi in-scope program dengan target resmi program (domain/wildcard/CIDR). Kalau mau verifikasi IP, **tambahkan host echo** (mis. `api.ipify.org`) ke in-scope juga.
 3. **Verifikasi IP (menu Proxy)** — Program = program itu, Rantai = proxymu, Echo = endpoint in-scope → **Uji proxy**. Pastikan **IP exit** = IP yang didaftarkan program. Kalau "IP sama" / tak berubah, rantai belum efektif.
-4. **Rate limit** — set di form **Scan** sesuai aturan program (bughound menjepit per-engine, maks 50/dtk).
+4. **Rate limit** — set di form **Scan** sesuai aturan program (BugHound menjepit per-engine, maks 50/dtk).
 5. **Auth proxy** — pakai `user:pass@` bila proxy komersial butuh (tersensor otomatis).
 6. **Scan** — baru jalankan scan dengan rantai yang sama di form Scan. Report tetap **draft** (tanpa auto-submit).
 
@@ -118,7 +118,7 @@ Banyak program menuntut traffic datang dari **IP statis terdaftar** (VPN program
 
 ## 6. Catatan teknis & batasan
 
-- **Resolusi & IP-pin di hulu.** Target di-resolve ke IP di host bughound lalu di-*pin* (anti DNS-rebinding), baru koneksi ke IP itu diteruskan lewat rantai. Jadi `socks5` vs `socks5h` tak mengubah resolusi target (sudah di-pin); DNS target terjadi di sisi bughound, bukan di exit node.
+- **Resolusi & IP-pin di hulu.** Target di-resolve ke IP di host BugHound lalu di-*pin* (anti DNS-rebinding), baru koneksi ke IP itu diteruskan lewat rantai. Jadi `socks5` vs `socks5h` tak mengubah resolusi target (sudah di-pin); DNS target terjadi di sisi BugHound, bukan di exit node.
 - **Path pada HTTPS.** Tunnel CONNECT hanya menegakkan host:port. Host:port yang punya eksklusi ber-path dibuka agar tiap request dinilai, dan hanya HTTP/1 yang lewat di sana; host lain tetap tunnel buta. Tak perlu CA cert: sertifikatnya sekali pakai dan engine memang tak memverifikasi target.
 - **Hop = infra, bukan target.** Konektivitas hop tidak di-scope-check (hop memang proxy milikmu, sering loopback seperti Burp/Tor). Hanya **target & echo** yang melewati scope guard.
 - **Fail-closed.** Hop/skema tak valid, atau echo out-of-scope → ditolak; tak ada koneksi diam-diam.
@@ -141,6 +141,6 @@ docker run -d --name lab-proxy --network bughound-lab --ip 172.30.0.50 \
 ```
 
 Di menu Proxy: Program dengan in-scope `172.30.0.0/24`, Rantai `socks5://labuser:labpass@172.30.0.50:1080`, Echo `http://172.30.0.40/`.
-Harapan: hop **reachable** (kredensial tersensor), **IP sumber** (IP lab bughound) → **IP exit** `172.30.0.50`, **"IP berubah ✓"**.
+Harapan: hop **reachable** (kredensial tersensor), **IP sumber** (IP lab BugHound) → **IP exit** `172.30.0.50`, **"IP berubah ✓"**.
 
 Bersihkan: hapus program lewat endpoint ter-audit, lalu `docker rm -f lab-echo lab-proxy`.

@@ -1,12 +1,12 @@
-# Spesifikasi — Scope Guard (bughound)
+# Spesifikasi — Scope Guard (BugHound)
 
 Oct 21, 2026 · @Gh05t
 
-Scope guard adalah kontrol keamanan paling kritis di bughound: satu titik penegakan yang memastikan hanya target in-scope yang boleh disentuh, dan menolak sisanya secara default. Karena bughound adalah tool offensive, kegagalan scope guard berdampak hukum dan reputasi. Dokumen ini mendefinisikan format scope, normalisasi, algoritma keputusan, presedensi, kasus tepi, dan titik penegakan secara pasti, agar implementasi, audit (BH-P03-APPSEC), dan test (BH-P05-E2E) sepakat pada definisi yang sama. ID: `BH-SPEC-SCOPE`.
+Scope guard adalah kontrol keamanan paling kritis di BugHound: satu titik penegakan yang memastikan hanya target in-scope yang boleh disentuh, dan menolak sisanya secara default. Karena BugHound adalah tool offensive, kegagalan scope guard berdampak hukum dan reputasi. Dokumen ini mendefinisikan format scope, normalisasi, algoritma keputusan, presedensi, kasus tepi, dan titik penegakan secara pasti, agar implementasi, audit (BH-P03-APPSEC), dan test (BH-P05-E2E) sepakat pada definisi yang sama. ID: `BH-SPEC-SCOPE`.
 
 ## Ringkasan & peran
 
-Scope guard menjawab satu pertanyaan untuk setiap target: **boleh disentuh atau tidak?** Jawabannya mengikat seluruh aktivitas scan. Bila guard salah meloloskan satu target, bughound bisa memindai aset yang tidak diizinkan, dan itu konsekuensi hukum, bukan sekadar bug.
+Scope guard menjawab satu pertanyaan untuk setiap target: **boleh disentuh atau tidak?** Jawabannya mengikat seluruh aktivitas scan. Bila guard salah meloloskan satu target, BugHound bisa memindai aset yang tidak diizinkan, dan itu konsekuensi hukum, bukan sekadar bug.
 
 Karena itu guard dirancang dengan sikap paling konservatif: **default deny**. Target hanya diizinkan bila terbukti in-scope dan tidak terbukti out-of-scope. Semua keraguan berujung tolak.
 
@@ -137,7 +137,7 @@ Setiap keputusan guard yang menolak dicatat ke audit trail dengan: waktu, target
 
 - Penolakan di lapis egress diperlakukan sebagai sinyal penting: bila sering terjadi, itu bisa menandakan bug di tahap perencanaan atau upaya penyalahgunaan.
 - Kolom lapis membedakan `input` (saat perencanaan), `egress` (request ditahan sebelum koneksi dibuat), dan `finding` (temuan di luar scope dibuang sesudah engine selesai). `finding` menilai hasil, jadi bukan bukti koneksinya diblok. Entri lama dari sebelum pemisahan ini tetap berlabel `egress`.
-- Audit trail scope tidak boleh bisa dihapus diam-diam (sejalan prinsip audit trail bughound).
+- Audit trail scope tidak boleh bisa dihapus diam-diam (sejalan prinsip audit trail BugHound).
 - Target yang diizinkan boleh dicatat ringkas (minimal jumlah/agregat) agar jejak lengkap tersedia untuk audit (BH-P03-APPSEC), tanpa membebani log.
 
 Log ini adalah bukti utama saat audit pre-launch menilai apakah scope guard benar-benar menegakkan batas.

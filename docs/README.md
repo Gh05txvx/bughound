@@ -1,4 +1,4 @@
-# Dokumen bughound
+# Dokumen BugHound
 
 Sebagian besar berkas Markdown di folder ini adalah hasil ekspor dari Claude Docs; sebagian lain (mis. `guides/`) ditulis langsung di repo. Semuanya disusun agar bisa dibaca langsung di dalam repo (termasuk oleh Claude Code di VS Code). Titik masuk utama tetap `CLAUDE.md` di root repo.
 

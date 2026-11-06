@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>bughound · {{.Body.Title}}</title>
+  <title>BugHound · {{.Body.Title}}</title>
   <link rel="icon" type="image/png" href="/static/bughound-logo.png">
   <link rel="stylesheet" href="/static/app.css">
   <script src="/static/htmx.min.js" defer></script>
@@ -28,7 +28,7 @@
   </defs></svg>
   <div class="shell">
     <aside class="sidebar">
-      <div class="brand"><img class="logo-img" src="/static/bughound-logo.png" alt="bughound" width="30" height="30"> bughound</div>
+      <div class="brand"><img class="logo-img" src="/static/bughound-logo.png" alt="BugHound" width="30" height="30"> BugHound</div>
       <nav>
         <div class="nav-group">
           <div class="ng-label">Overview</div>
@@ -63,7 +63,7 @@
       <div class="sidebar-foot">
         <div class="pill st-confirmed small">scope guard aktif</div>
         <div class="muted small">engine: mock (tanpa jaringan)</div>
-        <div class="muted small">bughound {{appVersion}}</div>
+        <div class="muted small">BugHound {{appVersion}}</div>
         {{if .User}}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf" value="{{.Body.CSRF}}"><button type="submit" class="linklike">Keluar</button></form>{{end}}
       </div>
     </aside>

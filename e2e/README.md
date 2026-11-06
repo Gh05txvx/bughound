@@ -1,4 +1,4 @@
-# E2E (Playwright) — bughound
+# E2E (Playwright) — BugHound
 
 Pengujian end-to-end alur pengguna lewat browser (persona **BH-P05-E2E**).
 

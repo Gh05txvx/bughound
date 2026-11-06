@@ -1,8 +1,8 @@
-# Spesifikasi — Skema Temuan Seragam (bughound)
+# Spesifikasi — Skema Temuan Seragam (BugHound)
 
 Oct 21, 2026 · @Gh05t
 
-Skema temuan seragam adalah fondasi bughound: satu format tunggal yang menjadi tujuan normalisasi semua engine (recon & DAST), dan sumber data untuk triase serta report. Dokumen ini mendefinisikan field, tipe, enum, struktur bukti, kunci dedup, dan aturan versioning secara pasti, agar semua komponen (engine adapter, store, triase, report, UI) sepakat pada satu bentuk data. ID: `BH-SPEC-FINDING`.
+Skema temuan seragam adalah fondasi BugHound: satu format tunggal yang menjadi tujuan normalisasi semua engine (recon & DAST), dan sumber data untuk triase serta report. Dokumen ini mendefinisikan field, tipe, enum, struktur bukti, kunci dedup, dan aturan versioning secara pasti, agar semua komponen (engine adapter, store, triase, report, UI) sepakat pada satu bentuk data. ID: `BH-SPEC-FINDING`.
 
 ## Ringkasan & peran
 
@@ -24,7 +24,7 @@ Karena itu, perubahan pada skema berdampak ke semua komponen. Skema harus stabil
 2. **Cukup untuk triase dan report.** Field dipilih agar triase (dedup, severity, prioritas) dan report (judul, langkah, dampak, bukti) bisa jalan tanpa membuka output mentah.
 3. **Stabil dan berversi.** Skema punya `schema_version`. Field baru ditambah secara aditif; field lama tidak dihapus sembarangan (lihat Versioning).
 4. **Identitas stabil.** Tiap temuan punya `id` unik dan `dedup_key` deterministik, agar duplikat lintas scan/engine bisa digabung dengan andal.
-5. **Aman secara bawaan.** Skema tidak pernah menyimpan secret mentah; bukti dibersihkan sebelum masuk (sejalan prinsip keamanan bughound).
+5. **Aman secara bawaan.** Skema tidak pernah menyimpan secret mentah; bukti dibersihkan sebelum masuk (sejalan prinsip keamanan BugHound).
 6. **Format pertukaran: JSON.** Representasi kanonik adalah JSON (UTF-8). Penyimpanan boleh apa pun (DB relasional/dokumen) selama bisa memetakan ke bentuk JSON ini.
 7. **Waktu dalam UTC ISO 8601.** Semua timestamp memakai format `YYYY-MM-DDThh:mm:ssZ`.
 

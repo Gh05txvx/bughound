@@ -1,8 +1,8 @@
-# Spesifikasi — Bank Payload & Template (bughound)
+# Spesifikasi — Bank Payload & Template (BugHound)
 
 Oct 21, 2026 · @Gh05t
 
-Bank payload adalah tempat semua template/payload yang dijalankan engine hidup, diatur, diperbarui, dan ditambah. Tujuannya: payload mudah di-update dan ditambah tanpa menyentuh kode bughound, sambil tetap aman dan tertelusur. Dokumen ini memilih modelnya (hibrida condong tipis: payload tetap dalam format asli engine, dengan satu lapisan katalog netral di atasnya), lalu mendefinisikan struktur bank, metadata, format, mekanisme update, dan aturan keamanan. ID: `BH-SPEC-PAYLOAD`.
+Bank payload adalah tempat semua template/payload yang dijalankan engine hidup, diatur, diperbarui, dan ditambah. Tujuannya: payload mudah di-update dan ditambah tanpa menyentuh kode BugHound, sambil tetap aman dan tertelusur. Dokumen ini memilih modelnya (hibrida condong tipis: payload tetap dalam format asli engine, dengan satu lapisan katalog netral di atasnya), lalu mendefinisikan struktur bank, metadata, format, mekanisme update, dan aturan keamanan. ID: `BH-SPEC-PAYLOAD`.
 
 ## Ringkasan & peran
 
@@ -14,21 +14,21 @@ Bank ini menjembatani tiga hal:
 - **Engine workers** yang menjalankan template saat scan.
 - **Skema temuan** (`BH-SPEC-FINDING`): saat sebuah template menghasilkan temuan, id-nya terbawa ke field `source_template`, sehingga temuan bisa dilacak balik ke payload asalnya.
 
-Nilai utama bank: payload bisa di-update dan ditambah tanpa menyentuh kode bughound, tetap aman (sumber luar diperlakukan tak tepercaya), dan tertelusur (tiap scan mencatat versi template yang dipakai).
+Nilai utama bank: payload bisa di-update dan ditambah tanpa menyentuh kode BugHound, tetap aman (sumber luar diperlakukan tak tepercaya), dan tertelusur (tiap scan mencatat versi template yang dipakai).
 
 ## Prinsip desain
 
 1. **Simpan dalam format asli engine.** Isi payload tidak diterjemahkan ke format sendiri. Template nuclei tetap YAML nuclei. Ini menghindari membangun ulang ekosistem yang sudah matang.
 2. **Satu lapisan katalog netral di atasnya.** Bughound hanya menambahkan manifest metadata seragam yang mengatalogkan semua template, apa pun engine-nya, tanpa menyentuh isinya.
 3. **Sumber bersifat pluggable.** Bank adalah kumpulan sumber yang bisa ditambah/dihapus lewat konfigurasi, bukan satu folder tetap.
-4. **Payload adalah data, bukan kode.** Template tidak pernah ditanam di dalam kode bughound; ia dibaca dari sumber saat runtime, sehingga update = perbarui sumber, bukan rebuild.
+4. **Payload adalah data, bukan kode.** Template tidak pernah ditanam di dalam kode BugHound; ia dibaca dari sumber saat runtime, sehingga update = perbarui sumber, bukan rebuild.
 5. **Aman secara bawaan.** Template dari luar diperlakukan tak tepercaya dan divalidasi sebelum dijalankan.
 6. **Tertelusur.** Setiap scan mencatat sumber dan versi template yang dipakai, agar hasil bisa direproduksi dan diaudit.
 7. **Mudah ditambah.** Menambah payload = menaruh satu file di sumber + metadata minimal, tanpa mengubah komponen lain.
 
 ## Model yang dipilih
 
-Dipilih: **hibrida yang condong tipis.** Payload tetap native engine; bughound menambahkan katalog netral (metadata), bukan format payload baru.
+Dipilih: **hibrida yang condong tipis.** Payload tetap native engine; BugHound menambahkan katalog netral (metadata), bukan format payload baru.
 
 Perbandingan tiga opsi:
 
@@ -42,7 +42,7 @@ Alasan: isi payload yang diterjemahkan adalah pekerjaan besar dan rawan salah, s
 
 ## Struktur bank & sumber
 
-Bank bukan satu folder, melainkan kumpulan **sumber** yang didaftarkan di konfigurasi. Tiap sumber adalah repo/direktori berisi template dalam format native-nya. Di atas semua sumber, bughound membangun satu **katalog** (manifest) yang menyeragamkan metadata tiap template tanpa menyentuh isinya.
+Bank bukan satu folder, melainkan kumpulan **sumber** yang didaftarkan di konfigurasi. Tiap sumber adalah repo/direktori berisi template dalam format native-nya. Di atas semua sumber, BugHound membangun satu **katalog** (manifest) yang menyeragamkan metadata tiap template tanpa menyentuh isinya.
 
 > _Diagram: struktur bank · sumber native → katalog netral → engine — tersedia di versi Claude Docs (tidak terbawa ke ekspor Markdown)._
 
@@ -102,19 +102,19 @@ tags: [open-redirect, custom]
 trust: trusted
 ```
 
-Aturan: body native tidak pernah diedit oleh bughound. Bila metadata tidak lengkap dan tidak bisa diturunkan, template tetap masuk katalog tapi ditandai perlu dilengkapi, bukan diam-diam dipakai dengan metadata kosong.
+Aturan: body native tidak pernah diedit oleh BugHound. Bila metadata tidak lengkap dan tidak bisa diturunkan, template tetap masuk katalog tapi ditandai perlu dilengkapi, bukan diam-diam dipakai dengan metadata kosong.
 
 ## Mekanisme update & penambahan
 
 **Update (memperbarui yang ada):**
 
-- Tiap sumber punya cara update sendiri yang dipanggil bughound: `git pull` untuk repo, perintah update bawaan nuclei untuk template nuclei, unduh untuk feed.
+- Tiap sumber punya cara update sendiri yang dipanggil BugHound: `git pull` untuk repo, perintah update bawaan nuclei untuk template nuclei, unduh untuk feed.
 - Perintah `bughound templates update` menjalankan update semua sumber (atau satu sumber), lalu me-refresh katalog.
 - Perubahan isi terdeteksi lewat `version` (hash), sehingga katalog tahu apa yang berubah.
 
 **Penambahan (menambah payload baru):**
 
-- Tambah template native ke direktori sumber (mis. taruh file `.yaml` di direktori custom), lengkapi metadata (dari `info:` atau sidecar), lalu refresh katalog. Tidak perlu mengubah kode bughound.
+- Tambah template native ke direktori sumber (mis. taruh file `.yaml` di direktori custom), lengkapi metadata (dari `info:` atau sidecar), lalu refresh katalog. Tidak perlu mengubah kode BugHound.
 - Menambah **sumber** baru = menambah satu entri konfigurasi (lokasi, engine, trust, cara update).
 
 **Reproducibility & pinning:**
@@ -147,7 +147,7 @@ Untuk pemakaian pribadi di awal, cukup pakai sumber yang kamu percaya (repo nucl
 
 **Ke skema temuan.** Saat sebuah template menghasilkan temuan, adapter mengisi `source_template` di temuan dengan `template_id` dari katalog (`BH-SPEC-FINDING`). Dengan begitu setiap temuan bisa dilacak balik ke payload dan versinya, dan triase bisa, misalnya, meredam seluruh temuan dari satu template yang ternyata berisik.
 
-**Ke config.** Daftar sumber, tingkat trust, pin versi, dan profil seleksi disimpan di konfigurasi bughound (modul Config di PRD), bukan di kode.
+**Ke config.** Daftar sumber, tingkat trust, pin versi, dan profil seleksi disimpan di konfigurasi BugHound (modul Config di PRD), bukan di kode.
 
 Hasilnya, menambah kemampuan deteksi baru = menambah template ke bank (atau menambah sumber), bukan menulis kode, selama engine-nya sudah didukung.
 

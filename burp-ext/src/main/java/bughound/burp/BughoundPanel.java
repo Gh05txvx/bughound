@@ -50,7 +50,7 @@ class BughoundPanel extends JPanel {
 
         // --- form koneksi ---
         JPanel form = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        form.add(new JLabel("bughound URL:"));
+        form.add(new JLabel("BugHound URL:"));
         form.add(baseUrlField);
         form.add(new JLabel("user:"));
         form.add(userField);

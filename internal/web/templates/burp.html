@@ -2,16 +2,16 @@
 <div class="card">
   <h2>Integrasi Burp Suite</h2>
   <p class="muted small">
-    bughound menemukan kandidat bug; kamu memvalidasinya manual di Burp Repeater.
+    BugHound menemukan kandidat bug; kamu memvalidasinya manual di Burp Repeater.
     Integrasi ini menjembatani keduanya tanpa pindah-pindah tool — <b>dari sisi Burp</b>:
-    sebuah extension menarik temuan dari bughound, lalu kirim request-nya ke Repeater.
+    sebuah extension menarik temuan dari BugHound, lalu kirim request-nya ke Repeater.
   </p>
   <div class="result-summary">
-    <span class="chip">bughound <span class="muted">temukan</span></span>
+    <span class="chip">BugHound <span class="muted">temukan</span></span>
     <span class="muted">→</span>
     <span class="chip mono">API /api/v1/findings</span>
     <span class="muted">→</span>
-    <span class="chip">tab “bughound” di Burp</span>
+    <span class="chip">tab “BugHound” di Burp</span>
     <span class="muted">→</span>
     <span class="chip">Repeater <span class="muted">(Send manual)</span></span>
   </div>
@@ -22,15 +22,15 @@
     bukan syarat alur ini.
   </p>
   <p class="muted small">
-    Read-only &amp; tanpa auto-submit: extension hanya <b>membaca</b> dari bughound (GET) lalu
+    Read-only &amp; tanpa auto-submit: extension hanya <b>membaca</b> dari BugHound (GET) lalu
     memuat request ke Repeater. Mengirim ke target tetap aksi manualmu lewat tombol <b>Send</b>.
   </p>
 </div>
 
 <div class="grid-2">
   <div class="card">
-    <h2>1 · API bughound (read-only)</h2>
-    <p class="muted small">Sumber data extension. Auth <b>HTTP Basic</b> dengan akun bughound-mu (GET, tak perlu CSRF). Tanpa kredensial → <span class="mono">401</span>.</p>
+    <h2>1 · API BugHound (read-only)</h2>
+    <p class="muted small">Sumber data extension. Auth <b>HTTP Basic</b> dengan akun BugHound-mu (GET, tak perlu CSRF). Tanpa kredensial → <span class="mono">401</span>.</p>
     <table class="tbl">
       <thead><tr><th>Endpoint</th><th>Keterangan</th></tr></thead>
       <tbody>
@@ -64,8 +64,8 @@
 gradle shadowJar
 # hasil: build/libs/bughound-burp.jar</pre>
 
-    <p class="small"><b>Load:</b> Burp → <span class="mono">Extensions</span> → <span class="mono">Add</span> → type <b>Java</b> → pilih <span class="mono">bughound-burp.jar</span>. Muncul tab <b>bughound</b>.</p>
-    <p class="small"><b>Pakai:</b> di tab bughound isi URL bughound (<span class="mono">{{.BaseURL}}</span>), user, pass, dan nama program → <b>Muat temuan</b> → pilih baris → <b>Kirim ke Repeater</b> → tekan <b>Send</b> sendiri untuk validasi.</p>
+    <p class="small"><b>Load:</b> Burp → <span class="mono">Extensions</span> → <span class="mono">Add</span> → type <b>Java</b> → pilih <span class="mono">bughound-burp.jar</span>. Muncul tab <b>BugHound</b>.</p>
+    <p class="small"><b>Pakai:</b> di tab BugHound isi URL BugHound (<span class="mono">{{.BaseURL}}</span>), user, pass, dan nama program → <b>Muat temuan</b> → pilih baris → <b>Kirim ke Repeater</b> → tekan <b>Send</b> sendiri untuk validasi.</p>
     <p class="muted small">Prasyarat: JDK 17+ dan Gradle 8+. Detail & troubleshooting (versi <span class="mono">montoya-api</span>) ada di <span class="mono">burp-ext/README.md</span>.</p>
   </div>
 </div>
@@ -73,10 +73,10 @@ gradle shadowJar
 <div class="card">
   <h2>Catatan keamanan</h2>
   <ul class="muted small" style="margin:0;padding-left:18px;line-height:1.7">
-    <li>API dipakai hanya <b>GET</b> — extension tak mengubah data bughound, tak memicu scan, dan tak pernah mengirim request ke target otomatis.</li>
-    <li>Egress / scope guard / rate limiter bughound tetap mengatur scan bughound sendiri; extension ada di luar jalur itu (hanya handoff baca → Repeater).</li>
+    <li>API dipakai hanya <b>GET</b> — extension tak mengubah data BugHound, tak memicu scan, dan tak pernah mengirim request ke target otomatis.</li>
+    <li>Egress / scope guard / rate limiter BugHound tetap mengatur scan BugHound sendiri; extension ada di luar jalur itu (hanya handoff baca → Repeater).</li>
     <li>Scope saat validasi: Repeater mengirim ke mana pun kamu tekan Send — pastikan target <b>in-scope</b> program bug bounty-mu. Itu tanggung jawabmu di Burp, sama seperti Repeater biasa.</li>
-    <li>Kredensial hanya di memori extension (tak dipersist). Untuk bughound non-lokal, taruh di belakang TLS agar Basic auth tak lewat polos.</li>
+    <li>Kredensial hanya di memori extension (tak dipersist). Untuk BugHound non-lokal, taruh di belakang TLS agar Basic auth tak lewat polos.</li>
   </ul>
 </div>
 {{end}}

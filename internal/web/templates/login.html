@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>bughound · Masuk</title>
+  <title>BugHound · Masuk</title>
   <link rel="icon" type="image/png" href="/static/bughound-logo.png">
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body class="login-body">
   <main class="login-card">
-    <img class="login-logo" src="/static/bughound-logo.png" alt="bughound" width="96" height="96">
-    <h1>bughound</h1>
+    <img class="login-logo" src="/static/bughound-logo.png" alt="BugHound" width="96" height="96">
+    <h1>BugHound</h1>
     <p class="muted small">Bug Bounty DAST Orchestrator</p>
     {{if .Error}}<div class="errors"><p>{{.Error}}</p></div>{{end}}
     <form method="post" action="/login">
@@ -21,7 +21,7 @@
       <input type="password" name="password" autocomplete="current-password" required>
       <button type="submit" class="btn primary login-submit">Masuk</button>
     </form>
-    <p class="muted small login-foot">bughound {{.Version}} &middot; scope guard aktif &middot; tanpa auto-submit</p>
+    <p class="muted small login-foot">BugHound {{.Version}} &middot; scope guard aktif &middot; tanpa auto-submit</p>
   </main>
 </body>
 </html>{{end}}

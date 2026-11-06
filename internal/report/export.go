@@ -30,7 +30,7 @@ func (p Platform) Label() string {
 }
 
 // draftNote ditanam di tiap export agar sifat draft & "tanpa auto-submit" jelas.
-const draftNote = "Draft bughound — verifikasi & lengkapi, lalu submit MANUAL. Tanpa auto-submit."
+const draftNote = "Draft BugHound — verifikasi & lengkapi, lalu submit MANUAL. Tanpa auto-submit."
 
 // ExportFinding memformat SATU temuan ke template submission platform (Markdown).
 // Hanya menghasilkan teks; pengiriman tetap manual (prinsip tanpa auto-submit).

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/bughound-mascot.png" alt="bughound" width="180">
+<img src="assets/bughound-mascot.png" alt="BugHound" width="180">
 
-# bughound
+# BugHound
 
 **Bug Bounty DAST Orchestrator** — satu alur kerja, banyak *engine*, satu skema temuan.
 
@@ -20,7 +20,7 @@
 </div>
 
 > [!WARNING]
-> **Hanya untuk pengujian yang sah.** bughound adalah alat ofensif (DAST). Gunakan hanya terhadap aset yang berada dalam cakupan (*scope*) program bounty, laboratorium milik sendiri, atau sistem yang telah memberi izin eksplisit. *Scope guard* tolak-bawaan (*default-deny*) menolak target yang tidak terbukti in-scope, dan **tidak ada pengiriman otomatis** — laporan selalu berakhir sebagai draf. Scope guard adalah jaring pengaman, **bukan** izin: memastikan Rules of Engagement mengizinkan *automated scanning* tetap tanggung jawab operator.
+> **Hanya untuk pengujian yang sah.** BugHound adalah alat ofensif (DAST). Gunakan hanya terhadap aset yang berada dalam cakupan (*scope*) program bounty, laboratorium milik sendiri, atau sistem yang telah memberi izin eksplisit. *Scope guard* tolak-bawaan (*default-deny*) menolak target yang tidak terbukti in-scope, dan **tidak ada pengiriman otomatis** — laporan selalu berakhir sebagai draf. Scope guard adalah jaring pengaman, **bukan** izin: memastikan Rules of Engagement mengizinkan *automated scanning* tetap tanggung jawab operator.
 
 ---
 
@@ -52,7 +52,7 @@
 
 ## Ikhtisar
 
-**bughound** adalah *orchestrator* DAST (*Dynamic Application Security Testing*) untuk bug bounty — bukan pemindai baru, melainkan pengatur yang menjalankan sejumlah *engine* recon dan DAST yang sudah matang secara terkoordinasi, menormalkan seluruh hasilnya ke **satu skema temuan seragam**, membantu triase, lalu menyusun **draf laporan** siap diverifikasi manual sebelum diserahkan. Seorang pemburu bug memperoleh keunggulan banyak alat sekaligus tanpa kehilangan konsistensi hasil maupun kendali atas tiap langkah.
+**BugHound** adalah *orchestrator* DAST (*Dynamic Application Security Testing*) untuk bug bounty — bukan pemindai baru, melainkan pengatur yang menjalankan sejumlah *engine* recon dan DAST yang sudah matang secara terkoordinasi, menormalkan seluruh hasilnya ke **satu skema temuan seragam**, membantu triase, lalu menyusun **draf laporan** siap diverifikasi manual sebelum diserahkan. Seorang pemburu bug memperoleh keunggulan banyak alat sekaligus tanpa kehilangan konsistensi hasil maupun kendali atas tiap langkah.
 
 - **Untuk siapa** — tim kecil hunter (power user). Antarmuka web, dioptimalkan desktop, UI padat ala tool security (tema gelap).
 - **Apa bedanya** — orchestrator, bukan scanner: satu skema temuan untuk semua engine, `dedup_key` deterministik melintasi engine, dan **keamanan sebagai batas struktural** (scope guard, rate limiter, egress ter-guard, audit append-only) — bukan tambahan.
@@ -74,10 +74,10 @@
 
 ### Batas kemampuan
 
-Jujur soal yang **belum** dilakukan bughound — ini desain, bukan bug:
+Jujur soal yang **belum** dilakukan BugHound — ini desain, bukan bug:
 
 - **Tidak ada auto-submit.** Report selalu berakhir sebagai draf; pengiriman ke platform dilakukan manual oleh operator. Disengaja.
-- **Bukan scanner baru.** bughound tidak menemukan apa yang engine di bawahnya tak bisa temukan; kualitas recall mengikuti engine + template yang dipasang.
+- **Bukan scanner baru.** BugHound tidak menemukan apa yang engine di bawahnya tak bisa temukan; kualitas recall mengikuti engine + template yang dipasang.
 - **Engine tidak di-bundle ke binary.** Untuk scan nyata, pasang tool-nya sendiri atau pakai image Docker (engine sudah di dalam). Default `-engine mock` tak menyentuh jaringan.
 - **OpenAPI = perluasan endpoint.** Tiap endpoint di-expand jadi target (probe + template). Fuzzing per-method/body yang lebih dalam (mis. `nuclei -im openapi`) belum didukung.
 - **"Identify your traffic" belum otomatis.** Bila RoE mewajibkan header/User-Agent penanda khusus, engine mengirim UA-nya sendiri — perlu penanganan manual (lihat [`docs/product/BH-DOC-pilot-baseline.md`](docs/product/BH-DOC-pilot-baseline.md) §0.3).
@@ -108,7 +108,7 @@ flowchart TD
 <details>
 <summary><b>Penegakan scope dua lapis (input + egress)</b></summary>
 
-Scope guard ditegakkan dua kali: sekali saat target masuk, sekali lagi saat engine benar-benar membuka koneksi (setelah resolusi DNS, dengan IP di-*pin* untuk mencegah SSRF/DNS-rebinding). Egress tiap engine dipaksa lewat proxy scope-guard bughound.
+Scope guard ditegakkan dua kali: sekali saat target masuk, sekali lagi saat engine benar-benar membuka koneksi (setelah resolusi DNS, dengan IP di-*pin* untuk mencegah SSRF/DNS-rebinding). Egress tiap engine dipaksa lewat proxy scope-guard BugHound.
 
 ```mermaid
 sequenceDiagram
@@ -141,7 +141,7 @@ sequenceDiagram
 
 ### Jalankan dengan Docker
 
-Engine nyata tidak di-bundle ke binary, jadi cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan bughound + engine (nuclei + template `dast/`, subfinder, httpx, katana, ffuf, semgrep; ZAP & retire.js opsional). Di dalam container semua engine ada di `PATH`.
+Engine nyata tidak di-bundle ke binary, jadi cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan BugHound + engine (nuclei + template `dast/`, subfinder, httpx, katana, ffuf, semgrep; ZAP & retire.js opsional). Di dalam container semua engine ada di `PATH`.
 
 ```bash
 # image rilis dari GHCR (varian lean, tanpa ZAP & retire.js)
@@ -200,7 +200,7 @@ Buka <http://127.0.0.1:8787> → **login dulu** (lihat [Login dan peran](#login-
 
 ## Login dan peran
 
-Login **wajib secara default**. Saat pertama dijalankan (belum ada akun), bughound membuat akun **admin** dan **mencetak kata sandinya ke konsol satu kali** — simpan, lalu ganti via halaman **Users**:
+Login **wajib secara default**. Saat pertama dijalankan (belum ada akun), BugHound membuat akun **admin** dan **mencetak kata sandinya ke konsol satu kali** — simpan, lalu ganti via halaman **Users**:
 
 ```
 auth: admin "admin" dibuat — kata sandi: qCn1QHMZFboyml_C
@@ -220,7 +220,7 @@ Browser mendapat **halaman login ber-logo** (sesi cookie `HttpOnly`+`SameSite=St
 1. **Jalankan & login** — `go run ./cmd/bughound` (atau Docker) → login dengan akun admin yang kata sandinya tercetak di konsol → buka <http://127.0.0.1:8787>. Default engine **mock**: tanpa jaringan, aman dicoba.
 2. **Programs** — buat program & isi **scope** (in-scope + out-of-scope), diketik atau **diimpor** dari HackerOne (Download CSV / API) dan Bugcrowd. Hasil impor mengisi form untuk ditinjau, baru berlaku setelah disimpan. Semua target dicek scope guard (default-deny).
 3. **Scan** — pilih program, isi target/seed (atau tempel spec **OpenAPI/Swagger**, atau isi **upstream proxy / rantai** bila target mewajibkan) → jalankan. Scan jalan di latar belakang; preset per program mem-prefill seleksi template. Pantau statusnya di tempat.
-4. **Capture** *(opsional)* — bughound jadi reverse proxy ke satu target in-scope; browsing manual lewat listener lokal, lalu **promote** endpoint terekam jadi scan.
+4. **Capture** *(opsional)* — BugHound jadi reverse proxy ke satu target in-scope; browsing manual lewat listener lokal, lalu **promote** endpoint terekam jadi scan.
 5. **gRPC / SAST** *(opsional)* — enumerasi + fuzz gRPC, atau analisis statis kode lokal (`-sast-root`).
 6. **Findings** — triase temuan (konfirmasi / false-positive / abaikan; filter + aksi massal) dan **lengkapi draft** tiap temuan (langkah reproduksi + dampak). Validasi manual bisa langsung dari **Burp** (lihat [Integrasi Burp Suite](#integrasi-burp-suite)).
 7. **Reports** — hasilkan **draft** report dari temuan terkonfirmasi (Markdown / cetak-PDF) atau export ke template **HackerOne / Bugcrowd**. Submit tetap **manual** (tanpa auto-submit).
@@ -231,7 +231,7 @@ Browser mendapat **halaman login ber-logo** (sesi cookie `HttpOnly`+`SameSite=St
 
 ## Engine yang didukung
 
-bughound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak di-bundle** ke dalam binary. Untuk scan nyata, pasang sendiri tool-nya, lalu bughound memanggilnya sebagai subprocess dan menegakkan scope guard, rate limiter, serta egress (koneksi keluar engine dipaksa lewat proxy scope-guard bughound). **Default `-engine mock`** tak butuh tool apa pun dan tak menyentuh jaringan.
+BugHound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak di-bundle** ke dalam binary. Untuk scan nyata, pasang sendiri tool-nya, lalu BugHound memanggilnya sebagai subprocess dan menegakkan scope guard, rate limiter, serta egress (koneksi keluar engine dipaksa lewat proxy scope-guard BugHound). **Default `-engine mock`** tak butuh tool apa pun dan tak menyentuh jaringan.
 
 | Engine | Peran | Adapter | Pasang |
 | --- | --- | --- | --- |
@@ -278,11 +278,11 @@ http://127.0.0.1:8080      # hop 1 (mis. Burp)
 socks5://127.0.0.1:9050    # hop 2 (mis. Tor)
 ```
 
-Alur: `engine → proxy egress bughound (scope guard + pin IP) → hop1 → hop2 → … → target`. **Keamanan tetap utuh** — scope guard & IP-pinning (anti-SSRF/rebinding) berjalan **sebelum** diteruskan; rantai hanya mengganti jalur ke IP yang sudah dicek. Hop tak valid = **fail-closed** (scan tak jalan).
+Alur: `engine → proxy egress BugHound (scope guard + pin IP) → hop1 → hop2 → … → target`. **Keamanan tetap utuh** — scope guard & IP-pinning (anti-SSRF/rebinding) berjalan **sebelum** diteruskan; rantai hanya mengganti jalur ke IP yang sudah dicek. Hop tak valid = **fail-closed** (scan tak jalan).
 
 ### Capture
 
-Halaman **Capture** menjadikan bughound **reverse proxy ke satu target in-scope**: pilih program + target, bughound membuka listener lokal, lalu arahkan browser/tool ke situ dan browsing target seperti biasa. Tiap request yang lewat **direkam** (dedup, dengan status) sebagai kandidat endpoint; centang yang relevan lalu **Promote → scan** (masuk jalur scan yang sama: scope guard + rate limiter + engine).
+Halaman **Capture** menjadikan BugHound **reverse proxy ke satu target in-scope**: pilih program + target, BugHound membuka listener lokal, lalu arahkan browser/tool ke situ dan browsing target seperti biasa. Tiap request yang lewat **direkam** (dedup, dengan status) sebagai kandidat endpoint; centang yang relevan lalu **Promote → scan** (masuk jalur scan yang sama: scope guard + rate limiter + engine).
 
 ```
 1. Programs → simpan scope program (mis. in-scope: app.demo.test)
@@ -295,10 +295,10 @@ Gateway memakai transport egress ter-guard yang sama (resolve → tolak IP inter
 
 ### Integrasi Burp Suite
 
-Alur bughound berakhir pada **verifikasi manual**: tool menemukan kandidat bug, kamu memvalidasinya di Burp. Integrasi ini menjembatani keduanya lewat dua bagian:
+Alur BugHound berakhir pada **verifikasi manual**: tool menemukan kandidat bug, kamu memvalidasinya di Burp. Integrasi ini menjembatani keduanya lewat dua bagian:
 
-- **API JSON baca-saja** — `GET /api/v1/findings?program=<nama>` (opsi `run_id`, `status`, `severity` dipisah koma, `include_duplicates=1`) dan `GET /api/v1/findings/{id}` (lengkap, termasuk `evidence.request`). Auth **HTTP Basic** dengan akun bughound (GET, tanpa CSRF); tanpa kredensial → `401`. Berguna juga untuk skrip/otomasi lain.
-- **Extension Burp (Montoya)** di [`burp-ext/`](burp-ext/README.md) — menarik temuan satu program ke tab **bughound** di dalam Burp, lalu **Kirim ke Repeater** (request direkonstruksi dari `evidence.request`, atau fallback GET ke URL lokasi) untuk kamu tekan **Send** sendiri.
+- **API JSON baca-saja** — `GET /api/v1/findings?program=<nama>` (opsi `run_id`, `status`, `severity` dipisah koma, `include_duplicates=1`) dan `GET /api/v1/findings/{id}` (lengkap, termasuk `evidence.request`). Auth **HTTP Basic** dengan akun BugHound (GET, tanpa CSRF); tanpa kredensial → `401`. Berguna juga untuk skrip/otomasi lain.
+- **Extension Burp (Montoya)** di [`burp-ext/`](burp-ext/README.md) — menarik temuan satu program ke tab **BugHound** di dalam Burp, lalu **Kirim ke Repeater** (request direkonstruksi dari `evidence.request`, atau fallback GET ke URL lokasi) untuk kamu tekan **Send** sendiri.
 
 > [!TIP]
 > **Jalan di Burp Community** — kamu *belum butuh Pro*. Repeater dan memuat extension `.jar` sendiri tersedia di Community; Pro hanya perlu untuk active scanner, Intruder penuh, atau simpan project.
@@ -307,9 +307,9 @@ Alur bughound berakhir pada **verifikasi manual**: tool menemukan kandidat bug, 
 # 1. build extension (butuh JDK 17+ & Gradle 8+)
 cd burp-ext && gradle shadowJar          # -> build/libs/bughound-burp.jar
 
-# 2. Burp -> Extensions -> Add -> type Java -> pilih jar -> muncul tab "bughound"
+# 2. Burp -> Extensions -> Add -> type Java -> pilih jar -> muncul tab "BugHound"
 
-# 3. di tab bughound: isi URL bughound + user/pass + nama program -> Muat temuan
+# 3. di tab BugHound: isi URL BugHound + user/pass + nama program -> Muat temuan
 #    -> pilih baris -> Kirim ke Repeater -> tekan Send untuk validasi
 
 # (opsional) tarik temuan via skrip, tanpa extension:
