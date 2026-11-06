@@ -19,6 +19,7 @@ import (
 	"bughound/internal/audit"
 	"bughound/internal/auth"
 	"bughound/internal/engine"
+	"bughound/internal/engine/dalfox"
 	"bughound/internal/engine/ffuf"
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/engine/retire"
@@ -213,6 +214,12 @@ func main() {
 					// ada koneksi (fail-safe). Temuan = kandidat (draft->verify).
 					// Profil keamanan: non-destruktif selalu aktif; stealth dari form scan.
 					es = append(es, &nuclei.DASTRunner{RateLimit: rate, Safety: nuclei.Safety{Stealth: sel.Stealth}})
+				case "dalfox":
+					// DAST AKTIF khusus XSS: kirim payload XSS ke parameter target,
+					// normalkan PoC → temuan. Egress lewat proxy scope guard yang sama;
+					// volume dibatasi worker+delay; tanpa proxy = tak ada koneksi
+					// (fail-safe). Non-destruktif; temuan = kandidat (draft→verify).
+					es = append(es, &dalfox.Runner{RateLimit: rate, Stealth: sel.Stealth})
 				}
 			}
 			if sel.Stealth {
@@ -222,7 +229,7 @@ func main() {
 		}
 		engines, rec = engineFactory(0, web.Selection{}) // instance representatif (laju default, semua template) utk validasi & fallback
 		if len(engines) == 0 {
-			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap,retire,nuclei-dast)", *engineMode)
+			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap,retire,nuclei-dast,dalfox)", *engineMode)
 		}
 		log.Printf("engine: NYATA (%s + recon subfinder/httpx/katana) — egress lewat proxy scope guard · throttle per-engine aktif (laju dari rps scan, default %d/dtk)", strings.Join(names, ", "), engineRate(0))
 		log.Printf("PERINGATAN: hanya scan target yang sah (in-scope / lab / izin eksplisit)")
@@ -373,7 +380,7 @@ func resolveSASTRoot(flagVal, envVal string) (root, logMsg string) {
 
 // parseEngineMode menafsirkan flag -engine. "" / "mock" -> engine mock (mock
 // eksklusif). Selain itu daftar dipisah koma: "real" = alias nuclei; nama yang
-// dikenal (nuclei, ffuf, zap, retire, nuclei-dast) membangun Runner nyata. Nama
+// dikenal (nuclei, ffuf, zap, retire, nuclei-dast, dalfox) membangun Runner nyata. Nama
 // tak dikenal diabaikan (pemanggil menolak bila tak ada yang dikenali).
 // Ter-dedup, urut input.
 func parseEngineMode(mode string) (names []string, mock bool) {
@@ -404,6 +411,8 @@ func parseEngineMode(mode string) (names []string, mock bool) {
 			add("retire")
 		case "nuclei-dast":
 			add("nuclei-dast")
+		case "dalfox":
+			add("dalfox")
 		}
 	}
 	return names, false

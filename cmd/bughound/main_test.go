@@ -29,6 +29,7 @@ func TestParseEngineMode(t *testing.T) {
 		{"mock", nil, true},
 		{"real", []string{"nuclei"}, false},
 		{"nuclei,ffuf,zap", []string{"nuclei", "ffuf", "zap"}, false},
+		{"nuclei,dalfox", []string{"nuclei", "dalfox"}, false},
 		{"real,zap", []string{"nuclei", "zap"}, false},
 		{"nuclei,nuclei", []string{"nuclei"}, false},
 		{"NUCLEI, FFUF", []string{"nuclei", "ffuf"}, false},
