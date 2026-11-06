@@ -41,12 +41,11 @@ const (
 	catchAllMinHits     = 10  // grup dominan minimal sebesar ini baru dianggap wildcard
 	catchAllMinFraction = 0.6 // dan minimal menyumbang 60% dari seluruh hasil
 
-	// authWallMinHits adalah ambang grup dinding auth (lihat authWallFingerprintOf).
-	// Sengaja jauh di atas catchAllMinHits: sidik jarinya mengabaikan panjang, jadi
-	// grup kecil bisa saja rute terproteksi NYATA (API yang membalas 404 untuk path
-	// tak dikenal dan 401 yang menggemakan path untuk rute nyata) — justru itu yang
-	// dicari brute route API. Dinding sungguhan di prefix populer menghasilkan
-	// ratusan hingga ribuan hit; di bawah ambang, kebisingannya masih terbatas.
+	// authWallMinHits adalah ambang grup 401/403, baik identik maupun sebentuk (lihat
+	// minHitsFor). Sengaja jauh di atas catchAllMinHits: pada API sehat path tak
+	// dikenal dibalas 404, jadi grup 401/403 kecil adalah rute terproteksi NYATA —
+	// justru itu yang dicari brute route API. Dinding sungguhan di prefix populer
+	// menghasilkan ratusan hingga ribuan hit; di bawah ambang, kebisingannya terbatas.
 	authWallMinHits = 100
 )
 
@@ -81,22 +80,23 @@ type item struct {
 // panjang berubah). Hasil lain — endpoint dengan sidik jari berbeda — tetap utuh.
 func calibrate(items []item, program, runID string) []*finding.Finding {
 	var notes []*finding.Finding
-	rest, sample, n := splitDominant(items, fingerprintOf, catchAllMinHits)
+	rest, sample, n := splitDominant(items, fingerprintOf)
 	if n > 0 {
 		notes = append(notes, wildcardNote(sample, n, len(items), program, runID))
 	}
-	rest, sample, n = splitDominant(rest, authWallFingerprintOf, authWallMinHits)
+	rest, sample, n = splitDominant(rest, authWallFingerprintOf)
 	if n > 0 {
 		notes = append(notes, authWallNote(sample, n, len(items), program, runID))
 	}
 	return append(collect(rest), notes...)
 }
 
-// splitDominant memisahkan grup terbesar menurut key bila grup itu minimal minHits
-// dan menyumbang minimal catchAllMinFraction dari items. Mengembalikan sisa item,
-// satu contoh dari grup, dan ukuran grup (0 = tak ada yang ditekan). Key kosong
-// berarti item itu tak ikut dinilai.
-func splitDominant(items []item, key func(ffufResult) string, minHits int) (rest []item, sample ffufResult, n int) {
+// splitDominant memisahkan grup terbesar menurut key bila ukurannya memenuhi
+// minHitsFor dan menyumbang minimal catchAllMinFraction dari items. Mengembalikan
+// sisa item, satu contoh dari grup, dan ukuran grup (0 = tak ada yang ditekan). Key
+// kosong berarti item itu tak ikut dinilai. Key wajib memuat status, agar satu grup
+// punya satu status dan satu ambang.
+func splitDominant(items []item, key func(ffufResult) string) (rest []item, sample ffufResult, n int) {
 	counts := map[string]int{}
 	for _, it := range items {
 		if k := key(it.res); k != "" {
@@ -109,9 +109,6 @@ func splitDominant(items []item, key func(ffufResult) string, minHits int) (rest
 			dom, domN = k, c
 		}
 	}
-	if domN < minHits || float64(domN)/float64(len(items)) < catchAllMinFraction {
-		return items, ffufResult{}, 0 // tak ada pola yang meyakinkan
-	}
 	rest = make([]item, 0, len(items)-domN)
 	for _, it := range items {
 		if key(it.res) == dom {
@@ -120,7 +117,22 @@ func splitDominant(items []item, key func(ffufResult) string, minHits int) (rest
 		}
 		rest = append(rest, it)
 	}
+	if domN < minHitsFor(sample.Status) || float64(domN)/float64(len(items)) < catchAllMinFraction {
+		return items, ffufResult{}, 0 // tak ada pola yang meyakinkan
+	}
 	return rest, sample, domN
+}
+
+// minHitsFor mengembalikan ambang ukuran grup menurut status responsnya.
+func minHitsFor(status int) int {
+	if isAuthStatus(status) {
+		return authWallMinHits
+	}
+	return catchAllMinHits
+}
+
+func isAuthStatus(status int) bool {
+	return status == 401 || status == 403
 }
 
 func collect(items []item) []*finding.Finding {
@@ -144,12 +156,10 @@ func fingerprintOf(res ffufResult) string {
 // ekstensi path. Hanya 401/403 (selainnya key kosong): rute 200 nyata sering
 // kebetulan sebentuk, mis. JSON tanpa spasi selalu 1 kata.
 func authWallFingerprintOf(res ffufResult) string {
-	switch res.Status {
-	case 401, 403:
-		return fmt.Sprintf("%d|%d|%d", res.Status, res.Words, res.Lines)
-	default:
+	if !isAuthStatus(res.Status) {
 		return ""
 	}
+	return fmt.Sprintf("%d|%d|%d", res.Status, res.Words, res.Lines)
 }
 
 func mapResult(res ffufResult, program, runID string) (*finding.Finding, error) {

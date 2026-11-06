@@ -164,6 +164,19 @@ func echoResults(n, status int) []ffufResult {
 	return rs
 }
 
+// uniformResults membangun n hasil dengan respons identik di semua path.
+func uniformResults(n, status int) []ffufResult {
+	rs := make([]ffufResult, 0, n)
+	for i := 0; i < n; i++ {
+		p := fmt.Sprintf("api/seragam%03d", i)
+		rs = append(rs, ffufResult{
+			Input: map[string]string{"FUZZ": p}, Status: status, Length: 24, Words: 1, Lines: 1,
+			ContentType: "application/json", URL: "http://t.test/" + p, Host: "t.test",
+		})
+	}
+	return rs
+}
+
 // realRoutes adalah dua rute 200 nyata yang harus selalu bertahan dari kalibrasi.
 func realRoutes() []ffufResult {
 	mk := func(p string, length int64) ffufResult {
@@ -194,6 +207,53 @@ func countByType(fs []*finding.Finding) map[string]int {
 		got[f.Type]++
 	}
 	return got
+}
+
+// Ambang grup identik bergantung status. Pada API sehat path tak dikenal dibalas
+// 404, jadi grup 401/403 kecil adalah rute terproteksi NYATA (mis. FastAPI: 401
+// identik di tiap rute). Terbukti live: 12 rute nyata pernah hilang jadi satu
+// catatan. Status lain tetap memakai ambang catch-all.
+func TestParseCatchAllThresholdByStatus(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		n      int
+		want   int
+	}{
+		{"401 rute nyata", 401, 12, 12},
+		{"403 rute nyata", 403, 12, 12},
+		{"401 di bawah ambang", 401, 99, 99},
+		{"403 di bawah ambang", 403, 99, 99},
+		{"401 di ambang", 401, 100, 1},
+		{"403 di ambang", 403, 100, 1},
+		{"200 di bawah ambang", 200, 9, 9},
+		{"200 di ambang", 200, 10, 1},
+		{"302 di ambang", 302, 10, 1},
+		{"500 di ambang", 500, 10, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fs := parseResults(t, uniformResults(c.n, c.status))
+			if len(fs) != c.want {
+				t.Fatalf("%d hasil HTTP %d: ingin %d temuan, dapat %d", c.n, c.status, c.want, len(fs))
+			}
+			wantType := typeExposedPath
+			if c.want == 1 {
+				wantType = typeCatchAll // respons identik: catatan catch-all, bukan dinding auth
+			}
+			if got := countByType(fs); got[wantType] != c.want {
+				t.Errorf("ingin %d temuan tipe %s, dapat %v", c.want, wantType, got)
+			}
+		})
+	}
+}
+
+// Rute 401 kecil tak boleh ikut hilang saat bersanding dengan rute 200 nyata.
+func TestParseSmallAuthGroupKeptWithRealRoutes(t *testing.T) {
+	fs := parseResults(t, append(realRoutes(), uniformResults(12, 401)...))
+	if got := countByType(fs); got[typeExposedPath] != 14 || len(got) != 1 {
+		t.Fatalf("ingin 14 rute nyata tanpa catatan, dapat %v", got)
+	}
 }
 
 // Gateway yang menggemakan path: panjang berubah per path, jadi sidik jari
@@ -325,14 +385,7 @@ func TestParseAuthWallNeedsDominance(t *testing.T) {
 // Dua pola pada satu target harus sama-sama terlihat. Tipe catatannya berbeda,
 // karena kunci dedup catatan di akar target hanya bisa berbeda lewat tipe.
 func TestParseBothWallsReported(t *testing.T) {
-	var rs []ffufResult
-	for i := 0; i < 400; i++ {
-		p := fmt.Sprintf("api/seragam%03d", i)
-		rs = append(rs, ffufResult{
-			Input: map[string]string{"FUZZ": p}, Status: 401, Length: 24, Words: 1, Lines: 1,
-			ContentType: "application/json", URL: "http://t.test/" + p, Host: "t.test",
-		})
-	}
+	rs := uniformResults(400, 401)
 	rs = append(rs, echoResults(150, 403)...)
 	rs = append(rs, realRoutes()...)
 
