@@ -61,6 +61,7 @@ func (s *SQLite) init() error {
 			name       TEXT PRIMARY KEY,
 			in_scope   TEXT NOT NULL,
 			out_scope  TEXT NOT NULL,
+			preset     TEXT NOT NULL DEFAULT '{}',
 			updated_at TEXT NOT NULL
 		);`,
 		`CREATE TABLE IF NOT EXISTS users (
@@ -102,7 +103,41 @@ func (s *SQLite) init() error {
 			return fmt.Errorf("store: init skema: %w", err)
 		}
 	}
+	// Migrasi additif: DB yang dibuat sebelum kolom `preset` ada tak memilikinya
+	// (CREATE TABLE IF NOT EXISTS tak mengubah tabel lama). ADD COLUMN gagal bila
+	// kolom sudah ada, jadi cek dulu lewat PRAGMA. Aman & idempoten.
+	if ok, err := s.hasColumn("programs", "preset"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := s.db.Exec(`ALTER TABLE programs ADD COLUMN preset TEXT NOT NULL DEFAULT '{}'`); err != nil {
+			return fmt.Errorf("store: migrasi kolom preset: %w", err)
+		}
+	}
 	return nil
+}
+
+// hasColumn melaporkan apakah tabel punya kolom bernama col. table adalah
+// konstanta internal (bukan input pengguna), jadi aman di-format ke PRAGMA.
+func (s *SQLite) hasColumn(table, col string) (bool, error) {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("store: cek kolom %s.%s: %w", table, col, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == col {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Save: lihat Store.Save.
@@ -322,10 +357,11 @@ func (s *SQLite) SaveProgram(ctx context.Context, p Program) error {
 	}
 	in, _ := json.Marshal(p.InScope)
 	out, _ := json.Marshal(p.OutScope)
+	preset, _ := json.Marshal(p.Preset)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO programs (name,in_scope,out_scope,updated_at) VALUES (?,?,?,?)
-		 ON CONFLICT(name) DO UPDATE SET in_scope=excluded.in_scope, out_scope=excluded.out_scope, updated_at=excluded.updated_at`,
-		p.Name, string(in), string(out), s.now().UTC().Format(time.RFC3339))
+		`INSERT INTO programs (name,in_scope,out_scope,preset,updated_at) VALUES (?,?,?,?,?)
+		 ON CONFLICT(name) DO UPDATE SET in_scope=excluded.in_scope, out_scope=excluded.out_scope, preset=excluded.preset, updated_at=excluded.updated_at`,
+		p.Name, string(in), string(out), string(preset), s.now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return fmt.Errorf("store: simpan program: %w", err)
 	}
@@ -334,31 +370,31 @@ func (s *SQLite) SaveProgram(ctx context.Context, p Program) error {
 
 // GetProgram: lihat Store.GetProgram.
 func (s *SQLite) GetProgram(ctx context.Context, name string) (*Program, error) {
-	var in, out, upd string
-	err := s.db.QueryRowContext(ctx, `SELECT in_scope,out_scope,updated_at FROM programs WHERE name=?`, name).Scan(&in, &out, &upd)
+	var in, out, preset, upd string
+	err := s.db.QueryRowContext(ctx, `SELECT in_scope,out_scope,preset,updated_at FROM programs WHERE name=?`, name).Scan(&in, &out, &preset, &upd)
 	if err == sql.ErrNoRows {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store: ambil program: %w", err)
 	}
-	return decodeProgram(name, in, out, upd), nil
+	return decodeProgram(name, in, out, preset, upd), nil
 }
 
 // ListPrograms: lihat Store.ListPrograms.
 func (s *SQLite) ListPrograms(ctx context.Context) ([]*Program, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name,in_scope,out_scope,updated_at FROM programs ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name,in_scope,out_scope,preset,updated_at FROM programs ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("store: daftar program: %w", err)
 	}
 	defer rows.Close()
 	var out []*Program
 	for rows.Next() {
-		var name, in, outs, upd string
-		if err := rows.Scan(&name, &in, &outs, &upd); err != nil {
+		var name, in, outs, preset, upd string
+		if err := rows.Scan(&name, &in, &outs, &preset, &upd); err != nil {
 			return nil, err
 		}
-		out = append(out, decodeProgram(name, in, outs, upd))
+		out = append(out, decodeProgram(name, in, outs, preset, upd))
 	}
 	return out, rows.Err()
 }
@@ -391,10 +427,13 @@ func (s *SQLite) DeleteFindingsByProgram(ctx context.Context, program string) (i
 	return int(n), nil
 }
 
-func decodeProgram(name, in, out, upd string) *Program {
+func decodeProgram(name, in, out, preset, upd string) *Program {
 	p := &Program{Name: name}
 	_ = json.Unmarshal([]byte(in), &p.InScope)
 	_ = json.Unmarshal([]byte(out), &p.OutScope)
+	if preset != "" {
+		_ = json.Unmarshal([]byte(preset), &p.Preset)
+	}
 	p.UpdatedAt, _ = time.Parse(time.RFC3339, upd)
 	return p
 }

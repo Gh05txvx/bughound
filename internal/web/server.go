@@ -745,6 +745,7 @@ type scanPage struct {
 	Tags          string   // seleksi template: -tags (dipisah koma/spasi)
 	Severity      []string // seleksi template: -severity (checkbox tercentang)
 	Stealth       bool     // profil low-and-slow (DAST + laju scan)
+	SavePreset    bool     // simpan seleksi ini sebagai preset program
 	Errors        []string
 	Result        *scanView
 }
@@ -769,18 +770,26 @@ type denialView struct {
 func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 	page := scanPage{Nav: "scan", Title: "Scan", CSRF: s.csrfToken(r), RPS: "10"}
 
-	// Bila diberi ?program=, prefill scope dari program tersimpan.
+	// Bila diberi ?program=, prefill scope DAN preset seleksi dari program tersimpan.
 	if prog := strings.TrimSpace(r.URL.Query().Get("program")); prog != "" {
 		if p, err := s.store.GetProgram(r.Context(), prog); err == nil {
 			page.Program = p.Name
 			page.InScope = strings.Join(p.InScope, "\n")
 			page.OutScope = strings.Join(p.OutScope, "\n")
+			// Preset seleksi template per program (ditimpa query eksplisit di bawah).
+			page.Tags = strings.Join(p.Preset.Tags, ",")
+			page.Severity = p.Preset.Severity
+			page.Stealth = p.Preset.Stealth
 		}
 	}
-	// Prefill seleksi template dari query — dipakai tautan "Scan pakai filter ini"
+	// Query eksplisit mengalahkan preset — dipakai tautan "Scan pakai filter ini"
 	// di Bank Payload (membawa ?tags= / ?severity= dari filter katalog yang aktif).
-	page.Tags = strings.TrimSpace(r.URL.Query().Get("tags"))
-	page.Severity = filterSeverities(r.URL.Query()["severity"])
+	if q := strings.TrimSpace(r.URL.Query().Get("tags")); q != "" {
+		page.Tags = q
+	}
+	if sv := filterSeverities(r.URL.Query()["severity"]); len(sv) > 0 {
+		page.Severity = sv
+	}
 	// Default contoh (langsung mendemokan gate) bila tak ada program.
 	if page.Program == "" {
 		page.Program = "demo"
@@ -824,6 +833,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		Tags:          strings.TrimSpace(r.FormValue("tags")),
 		Severity:      sel.Severity,
 		Stealth:       sel.Stealth,
+		SavePreset:    r.FormValue("save_preset") != "",
 	}
 
 	// Scan ter-arah spec: perluas OpenAPI/Swagger jadi endpoint → target. Tiap
@@ -861,8 +871,17 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Simpan/perbarui definisi scope program (persisten lintas-restart).
-	_ = s.store.SaveProgram(r.Context(), store.Program{Name: program, InScope: inScope, OutScope: outScope})
+	// Simpan/perbarui definisi scope program (persisten lintas-restart). Preset
+	// seleksi dipertahankan apa adanya kecuali pengguna mencentang "simpan preset",
+	// agar scan biasa tak diam-diam menimpa preset program.
+	prog := store.Program{Name: program, InScope: inScope, OutScope: outScope}
+	if existing, err := s.store.GetProgram(r.Context(), program); err == nil {
+		prog.Preset = existing.Preset
+	}
+	if page.SavePreset {
+		prog.Preset = store.ScanPreset{Tags: sel.Tags, Severity: sel.Severity, Stealth: sel.Stealth}
+	}
+	_ = s.store.SaveProgram(r.Context(), prog)
 
 	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
 	runID := s.enqueueScan(program, guard, seeds, targets, rps, proxyChain, sel, openapiSpec)

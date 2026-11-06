@@ -85,7 +85,19 @@ type Program struct {
 	Name      string
 	InScope   []string
 	OutScope  []string
+	Preset    ScanPreset // preset seleksi template per program (mem-prefill form scan)
 	UpdatedAt time.Time
+}
+
+// ScanPreset adalah seleksi template tersimpan untuk sebuah program; dipakai
+// mem-prefill form scan saat program yang sama dipilih lagi. Hanya memengaruhi
+// template MANA yang dijalankan (nuclei -tags/-severity) dan profil low-and-slow.
+// TIDAK menyentuh scope guard, egress, rate limiter, atau secret — jadi bukan
+// kontrol keamanan. Seleksi kosong = semua template aktif (perilaku default).
+type ScanPreset struct {
+	Tags     []string
+	Severity []string
+	Stealth  bool
 }
 
 // User adalah akun RBAC (lihat internal/auth untuk peran & hashing). PassHash

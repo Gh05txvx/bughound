@@ -29,6 +29,8 @@
       <label class="check"><input type="checkbox" name="severity" value="{{$s}}" {{if hasStr $.Severity $s}}checked{{end}}><span class="badge sev-{{$s}}">{{$s}}</span></label>
       {{end}}
     </div>
+    <label class="check"><input type="checkbox" name="save_preset" value="1" {{if .SavePreset}}checked{{end}}><span>Simpan seleksi ini sebagai preset program</span></label>
+    <p class="muted small">Preset (tags/severity/stealth) tersimpan per program &amp; otomatis mengisi form ini saat program yang sama dipilih. Hanya memengaruhi template mana yang jalan — bukan scope, egress, rate limit, atau secret.</p>
 
     <label>Rate limit <span class="muted small">(request/detik · wajib di jalur eksekusi, dijepit maks 50)</span></label>
     <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">

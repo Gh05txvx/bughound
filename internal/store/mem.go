@@ -48,6 +48,8 @@ func (m *Mem) SaveProgram(ctx context.Context, p Program) error {
 	p.UpdatedAt = m.now().UTC()
 	p.InScope = append([]string(nil), p.InScope...)
 	p.OutScope = append([]string(nil), p.OutScope...)
+	p.Preset.Tags = append([]string(nil), p.Preset.Tags...)
+	p.Preset.Severity = append([]string(nil), p.Preset.Severity...)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := p
@@ -108,6 +110,8 @@ func cloneProgram(p *Program) *Program {
 	cp := *p
 	cp.InScope = append([]string(nil), p.InScope...)
 	cp.OutScope = append([]string(nil), p.OutScope...)
+	cp.Preset.Tags = append([]string(nil), p.Preset.Tags...)
+	cp.Preset.Severity = append([]string(nil), p.Preset.Severity...)
 	return &cp
 }
 

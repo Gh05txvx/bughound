@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -188,6 +189,96 @@ func TestSQLiteProgramCRUDPersists(t *testing.T) {
 	}
 	if len(got.InScope) != 2 || got.OutScope[0] != "admin.demo.test" {
 		t.Errorf("scope tak bertahan lintas-restart: %+v", got)
+	}
+}
+
+func presetEqual(a, b ScanPreset) bool {
+	if a.Stealth != b.Stealth || len(a.Tags) != len(b.Tags) || len(a.Severity) != len(b.Severity) {
+		return false
+	}
+	for i := range a.Tags {
+		if a.Tags[i] != b.Tags[i] {
+			return false
+		}
+	}
+	for i := range a.Severity {
+		if a.Severity[i] != b.Severity[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestSQLiteProgramPresetPersists(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "preset.db")
+
+	s1, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := ScanPreset{Tags: []string{"cve", "exposure"}, Severity: []string{"critical", "high"}, Stealth: true}
+	if err := s1.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"demo.test"}, Preset: want}); err != nil {
+		t.Fatal(err)
+	}
+	s1.Close()
+
+	s2, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	got, err := s2.GetProgram(ctx, "demo")
+	if err != nil {
+		t.Fatalf("GetProgram: %v", err)
+	}
+	if !presetEqual(got.Preset, want) {
+		t.Errorf("preset tak bertahan lintas-restart: got %+v want %+v", got.Preset, want)
+	}
+}
+
+// TestSQLiteProgramPresetMigratesOldDB: DB yang dibuat sebelum kolom preset ada
+// (skema programs 4-kolom, seperti bughound.db primary) harus dimigrasi additif
+// saat dibuka — baris lama tetap terbaca (preset kosong) dan preset baru bisa
+// disimpan di kolom hasil migrasi.
+func TestSQLiteProgramPresetMigratesOldDB(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "old.db")
+
+	// Bangun tabel programs skema LAMA (tanpa preset) + satu baris, lewat driver mentah.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE programs (name TEXT PRIMARY KEY, in_scope TEXT NOT NULL, out_scope TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO programs (name,in_scope,out_scope,updated_at) VALUES (?,?,?,?)`,
+		"legacy", `["a.io"]`, `[]`, "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	// OpenSQLite menjalankan init() → migrasi menambah kolom preset (idempoten).
+	s, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("OpenSQLite (migrasi): %v", err)
+	}
+	defer s.Close()
+
+	got, err := s.GetProgram(ctx, "legacy")
+	if err != nil {
+		t.Fatalf("GetProgram baris lama setelah migrasi: %v", err)
+	}
+	if len(got.Preset.Tags) != 0 || len(got.Preset.Severity) != 0 || got.Preset.Stealth {
+		t.Errorf("baris lama harus punya preset kosong, dapat %+v", got.Preset)
+	}
+	if err := s.SaveProgram(ctx, Program{Name: "legacy", InScope: []string{"a.io"}, Preset: ScanPreset{Tags: []string{"misconfig"}}}); err != nil {
+		t.Fatalf("SaveProgram preset pasca-migrasi: %v", err)
+	}
+	got2, _ := s.GetProgram(ctx, "legacy")
+	if len(got2.Preset.Tags) != 1 || got2.Preset.Tags[0] != "misconfig" {
+		t.Errorf("preset pasca-migrasi tak tersimpan: %+v", got2.Preset)
 	}
 }
 
