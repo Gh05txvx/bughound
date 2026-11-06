@@ -193,7 +193,7 @@ func TestSQLiteProgramCRUDPersists(t *testing.T) {
 }
 
 func presetEqual(a, b ScanPreset) bool {
-	if a.Stealth != b.Stealth || len(a.Tags) != len(b.Tags) || len(a.Severity) != len(b.Severity) {
+	if a.Stealth != b.Stealth || a.APIRoutes != b.APIRoutes || len(a.Tags) != len(b.Tags) || len(a.Severity) != len(b.Severity) {
 		return false
 	}
 	for i := range a.Tags {
@@ -217,7 +217,7 @@ func TestSQLiteProgramPresetPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ScanPreset{Tags: []string{"cve", "exposure"}, Severity: []string{"critical", "high"}, Stealth: true}
+	want := ScanPreset{Tags: []string{"cve", "exposure"}, Severity: []string{"critical", "high"}, Stealth: true, APIRoutes: true}
 	if err := s1.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"demo.test"}, Preset: want}); err != nil {
 		t.Fatal(err)
 	}

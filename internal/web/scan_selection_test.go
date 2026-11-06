@@ -143,6 +143,41 @@ func TestScanNoStealthKeepsRate(t *testing.T) {
 	}
 }
 
+// api_routes dari form scan harus diteruskan ke engine (sel.APIRoutes), dan
+// default-nya mati bila tak dicentang (opt-in, volume besar).
+func TestScanAPIRoutesThreaded(t *testing.T) {
+	srv, mu, got := newSelectionServer(t)
+
+	rec := do(t, srv, "POST", "/scan", url.Values{
+		"program": {"demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test"},
+		"api_routes": {"1"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /scan = %d", rec.Code)
+	}
+	waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
+
+	mu.Lock()
+	if !got.APIRoutes {
+		t.Error("api_routes=1 harus diteruskan sebagai sel.APIRoutes=true")
+	}
+	mu.Unlock()
+
+	// Tanpa centang → false.
+	rec = do(t, srv, "POST", "/scan", url.Values{
+		"program": {"demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /scan (tanpa api_routes) = %d", rec.Code)
+	}
+	waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
+	mu.Lock()
+	defer mu.Unlock()
+	if got.APIRoutes {
+		t.Error("tanpa api_routes, sel.APIRoutes harus false (opt-in)")
+	}
+}
+
 func eqStr(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

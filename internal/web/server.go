@@ -95,6 +95,9 @@ type Selection struct {
 	// engine DAST memakai satu koneksi + UA browser (jejak minimal pada target
 	// ber-SOC). Non-destruktif selalu aktif terlepas dari ini.
 	Stealth bool
+	// APIRoutes menambahkan wordlist route API ter-bundle (Assetnote apiroutes)
+	// ke engine ffuf — brute path API bervolume besar (opt-in per scan).
+	APIRoutes bool
 }
 
 // Config mengonfigurasi server: store, engine DAST (minimal 1), recon & vault opsional.
@@ -745,6 +748,7 @@ type scanPage struct {
 	Tags          string   // seleksi template: -tags (dipisah koma/spasi)
 	Severity      []string // seleksi template: -severity (checkbox tercentang)
 	Stealth       bool     // profil low-and-slow (DAST + laju scan)
+	APIRoutes     bool     // ikutkan wordlist route API ter-bundle (ffuf)
 	SavePreset    bool     // simpan seleksi ini sebagai preset program
 	Errors        []string
 	Result        *scanView
@@ -780,6 +784,7 @@ func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 			page.Tags = strings.Join(p.Preset.Tags, ",")
 			page.Severity = p.Preset.Severity
 			page.Stealth = p.Preset.Stealth
+			page.APIRoutes = p.Preset.APIRoutes
 		}
 	}
 	// Query eksplisit mengalahkan preset — dipakai tautan "Scan pakai filter ini"
@@ -813,7 +818,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	targets := splitLines(r.FormValue("targets"))
 	rps := parseRPS(r.FormValue("rps"))
 	proxyChain := splitLines(r.FormValue("upstream_proxy")) // satu hop per baris
-	sel := Selection{Tags: splitList(r.FormValue("tags")), Severity: filterSeverities(r.Form["severity"]), Stealth: r.FormValue("stealth") != ""}
+	sel := Selection{Tags: splitList(r.FormValue("tags")), Severity: filterSeverities(r.Form["severity"]), Stealth: r.FormValue("stealth") != "", APIRoutes: r.FormValue("api_routes") != ""}
 	// Stealth = low-and-slow: jepit laju scan keseluruhan ke mode senyap (≤
 	// stealthScanRPS). Ini MENAMBAH pembatasan (arah aman), rate limiter tetap
 	// wajib di jalur eksekusi — tak pernah dimatikan.
@@ -833,6 +838,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		Tags:          strings.TrimSpace(r.FormValue("tags")),
 		Severity:      sel.Severity,
 		Stealth:       sel.Stealth,
+		APIRoutes:     sel.APIRoutes,
 		SavePreset:    r.FormValue("save_preset") != "",
 	}
 
@@ -879,7 +885,7 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		prog.Preset = existing.Preset
 	}
 	if page.SavePreset {
-		prog.Preset = store.ScanPreset{Tags: sel.Tags, Severity: sel.Severity, Stealth: sel.Stealth}
+		prog.Preset = store.ScanPreset{Tags: sel.Tags, Severity: sel.Severity, Stealth: sel.Stealth, APIRoutes: sel.APIRoutes}
 	}
 	_ = s.store.SaveProgram(r.Context(), prog)
 

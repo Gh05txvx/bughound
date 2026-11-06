@@ -70,6 +70,28 @@ RUN set -eux; \
 ENV BUGHOUND_SEMGREP_CONFIG=/opt/semgrep/default.yml \
     SEMGREP_ENABLE_VERSION_CHECK=0
 
+# Pre-bake wordlist route API (Assetnote "apiroutes": path API nyata yang paling
+# sering diamati di web, terurut frekuensi) supaya opsi "Brute route API" di form
+# scan jalan OFFLINE — egress runtime dikunci scope guard, jadi menarik wordlist
+# saat scan akan diblok (alasan sama dgn pre-bake semgrep & nuclei-templates).
+# Diunduh sekali saat build via python3 (image lean tak punya curl), dinormalkan
+# ke bentuk FUZZ (tanpa slash tepi, tanpa query/komentar/wildcard/spasi),
+# ter-dedup (urutan frekuensi dipertahankan), dipangkas ke 10000 path terpopuler.
+# Fail-closed: unduh gagal / isi kurang => build gagal keras (bukan diam-diam
+# mengirim image tanpa wordlist). Berkas world-readable → user runtime 'bh' baca.
+# Versi tanggal di-pin (ketertelusuran); power user bisa timpa via env
+# BUGHOUND_API_WORDLIST ke wordlist sendiri saat runtime.
+RUN set -eux; \
+    mkdir -p /usr/local/share/bughound/wordlists; \
+    python3 -c "import urllib.request; r=urllib.request.Request('https://wordlists-cdn.assetnote.io/data/automated/httparchive_apiroutes_2025_06_28.txt', headers={'User-Agent':'bughound-build'}); open('/tmp/apiroutes.raw','wb').write(urllib.request.urlopen(r, timeout=300).read())"; \
+    sed -e 's/\r$//' -e 's/?.*$//' -e 's#^/*##' -e 's#/*$##' /tmp/apiroutes.raw \
+      | grep -vE '^$|^#|[[:space:]]|\*|\$' \
+      | awk '!seen[$0]++' \
+      | head -n 10000 > /usr/local/share/bughound/wordlists/apiroutes.txt; \
+    rm -f /tmp/apiroutes.raw; \
+    test "$(wc -l < /usr/local/share/bughound/wordlists/apiroutes.txt)" -ge 1000; \
+    chmod 0644 /usr/local/share/bughound/wordlists/apiroutes.txt
+
 # ZAP opsional (butuh JRE; menambah ~500MB). Default tidak dipasang.
 RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
       apt-get update; \

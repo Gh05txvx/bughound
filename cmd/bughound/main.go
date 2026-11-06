@@ -199,7 +199,7 @@ func main() {
 					// -tags/-severity memilih subset dari templates terpasang.
 					es = append(es, &nuclei.Runner{RateLimit: rate, Tags: sel.Tags, Severity: sel.Severity})
 				case "ffuf":
-					es = append(es, &ffuf.Runner{Wordlist: *ffufWordlist, RateLimit: rate})
+					es = append(es, &ffuf.Runner{Wordlist: *ffufWordlist, RateLimit: rate, APIRoutes: sel.APIRoutes})
 				case "zap":
 					es = append(es, &zap.Runner{Mode: *zapMode, RateLimit: rate})
 				case "retire":

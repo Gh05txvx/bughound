@@ -24,6 +24,7 @@ type Runner struct {
 	Binary    string // default "ffuf"
 	Wordlist  string // -w; kosong = wordlist bawaan
 	RateLimit int    // -rate (req/dtk); 0 = default ffuf
+	APIRoutes bool   // true = tambahkan wordlist route API ter-bundle (Assetnote apiroutes)
 	proxyAddr string
 }
 
@@ -53,6 +54,7 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	var extra []string
 	extra = append(extra, r.robotsPaths(ctx, target)...)
 	extra = append(extra, r.specPaths(ctx, target)...)
+	extra = append(extra, r.apiRoutePaths()...) // route API ter-bundle (opt-in, lewat proxy)
 	if len(extra) > 0 {
 		if merged, cleanupMerged, mErr := mergeWordlist(wordlist, extra); mErr == nil {
 			cleanupWL() // buang wordlist dasar

@@ -30,7 +30,7 @@
       {{end}}
     </div>
     <label class="check"><input type="checkbox" name="save_preset" value="1" {{if .SavePreset}}checked{{end}}><span>Simpan seleksi ini sebagai preset program</span></label>
-    <p class="muted small">Preset (tags/severity/stealth) tersimpan per program &amp; otomatis mengisi form ini saat program yang sama dipilih. Hanya memengaruhi template mana yang jalan — bukan scope, egress, rate limit, atau secret.</p>
+    <p class="muted small">Preset (tags/severity/stealth/route API) tersimpan per program &amp; otomatis mengisi form ini saat program yang sama dipilih. Hanya memengaruhi template/wordlist mana yang jalan — bukan scope, egress, rate limit, atau secret.</p>
 
     <label>Rate limit <span class="muted small">(request/detik · wajib di jalur eksekusi, dijepit maks 50)</span></label>
     <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">
@@ -38,6 +38,9 @@
     <label>Profil keamanan DAST</label>
     <label class="check"><input type="checkbox" name="stealth" value="1" {{if .Stealth}}checked{{end}}><span>Stealth (low-and-slow)</span></label>
     <p class="muted small">Stealth menekan jejak pada target ber-SOC: laju dijepit ≤3/dtk, satu koneksi, User-Agent browser, cakupan URL dipersempit. <strong>Non-destruktif selalu aktif</strong> — tanpa payload DoS & tanpa callback blind/OAST; scan mencari kandidat bug untuk kamu verifikasi manual, bukan mengubah konfigurasi target.</p>
+
+    <label class="check"><input type="checkbox" name="api_routes" value="1" {{if .APIRoutes}}checked{{end}}><span>Brute route API (wordlist Assetnote apiroutes)</span></label>
+    <p class="muted small">Menambah ~ribuan path API nyata (terurut frekuensi) ke engine ffuf untuk menemukan endpoint API tak tertaut (mis. <code>/api/v1/…</code>, <code>/rest/…</code>). <strong>Volume besar &amp; lebih lambat</strong> — aktifkan untuk target API-berat. Tiap probe tetap lewat proxy egress yang scope-enforced (sama seperti wordlist lain); non-destruktif.</p>
 
     <label>Upstream proxy / rantai <span class="muted small">(opsional · satu hop per baris, urut; egress diteruskan SETELAH lolos scope guard)</span></label>
     <textarea name="upstream_proxy" rows="2" spellcheck="false" placeholder="http://127.0.0.1:8080&#10;socks5://127.0.0.1:9050">{{.UpstreamProxy}}</textarea>

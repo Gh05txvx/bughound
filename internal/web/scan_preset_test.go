@@ -18,7 +18,7 @@ func TestScanPresetSavePrefillPreserve(t *testing.T) {
 	// 1) Simpan preset.
 	rec := do(t, srv, "POST", "/scan", url.Values{
 		"program": {"acme"}, "in_scope": {"acme.io"}, "targets": {"acme.io"},
-		"tags": {"cve, exposure"}, "severity": {"critical", "high"}, "stealth": {"1"},
+		"tags": {"cve, exposure"}, "severity": {"critical", "high"}, "stealth": {"1"}, "api_routes": {"1"},
 		"save_preset": {"1"},
 	})
 	if rec.Code != http.StatusOK {
@@ -36,6 +36,9 @@ func TestScanPresetSavePrefillPreserve(t *testing.T) {
 	}
 	if !strings.Contains(body, `name="stealth" value="1" checked`) {
 		t.Errorf("stealth preset tak tercentang di form")
+	}
+	if !strings.Contains(body, `name="api_routes" value="1" checked`) {
+		t.Errorf("preset route API tak tercentang di form")
 	}
 
 	// 3) Scan lagi dengan seleksi beda tapi TANPA opt-in simpan → preset tetap.

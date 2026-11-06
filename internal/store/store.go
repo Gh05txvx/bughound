@@ -95,9 +95,10 @@ type Program struct {
 // TIDAK menyentuh scope guard, egress, rate limiter, atau secret — jadi bukan
 // kontrol keamanan. Seleksi kosong = semua template aktif (perilaku default).
 type ScanPreset struct {
-	Tags     []string
-	Severity []string
-	Stealth  bool
+	Tags      []string
+	Severity  []string
+	Stealth   bool
+	APIRoutes bool // ikutkan wordlist route API ter-bundle (ffuf) saat scan
 }
 
 // User adalah akun RBAC (lihat internal/auth untuk peran & hashing). PassHash
