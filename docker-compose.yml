@@ -18,7 +18,9 @@ services:
       - bughound-data:/data
     environment:
       - BUGHOUND_AUTH=${BUGHOUND_AUTH:-}
-    # command: ["-addr","0.0.0.0:8787","-db","/data/bughound.db","-engine","nuclei,ffuf","-sast-root","/data/src"]
+    # SAST sudah aktif default (image men-set BUGHOUND_SAST_ROOT=/data/sast);
+    # taruh kode target di volume pada /data/sast. Tak perlu flag tambahan.
+    # command: ["-addr","0.0.0.0:8787","-db","/data/bughound.db","-engine","nuclei,ffuf"]
 
 volumes:
   bughound-data:

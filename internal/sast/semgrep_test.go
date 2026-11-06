@@ -49,7 +49,7 @@ func TestSemgrepArgs(t *testing.T) {
 	joined := strings.Join((&Runner{}).args("/code/root"), " ")
 	// Default `p/default` + metrics OFF (lihat Runner: `auto` tak kompatibel
 	// dengan --metrics=off, jadi tak boleh jadi default).
-	for _, want := range []string{"--json", "--config", "p/default", "/code/root", "--metrics=off"} {
+	for _, want := range []string{"--json", "--config", "p/default", "/code/root", "--metrics=off", "--no-rewrite-rule-ids"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args harus memuat %q; dapat %q", want, joined)
 		}

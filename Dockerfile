@@ -51,6 +51,24 @@ RUN apt-get update \
  && pip3 install --no-cache-dir --break-system-packages semgrep \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Pre-bake ruleset semgrep `p/default` ke berkas lokal supaya SAST semgrep JALAN
+# OFFLINE — egress runtime dikunci scope guard, jadi menarik ruleset dari
+# registry saat scan akan diblok (alasan sama dgn pre-bake nuclei-templates).
+# Diunduh sekali saat build via python3 (sudah terpasang untuk semgrep; tanpa
+# dependensi curl di image lean), lalu divalidasi. Fail-closed: unduh/validasi
+# gagal => build gagal keras (bukan diam-diam mengirim image tanpa ruleset SAST).
+RUN set -eux; \
+    mkdir -p /opt/semgrep; \
+    python3 -c "import urllib.request; r=urllib.request.Request('https://semgrep.dev/c/p/default', headers={'User-Agent':'bughound-build'}); open('/opt/semgrep/default.yml','wb').write(urllib.request.urlopen(r, timeout=120).read())"; \
+    semgrep --validate --config /opt/semgrep/default.yml --metrics=off; \
+    chmod 0644 /opt/semgrep/default.yml
+
+# SAST semgrep memakai ruleset lokal di atas + version-check jaringan dimatikan
+# => benar-benar offline. Runner (internal/sast) membaca BUGHOUND_SEMGREP_CONFIG;
+# bila diganti ke shorthand registry (mis. p/golang), butuh egress ke registry.
+ENV BUGHOUND_SEMGREP_CONFIG=/opt/semgrep/default.yml \
+    SEMGREP_ENABLE_VERSION_CHECK=0
+
 # ZAP opsional (butuh JRE; menambah ~500MB). Default tidak dipasang.
 RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
       apt-get update; \
@@ -80,6 +98,14 @@ RUN useradd -m -u 10001 bh && mkdir -p /data && chown bh:bh /data
 USER bh
 WORKDIR /data
 
+# SAST aktif secara default — tak perlu flag/command terpisah setelah deploy.
+# Root analisis diarahkan ke /data/sast (di dalam volume data); bughound membuat
+# dir ini saat boot bila belum ada (volume kosong menutupi dir bawaan image),
+# lalu mengurung SAST ke sana (path-scope, default-deny, tanpa jaringan). Taruh
+# kode target yang ingin dianalisis di /data/sast atau subdir-nya. Override:
+# jalankan dengan -sast-root <dir> atau set BUGHOUND_SAST_ROOT lain.
+ENV BUGHOUND_SAST_ROOT=/data/sast
+
 # Pre-bake nuclei-templates saat build (sumber 'trusted' = repo resmi
 # projectdiscovery, satu-satunya sumber tepercaya di awal per BH-SPEC-PAYLOAD).
 # Dengan template ada di disk, nuclei tak perlu — dan di runtime TAK BISA —
@@ -103,5 +129,9 @@ EXPOSE 8787
 
 # Default AMAN: bind 0.0.0.0 (untuk -p docker) TAPI engine mock (tak ada scan
 # nyata). Untuk scan nyata, override: ... -engine nuclei,ffuf,zap  (+ -auth).
+# Catatan SAST: hidup default via ENV BUGHOUND_SAST_ROOT di atas; adapter mock &
+# semgrep dua-duanya langsung pakai. Ruleset semgrep `p/default` sudah di-pre-bake
+# ke /opt/semgrep/default.yml (ENV BUGHOUND_SEMGREP_CONFIG) sehingga SAST jalan
+# OFFLINE tanpa registry. Taruh kode target yang mau dianalisis di /data/sast.
 ENTRYPOINT ["bughound"]
 CMD ["-addr", "0.0.0.0:8787", "-db", "/data/bughound.db"]

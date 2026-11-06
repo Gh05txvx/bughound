@@ -236,8 +236,13 @@ func main() {
 		}
 	}
 
-	if *sastRoot != "" {
-		log.Printf("sast: aktif, dikurung ke root %q (analisis statis lokal, tanpa jaringan)", *sastRoot)
+	// SAST aktif bila -sast-root atau env BUGHOUND_SAST_ROOT diset. Image
+	// men-deklarasikan BUGHOUND_SAST_ROOT=/data/sast sehingga SAST langsung hidup
+	// setelah deploy tanpa flag tambahan; resolveSASTRoot memastikan dir-nya ada
+	// (volume kosong yang di-bind di atas /data bisa menutupi dir bawaan image).
+	sastRootEff, sastLog := resolveSASTRoot(*sastRoot, os.Getenv("BUGHOUND_SAST_ROOT"))
+	if sastLog != "" {
+		log.Print(sastLog)
 	}
 
 	grpcReal := strings.EqualFold(*grpcMode, "real") || strings.EqualFold(*grpcMode, "grpcurl")
@@ -282,7 +287,7 @@ func main() {
 		log.Printf("bank payload: %d sumber [%s] — refresh via /payloads atau `bughound templates update`", len(payloadSources), strings.Join(ids, ", "))
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, NewEngines: engineFactory, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: *sastRoot, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext, PayloadSources: payloadSources})
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, NewEngines: engineFactory, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: sastRootEff, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext, PayloadSources: payloadSources})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}
@@ -345,6 +350,25 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// resolveSASTRoot memilih root SAST efektif: flag -sast-root lalu env
+// BUGHOUND_SAST_ROOT. Bila diset, direktorinya dipastikan ada (dibuat bila
+// perlu) agar path-scope sast.Resolve tak gagal pada root yang belum ada —
+// penting karena image men-deklarasikan BUGHOUND_SAST_ROOT=/data/sast sementara
+// volume kosong yang di-bind di atas /data menutupi dir bawaan image. Kembalian:
+// root efektif ("" = SAST nonaktif) + satu baris log untuk dicetak pemanggil.
+// Gagal menyiapkan dir TIDAK fatal — SAST dinonaktifkan agar orkestrator tetap
+// jalan (fitur lain tak ikut tumbang karena salah konfigurasi SAST).
+func resolveSASTRoot(flagVal, envVal string) (root, logMsg string) {
+	root = firstNonEmpty(flagVal, envVal)
+	if root == "" {
+		return "", ""
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return "", fmt.Sprintf("sast: root %q tak bisa disiapkan (%v) — SAST dinonaktifkan", root, err)
+	}
+	return root, fmt.Sprintf("sast: aktif, dikurung ke root %q (analisis statis lokal, tanpa jaringan)", root)
 }
 
 // parseEngineMode menafsirkan flag -engine. "" / "mock" -> engine mock (mock

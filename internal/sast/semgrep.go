@@ -35,7 +35,10 @@ func (r *Runner) Name() string { return "semgrep" }
 
 // config memilih ruleset: field Config bila diisi, lalu env
 // BUGHOUND_SEMGREP_CONFIG, lalu default `p/default`. `auto` sengaja bukan
-// default karena tak kompatibel dengan --metrics=off.
+// default karena tak kompatibel dengan --metrics=off. Image Docker mem-pre-bake
+// ruleset `p/default` ke berkas lokal dan men-set BUGHOUND_SEMGREP_CONFIG ke
+// situ (+SEMGREP_ENABLE_VERSION_CHECK=0) → SAST semgrep jalan OFFLINE tanpa
+// menyentuh registry saat egress runtime terkunci.
 func (r *Runner) config() string {
 	if strings.TrimSpace(r.Config) != "" {
 		return r.Config
@@ -47,8 +50,13 @@ func (r *Runner) config() string {
 }
 
 // args menyusun argumen semgrep (dipisah agar bisa diuji tanpa mengeksekusi).
+// --no-rewrite-rule-ids: pertahankan rule id apa adanya. Tanpa flag ini, saat
+// config berupa PATH berkas (ruleset lokal pre-bake; lihat config()), semgrep
+// menambah awalan namespace dari path berkas (mis. "opt.semgrep.") ke tiap id —
+// mengotori Type/SourceTemplate dan membuat dedup_key berbeda dari mode registry
+// `p/default` untuk temuan yang sama. Pada registry shorthand, flag ini no-op.
 func (r *Runner) args(dir string) []string {
-	return []string{"--json", "--quiet", "--metrics=off", "--config", r.config(), dir}
+	return []string{"--json", "--quiet", "--metrics=off", "--no-rewrite-rule-ids", "--config", r.config(), dir}
 }
 
 // Analyze menjalankan semgrep pada dir dan mengembalikan temuan ternormalkan.
