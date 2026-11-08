@@ -41,12 +41,14 @@ const (
 	catchAllMinHits     = 10  // grup dominan minimal sebesar ini baru dianggap wildcard
 	catchAllMinFraction = 0.6 // dan minimal menyumbang 60% dari seluruh hasil
 
-	// authWallMinHits adalah ambang grup 401/403, baik identik maupun sebentuk (lihat
-	// minHitsFor). Sengaja jauh di atas catchAllMinHits: pada API sehat path tak
-	// dikenal dibalas 404, jadi grup 401/403 kecil adalah rute terproteksi NYATA —
-	// justru itu yang dicari brute route API. Dinding sungguhan di prefix populer
-	// menghasilkan ratusan hingga ribuan hit; di bawah ambang, kebisingannya terbatas.
-	authWallMinHits = 100
+	// errorWallMinHits adalah ambang grup berstatus dinding (401/403/500), baik
+	// identik maupun sebentuk (lihat minHitsFor). Sengaja jauh di atas
+	// catchAllMinHits: pada API sehat path tak dikenal dibalas 404, jadi grup kecil
+	// berstatus ini adalah rute NYATA — terproteksi (401/403) atau crash tanpa
+	// parameter wajib (500) — justru itu yang dicari brute route API. Dinding
+	// sungguhan di prefix populer menghasilkan ratusan hingga ribuan hit; di bawah
+	// ambang, kebisingannya terbatas.
+	errorWallMinHits = 100
 )
 
 // Parse membaca output ffuf (JSON) dan mengembalikan temuan ternormalkan, setelah
@@ -76,17 +78,18 @@ type item struct {
 
 // calibrate menekan respons massal yang bukan endpoint nyata dan menggantinya dengan
 // satu temuan info per pola, agar penekanan tetap terlihat. Dua pola dinilai
-// berurutan: catch-all (respons identik), lalu dinding auth (401/403 sebentuk,
-// panjang berubah). Hasil lain — endpoint dengan sidik jari berbeda — tetap utuh.
+// berurutan: catch-all (respons identik), lalu dinding error (401/403/500
+// sebentuk, panjang berubah). Hasil lain — endpoint dengan sidik jari berbeda —
+// tetap utuh.
 func calibrate(items []item, program, runID string) []*finding.Finding {
 	var notes []*finding.Finding
 	rest, sample, n := splitDominant(items, fingerprintOf)
 	if n > 0 {
 		notes = append(notes, wildcardNote(sample, n, len(items), program, runID))
 	}
-	rest, sample, n = splitDominant(rest, authWallFingerprintOf)
+	rest, sample, n = splitDominant(rest, wallFingerprintOf)
 	if n > 0 {
-		notes = append(notes, authWallNote(sample, n, len(items), program, runID))
+		notes = append(notes, wallNote(sample, n, len(items), program, runID))
 	}
 	return append(collect(rest), notes...)
 }
@@ -125,14 +128,17 @@ func splitDominant(items []item, key func(ffufResult) string) (rest []item, samp
 
 // minHitsFor mengembalikan ambang ukuran grup menurut status responsnya.
 func minHitsFor(status int) int {
-	if isAuthStatus(status) {
-		return authWallMinHits
+	if isWallStatus(status) {
+		return errorWallMinHits
 	}
 	return catchAllMinHits
 }
 
-func isAuthStatus(status int) bool {
-	return status == 401 || status == 403
+// isWallStatus: status yang bisa membentuk dinding error. 401/403 = gateway auth;
+// 500 = handler error yang mencetak path (mis. Juice Shop "Unexpected path:
+// /api/x"). Status lain tak pernah: rute 200 nyata sering kebetulan sebentuk.
+func isWallStatus(status int) bool {
+	return status == 401 || status == 403 || status == 500
 }
 
 func collect(items []item) []*finding.Finding {
@@ -149,14 +155,15 @@ func fingerprintOf(res ffufResult) string {
 	return fmt.Sprintf("%d|%d|%d", res.Status, res.Length, res.Words)
 }
 
-// authWallFingerprintOf adalah sidik jari longgar untuk dinding auth: panjang
-// diabaikan karena banyak gateway menggemakan path di body (mis. Spring Boot:
-// {"status":401,"path":"/api/x"}), sehingga panjang berubah per path sementara
-// bentuknya tetap. Content-type juga diabaikan: gateway bisa menurunkannya dari
-// ekstensi path. Hanya 401/403 (selainnya key kosong): rute 200 nyata sering
-// kebetulan sebentuk, mis. JSON tanpa spasi selalu 1 kata.
-func authWallFingerprintOf(res ffufResult) string {
-	if !isAuthStatus(res.Status) {
+// wallFingerprintOf adalah sidik jari longgar untuk dinding error: panjang
+// diabaikan karena banyak server menggemakan path di body (mis. gateway Spring
+// Boot {"status":401,"path":"/api/x"}, halaman error 500 yang mencetak path), jadi
+// panjang berubah per path sementara bentuknya tetap. Content-type juga diabaikan:
+// gateway bisa menurunkannya dari ekstensi path. Hanya status dinding (selainnya
+// key kosong): rute 200 nyata sering kebetulan sebentuk, mis. JSON tanpa spasi
+// selalu 1 kata.
+func wallFingerprintOf(res ffufResult) string {
+	if !isWallStatus(res.Status) {
 		return ""
 	}
 	return fmt.Sprintf("%d|%d|%d", res.Status, res.Words, res.Lines)
@@ -210,22 +217,31 @@ func wildcardNote(sample ffufResult, suppressed, total int, program, runID strin
 	return note
 }
 
-// authWallNote merangkum dinding auth yang ditekan. Tipenya sendiri, bukan tipe
+// wallNote merangkum dinding error yang ditekan. Tipenya sendiri, bukan tipe
 // catch-all: kunci dedup catatan di akar target hanya bisa berbeda lewat tipe, jadi
 // satu target dengan kedua pola tetap menampilkan dua catatan.
-func authWallNote(sample ffufResult, suppressed, total int, program, runID string) *finding.Finding {
+func wallNote(sample ffufResult, suppressed, total int, program, runID string) *finding.Finding {
 	note := calibrationNote(sample, suppressed, total, program, runID)
-	note.Type = "content-discovery-auth-wall"
-	note.Title = fmt.Sprintf("Kalibrasi ffuf: %d path ditekan (dinding auth HTTP %d)", suppressed, sample.Status)
+	kind := wallKind(sample.Status)
+	note.Type = "content-discovery-error-wall"
+	note.Title = fmt.Sprintf("Kalibrasi ffuf: %d path ditekan (dinding %s HTTP %d)", suppressed, kind, sample.Status)
 	note.Description = fmt.Sprintf("Server membalas %d dari %d path uji dengan HTTP %d yang sebentuk "+
-		"(%d kata, %d baris), hanya panjangnya berubah — indikasi gateway auth yang menggemakan path "+
+		"(%d kata, %d baris), hanya panjangnya berubah — indikasi dinding %s yang menggemakan path "+
 		"di body, bukan %d endpoint nyata. Contoh: %s. Temuan path untuk pola ini ditekan; rute nyata "+
-		"di balik dinding tak terbedakan tanpa kredensial, verifikasi manual bila ada path spesifik "+
-		"yang diragukan.", suppressed, total, sample.Status, sample.Words, sample.Lines, suppressed, sample.URL)
+		"di balik dinding tak terbedakan dari path semu, verifikasi manual bila ada path spesifik "+
+		"yang diragukan.", suppressed, total, sample.Status, sample.Words, sample.Lines, kind, suppressed, sample.URL)
 	note.Evidence = &finding.Evidence{
 		Matched: fmt.Sprintf("HTTP %d · %d kata · %d baris · %d/%d path sebentuk", sample.Status, sample.Words, sample.Lines, suppressed, total),
 	}
 	return note
+}
+
+// wallKind memberi label jenis dinding untuk teks catatan.
+func wallKind(status int) string {
+	if status == 500 {
+		return "error server"
+	}
+	return "auth"
 }
 
 // calibrationNote membangun kerangka catatan kalibrasi; Type, Title, Description,

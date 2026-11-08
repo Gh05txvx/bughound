@@ -146,11 +146,12 @@ func TestParseNoCatchAllWhenDiverse(t *testing.T) {
 const (
 	typeExposedPath = "exposed-path"
 	typeCatchAll    = "content-discovery-wildcard"
-	typeAuthWall    = "content-discovery-auth-wall"
+	typeErrorWall   = "content-discovery-error-wall"
 )
 
 // echoResults membangun n hasil yang menggemakan path di body: panjang berubah per
-// path, bentuk (kata & baris) tetap. Ini pola gateway 401/403 gaya Spring Boot.
+// path, bentuk (kata & baris) tetap. Ini pola dinding error: gateway 401/403 gaya
+// Spring Boot, atau handler 500 yang mencetak path yang diminta.
 func echoResults(n, status int) []ffufResult {
 	rs := make([]ffufResult, 0, n)
 	for i := 0; i < n; i++ {
@@ -210,9 +211,10 @@ func countByType(fs []*finding.Finding) map[string]int {
 }
 
 // Ambang grup identik bergantung status. Pada API sehat path tak dikenal dibalas
-// 404, jadi grup 401/403 kecil adalah rute terproteksi NYATA (mis. FastAPI: 401
-// identik di tiap rute). Terbukti live: 12 rute nyata pernah hilang jadi satu
-// catatan. Status lain tetap memakai ambang catch-all.
+// 404, jadi grup 401/403/500 kecil adalah rute NYATA: terproteksi (mis. FastAPI:
+// 401 identik di tiap rute) atau crash tanpa parameter wajib. Terbukti live: 12
+// rute nyata pernah hilang jadi satu catatan. Status lain tetap memakai ambang
+// catch-all.
 func TestParseCatchAllThresholdByStatus(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -222,14 +224,16 @@ func TestParseCatchAllThresholdByStatus(t *testing.T) {
 	}{
 		{"401 rute nyata", 401, 12, 12},
 		{"403 rute nyata", 403, 12, 12},
+		{"500 rute nyata", 500, 12, 12},
 		{"401 di bawah ambang", 401, 99, 99},
 		{"403 di bawah ambang", 403, 99, 99},
+		{"500 di bawah ambang", 500, 99, 99},
 		{"401 di ambang", 401, 100, 1},
 		{"403 di ambang", 403, 100, 1},
+		{"500 di ambang", 500, 100, 1},
 		{"200 di bawah ambang", 200, 9, 9},
 		{"200 di ambang", 200, 10, 1},
 		{"302 di ambang", 302, 10, 1},
-		{"500 di ambang", 500, 10, 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -239,7 +243,7 @@ func TestParseCatchAllThresholdByStatus(t *testing.T) {
 			}
 			wantType := typeExposedPath
 			if c.want == 1 {
-				wantType = typeCatchAll // respons identik: catatan catch-all, bukan dinding auth
+				wantType = typeCatchAll // respons identik: catatan catch-all, bukan dinding error
 			}
 			if got := countByType(fs); got[wantType] != c.want {
 				t.Errorf("ingin %d temuan tipe %s, dapat %v", c.want, wantType, got)
@@ -256,12 +260,21 @@ func TestParseSmallAuthGroupKeptWithRealRoutes(t *testing.T) {
 	}
 }
 
-// Gateway yang menggemakan path: panjang berubah per path, jadi sidik jari
-// status|panjang|kata tak pernah dominan. Terbukti live: 7.719 temuan dari satu
-// scan, 2 rute nyata tenggelam. Harus kolaps jadi satu catatan, rute nyata utuh.
-func TestParseAuthWallEchoCollapsed(t *testing.T) {
-	for _, status := range []int{401, 403} {
-		t.Run(fmt.Sprint(status), func(t *testing.T) {
+// Server yang menggemakan path: panjang berubah per path, jadi sidik jari
+// status|panjang|kata tak pernah dominan. Terbukti live: 7.719 temuan (gateway 401)
+// dan 7.971 temuan (Juice Shop 500) dari satu scan, rute nyata tenggelam. Harus
+// kolaps jadi satu catatan berlabel sesuai jenis dindingnya, rute nyata utuh.
+func TestParseErrorWallEchoCollapsed(t *testing.T) {
+	for _, c := range []struct {
+		status int
+		label  string
+	}{
+		{401, "dinding auth"},
+		{403, "dinding auth"},
+		{500, "dinding error server"},
+	} {
+		t.Run(fmt.Sprint(c.status), func(t *testing.T) {
+			status := c.status
 			fs := parseResults(t, append(realRoutes(), echoResults(150, status)...))
 			if len(fs) != 3 {
 				t.Fatalf("ingin 3 temuan (2 nyata + 1 catatan), dapat %d", len(fs))
@@ -269,17 +282,20 @@ func TestParseAuthWallEchoCollapsed(t *testing.T) {
 			var note *finding.Finding
 			urls := map[string]bool{}
 			for _, f := range fs {
-				if f.Type == typeAuthWall {
+				if f.Type == typeErrorWall {
 					note = f
 				} else {
 					urls[f.Location.URL] = true
 				}
 			}
 			if note == nil {
-				t.Fatalf("catatan dinding auth tak dibuat: %v", countByType(fs))
+				t.Fatalf("catatan dinding error tak dibuat: %v", countByType(fs))
 			}
 			if !strings.Contains(note.Title, "150") || !strings.Contains(note.Title, fmt.Sprint(status)) {
 				t.Errorf("judul harus menyebut 150 path dan HTTP %d: %q", status, note.Title)
+			}
+			if !strings.Contains(note.Title, c.label+" HTTP") || !strings.Contains(note.Description, c.label) {
+				t.Errorf("HTTP %d harus berlabel %q di judul & deskripsi: %q / %q", status, c.label, note.Title, note.Description)
 			}
 			if note.Severity != finding.SeverityInfo {
 				t.Errorf("catatan harus info, dapat %s", note.Severity)
@@ -306,9 +322,9 @@ func TestParseAuthWallEchoCollapsed(t *testing.T) {
 }
 
 // Penjaga recall: pada API sehat path tak dikenal dibalas 404, jadi semua hasil
-// adalah rute terproteksi NYATA walau bentuknya sama. Grup di bawah ambang tak
-// boleh ditekan, sebab rute itulah yang dicari brute route API.
-func TestParseAuthWallThreshold(t *testing.T) {
+// adalah rute NYATA walau bentuknya sama. Grup di bawah ambang tak boleh ditekan,
+// sebab rute itulah yang dicari brute route API.
+func TestParseErrorWallThreshold(t *testing.T) {
 	cases := []struct {
 		name string
 		n    int
@@ -318,19 +334,22 @@ func TestParseAuthWallThreshold(t *testing.T) {
 		{"tepat di bawah ambang", 99, 99},
 		{"tepat di ambang", 100, 1},
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if fs := parseResults(t, echoResults(c.n, 401)); len(fs) != c.want {
-				t.Fatalf("%d hasil: ingin %d temuan, dapat %d", c.n, c.want, len(fs))
-			}
-		})
+	for _, status := range []int{401, 500} {
+		for _, c := range cases {
+			t.Run(fmt.Sprintf("%d %s", status, c.name), func(t *testing.T) {
+				if fs := parseResults(t, echoResults(c.n, status)); len(fs) != c.want {
+					t.Fatalf("%d hasil HTTP %d: ingin %d temuan, dapat %d", c.n, status, c.want, len(fs))
+				}
+			})
+		}
 	}
 }
 
 // Rute nyata berstatus 200 sering kebetulan sebentuk (JSON tanpa spasi = 1 kata).
-// Aturan longgar hanya untuk 401/403, sebesar apa pun grupnya.
-func TestParseAuthWallIgnoresOtherStatuses(t *testing.T) {
-	for _, status := range []int{200, 204, 302, 500} {
+// Aturan longgar hanya untuk status dinding error (401/403/500), sebesar apa pun
+// grup status lain. Daftar ini = sisa matcher bawaan ffuf.
+func TestParseErrorWallIgnoresOtherStatuses(t *testing.T) {
+	for _, status := range []int{200, 204, 301, 302, 307, 405} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			if fs := parseResults(t, echoResults(150, status)); len(fs) != 150 {
 				t.Fatalf("HTTP %d tak boleh ditekan: ingin 150, dapat %d", status, len(fs))
@@ -339,8 +358,54 @@ func TestParseAuthWallIgnoresOtherStatuses(t *testing.T) {
 	}
 }
 
+// Juice Shop (terbukti live): path tak dikenal di bawah /api & /rest dibalas 500
+// "Unexpected path: /api/x" yang menggemakan path, jadi 7.971 dari 8.002 hasil
+// sebentuk dengan panjang beragam. Dinding itu harus kolaps; 500 berbentuk lain
+// (/profile, rute nyata) dan rute 401 nyata hasil apiroutes harus tetap utuh.
+func TestParseErrorWallJuiceShop(t *testing.T) {
+	var rs []ffufResult
+	for i := 0; i < 300; i++ {
+		p := "api/" + strings.Repeat("y", i%71+1) + fmt.Sprint(i)
+		rs = append(rs, ffufResult{
+			Input: map[string]string{"FUZZ": p}, Status: 500, Length: int64(1043 + 2*len(p)), Words: 210, Lines: 50,
+			ContentType: "text/html; charset=utf-8", URL: "http://t.test/" + p, Host: "t.test",
+		})
+	}
+	rs = append(rs, ffufResult{
+		Input: map[string]string{"FUZZ": "profile"}, Status: 500, Length: 1154, Words: 153, Lines: 43,
+		ContentType: "text/html; charset=utf-8", URL: "http://t.test/profile", Host: "t.test",
+	})
+	var protected []string
+	for i := 0; i < 14; i++ {
+		p := fmt.Sprintf("rest/terproteksi%02d", i)
+		protected = append(protected, "http://t.test/"+p)
+		rs = append(rs, ffufResult{
+			Input: map[string]string{"FUZZ": p}, Status: 401, Length: 26, Words: 4, Lines: 1,
+			ContentType: "text/html; charset=utf-8", URL: "http://t.test/" + p, Host: "t.test",
+		})
+	}
+	rs = append(rs, realRoutes()...)
+
+	fs := parseResults(t, rs)
+	if got := countByType(fs); got[typeErrorWall] != 1 || got[typeExposedPath] != 17 || len(got) != 2 {
+		t.Fatalf("ingin 1 catatan dinding + 17 rute nyata (/profile, 14x 401, 2x 200), dapat %v", got)
+	}
+	urls := map[string]bool{}
+	for _, f := range fs {
+		urls[f.Location.URL] = true
+		if f.Type == typeErrorWall && (!strings.Contains(f.Title, "300") || !strings.Contains(f.Title, "error server HTTP 500")) {
+			t.Errorf("catatan harus menyebut 300 path & dinding error server HTTP 500: %q", f.Title)
+		}
+	}
+	for _, u := range append(protected, "http://t.test/profile") {
+		if !urls[u] {
+			t.Errorf("rute nyata %s harus bertahan", u)
+		}
+	}
+}
+
 // Bentuk berbeda berarti bukan dinding: kata DAN baris harus sama.
-func TestParseAuthWallNeedsSameShape(t *testing.T) {
+func TestParseErrorWallNeedsSameShape(t *testing.T) {
 	vary := map[string]func(*ffufResult, int){
 		"kata":  func(r *ffufResult, i int) { r.Words = int64(i + 1) },
 		"baris": func(r *ffufResult, i int) { r.Lines = int64(i + 1) },
@@ -358,17 +423,21 @@ func TestParseAuthWallNeedsSameShape(t *testing.T) {
 	}
 }
 
-// 401 dan 403 adalah pola terpisah: dua grup di bawah ambang tak boleh dijumlahkan
+// Tiap status adalah pola terpisah: dua grup di bawah ambang tak boleh dijumlahkan
 // jadi satu grup yang melewatinya.
-func TestParseAuthWallSeparatesStatuses(t *testing.T) {
-	rs := append(echoResults(60, 401), echoResults(60, 403)...)
-	if fs := parseResults(t, rs); len(fs) != 120 {
-		t.Fatalf("status berbeda tak boleh digabung: ingin 120, dapat %d", len(fs))
+func TestParseErrorWallSeparatesStatuses(t *testing.T) {
+	for _, pair := range [][2]int{{401, 403}, {403, 500}} {
+		t.Run(fmt.Sprintf("%d+%d", pair[0], pair[1]), func(t *testing.T) {
+			rs := append(echoResults(60, pair[0]), echoResults(60, pair[1])...)
+			if fs := parseResults(t, rs); len(fs) != 120 {
+				t.Fatalf("status berbeda tak boleh digabung: ingin 120, dapat %d", len(fs))
+			}
+		})
 	}
 }
 
 // Dominasi tetap wajib: grup besar yang bukan mayoritas hasil tak ditekan.
-func TestParseAuthWallNeedsDominance(t *testing.T) {
+func TestParseErrorWallNeedsDominance(t *testing.T) {
 	rs := echoResults(120, 401)
 	for i := 0; i < 100; i++ { // 120 dari 220 = 54,5%, di bawah 60%
 		p := fmt.Sprintf("real%03d", i)
@@ -391,8 +460,8 @@ func TestParseBothWallsReported(t *testing.T) {
 
 	fs := parseResults(t, rs)
 	got := countByType(fs)
-	if got[typeCatchAll] != 1 || got[typeAuthWall] != 1 || got[typeExposedPath] != 2 {
-		t.Fatalf("ingin 1 catch-all + 1 dinding auth + 2 rute nyata, dapat %v", got)
+	if got[typeCatchAll] != 1 || got[typeErrorWall] != 1 || got[typeExposedPath] != 2 {
+		t.Fatalf("ingin 1 catch-all + 1 dinding error + 2 rute nyata, dapat %v", got)
 	}
 	keys := map[string]bool{}
 	for _, f := range fs {
