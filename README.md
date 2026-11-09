@@ -4,7 +4,7 @@
 
 # BugHound
 
-**Bug Bounty DAST Orchestrator** — satu alur kerja, banyak *engine*, satu skema temuan.
+**Bug Bounty DAST + SAST Orchestrator** — satu alur kerja, banyak *engine* (uji dinamis & statis), satu skema temuan.
 
 <p align="center">
   <a href="https://github.com/Gh05txvx/bughound/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Gh05txvx/bughound/ci.yml?branch=main&label=CI&logo=github" alt="CI"></a>
@@ -15,7 +15,7 @@
   <a href="https://github.com/Gh05txvx/bughound/pkgs/container/bughound"><img src="https://img.shields.io/badge/ghcr.io-bughound-2496ED?logo=docker&logoColor=white" alt="GHCR image"></a>
 </p>
 
-*Menyatukan engine recon & DAST yang sudah matang (nuclei, httpx, subfinder, ffuf, ZAP, …) ke satu alur: jalankan terkoordinasi → normalkan ke satu skema temuan → triase → draft report siap verifikasi manual.*
+*Menyatukan engine recon, DAST, dan SAST yang sudah matang (nuclei, httpx, subfinder, ffuf, ZAP, semgrep, bandit, gitleaks, …) ke satu alur: jalankan terkoordinasi → normalkan ke satu skema temuan → triase → draft report siap verifikasi manual.*
 
 </div>
 
@@ -36,7 +36,8 @@
   - [Jalankan dari sumber](#jalankan-dari-sumber)
 - [Login dan peran](#login-dan-peran)
 - [Alur kerja](#alur-kerja)
-- [Engine yang didukung](#engine-yang-didukung)
+- [Engine DAST & recon](#engine-dast--recon)
+- [SAST — analisis statis kode](#sast--analisis-statis-kode)
 - [Fitur lanjutan](#fitur-lanjutan)
   - [Scan terarah OpenAPI/Swagger](#scan-terarah-openapiswagger)
   - [Proxy upstream dan rantai](#proxy-upstream-dan-rantai)
@@ -52,7 +53,7 @@
 
 ## Ikhtisar
 
-**BugHound** adalah *orchestrator* DAST (*Dynamic Application Security Testing*) untuk bug bounty — bukan pemindai baru, melainkan pengatur yang menjalankan sejumlah *engine* recon dan DAST yang sudah matang secara terkoordinasi, menormalkan seluruh hasilnya ke **satu skema temuan seragam**, membantu triase, lalu menyusun **draf laporan** siap diverifikasi manual sebelum diserahkan. Seorang pemburu bug memperoleh keunggulan banyak alat sekaligus tanpa kehilangan konsistensi hasil maupun kendali atas tiap langkah.
+**BugHound** adalah *orchestrator* pengujian keamanan aplikasi untuk bug bounty — menyatukan **DAST** (*Dynamic Application Security Testing* — menguji aplikasi yang **berjalan**) dan **SAST** (*Static Application Security Testing* — menganalisis **kode sumber**) dalam satu alur. Bukan pemindai baru, melainkan pengatur yang menjalankan sejumlah *engine* recon, DAST, dan SAST yang sudah matang secara terkoordinasi, menormalkan seluruh hasilnya ke **satu skema temuan seragam**, membantu triase, lalu menyusun **draf laporan** siap diverifikasi manual sebelum diserahkan. Seorang pemburu bug memperoleh keunggulan banyak alat sekaligus — menguji aplikasi hidup *dan* sumber kodenya — tanpa kehilangan konsistensi hasil maupun kendali atas tiap langkah.
 
 - **Untuk siapa** — tim kecil hunter (power user). Antarmuka web, dioptimalkan desktop, UI padat ala tool security (tema gelap).
 - **Apa bedanya** — orchestrator, bukan scanner: satu skema temuan untuk semua engine, `dedup_key` deterministik melintasi engine, dan **keamanan sebagai batas struktural** (scope guard, rate limiter, egress ter-guard, audit append-only) — bukan tambahan.
@@ -64,7 +65,8 @@
 | --- | --- | --- |
 | 🎯 | **Skema Temuan Seragam** (`BH-SPEC-FINDING`) | Semua engine menormalkan hasil ke satu JSON berversi; `dedup_key` deterministik mengolaps duplikat lintas-engine per program (kolaps site-wide, abaikan path/method sesuai resep). |
 | 🛡️ | **Scope Guard dua lapis** (`BH-SPEC-SCOPE`) | Domain / wildcard / URL / IP / CIDR, normalisasi punycode & IP, kebijakan port; dicek saat **input** *dan* saat **egress** (default-deny, out-of-scope menang, fail-closed). |
-| 🔌 | **Multi-engine via adapter** | Recon (subfinder → httpx → katana, gau, dnsx, naabu), DAST (nuclei, ffuf + enrichment robots.txt/OpenAPI, ZAP, `nuclei-dast` fuzzing aktif), SCA klien (retire.js), SAST (semgrep), enumerasi gRPC (grpcurl). |
+| 🔌 | **Multi-engine DAST via adapter** | Recon (subfinder → httpx → katana, gau, dnsx, naabu), DAST (nuclei, ffuf + enrichment robots.txt/OpenAPI, ZAP, `nuclei-dast` fuzzing aktif), SCA klien (retire.js), enumerasi gRPC (grpcurl). |
+| 🔬 | **SAST — analisis statis kode** | semgrep (multi-bahasa), bandit (Python), gitleaks (deteksi *secret*, nilai **ter-redaksi**), FindSecBugs (bytecode JVM, opt-in) — semua dinormalkan lewat **normalizer SARIF 2.1.0** (jalur siap untuk CodeQL & emitter SARIF lain); dikurung ke `-sast-root` (default-deny, **tanpa jaringan**). |
 | ⛓️ | **Orchestrator berantre** | scope guard → job queue → engine worker (rate-limited) → normalisasi → store; error satu engine tak menggagalkan run (fail-soft, tercatat di audit). |
 | 🔎 | **Triase → draft report** | Konfirmasi / false-positive / abaikan (filter + aksi massal), lengkapi langkah reproduksi & dampak, lalu hasilkan draft (Markdown / cetak-PDF) atau export **HackerOne / Bugcrowd**. |
 | 🧩 | **Integrasi Burp Suite** | API JSON baca-saja + extension Montoya menarik temuan ke Burp lalu **Kirim ke Repeater** untuk validasi manual; jalan di **Burp Community**. |
@@ -95,7 +97,7 @@ flowchart TD
     SG -- "out-of-scope → TOLAK" --> AUD[("Audit append-only")]
     SG -- "in-scope" --> Q["Job Queue (in-process)"]
     Q --> W["Engine Workers<br/>rate limiter + egress proxy (IP-pinned)"]
-    W --> ENG["Adapter engine:<br/>nuclei · nuclei-dast · recon · ffuf · ZAP · retire.js · semgrep · gRPC"]
+    W --> ENG["Adapter engine — DAST:<br/>nuclei · nuclei-dast · recon · ffuf · ZAP · retire.js · gRPC<br/>SAST: semgrep · bandit · gitleaks · FindSecBugs"]
     ENG -- "egress WAJIB lewat proxy scope-guard" --> SG
     ENG --> NORM["Normalisasi → Skema Temuan Seragam"]
     NORM --> STORE[("Store — SQLite pure-Go")]
@@ -141,11 +143,13 @@ sequenceDiagram
 
 ### Jalankan dengan Docker
 
-Engine nyata tidak di-bundle ke binary, jadi cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan BugHound + engine (nuclei + template `dast/`, subfinder, httpx, katana, ffuf, semgrep; ZAP & retire.js opsional). Di dalam container semua engine ada di `PATH`.
+Engine nyata tidak di-bundle ke binary, jadi cara termudah menjalankan scan nyata **tanpa memasang tool di host** adalah image Docker yang menyatukan BugHound + engine. Satu `Dockerfile` **multi-target** menghasilkan tiga image: **`full`** (DAST + SAST, default), **`dast`** (recon + DAST saja), dan **`sast`** (SAST saja, tanpa jaringan). Di `full`/`dast`: nuclei + template `dast/`, subfinder, httpx, katana, ffuf, `nuclei-dast` (ZAP & retire.js opsional). Di `full`/`sast`: semgrep, bandit, gitleaks (FindSecBugs opsional). Di dalam container semua tool ada di `PATH`.
 
 ```bash
 # image rilis dari GHCR (varian lean, tanpa ZAP & retire.js)
-docker pull ghcr.io/gh05txvx/bughound:latest        # tag versi juga tersedia: :0.3, :0.3.1
+docker pull ghcr.io/gh05txvx/bughound:latest        # full = DAST + SAST; tag versi: :0.5, :0.5.0
+docker pull ghcr.io/gh05txvx/bughound:latest-dast   # hanya recon + DAST (juga :0.5.0-dast)
+docker pull ghcr.io/gh05txvx/bughound:latest-sast   # hanya SAST        (juga :0.5.0-sast)
 
 # default engine mock (aman), UI di http://127.0.0.1:8787
 docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data ghcr.io/gh05txvx/bughound:latest
@@ -158,15 +162,18 @@ docker run --rm -p 127.0.0.1:8787:8787 -v bughound-data:/data -e BUGHOUND_ADMIN_
 Build sendiri bila perlu ZAP / retire.js:
 
 ```bash
-docker build -t bughound .                                   # lean (tanpa ZAP/retire)
-docker build --build-arg WITH_ZAP=true   -t bughound:zap .   # + OWASP ZAP (berat, +JRE)
-docker build --build-arg WITH_RETIRE=true -t bughound:sca .  # + retire.js (Node, SCA klien)
+docker build -t bughound .                                        # full: DAST + SAST (target default)
+docker build --target dast -t bughound:dast .                     # hanya recon + DAST
+docker build --target sast -t bughound:sast .                     # hanya SAST (tanpa jaringan)
+docker build --build-arg WITH_ZAP=true         -t bughound:zap .  # + OWASP ZAP (berat, +JRE)
+docker build --build-arg WITH_RETIRE=true      -t bughound:sca .  # + retire.js (Node, SCA klien)
+docker build --build-arg WITH_FINDSECBUGS=true -t bughound:jvm .  # + FindSecBugs (JRE, SAST bytecode JVM)
 ```
 
 Atau `docker compose up --build` (lihat [`docker-compose.yml`](docker-compose.yml); port sudah ke `127.0.0.1`, data di volume).
 
 > [!NOTE]
-> Paket GHCR default **privat** saat pertama terbit. Agar bisa `docker pull` tanpa login, set paket `bughound` ke **Public** (GitHub → Packages → bughound → *Package settings* → *Change visibility*), atau tetap privat dan `docker login ghcr.io` dulu. Image GHCR = varian lean; untuk ZAP/retire.js build lokal dengan `--build-arg` di atas.
+> Paket GHCR default **privat** saat pertama terbit. Agar bisa `docker pull` tanpa login, set paket `bughound` ke **Public** (GitHub → Packages → bughound → *Package settings* → *Change visibility*), atau tetap privat dan `docker login ghcr.io` dulu. Image GHCR = varian lean (tag utama `full` = DAST + SAST, plus `-dast` & `-sast`); untuk ZAP / retire.js / FindSecBugs build lokal dengan `--build-arg` di atas.
 
 ### Jalankan dari sumber
 
@@ -229,9 +236,9 @@ Browser mendapat **halaman login ber-logo** (sesi cookie `HttpOnly`+`SameSite=St
 > [!TIP]
 > Untuk scan **nyata**, pasang engine (lihat [Engine yang didukung](#engine-yang-didukung)) atau pakai image Docker (engine sudah di dalam), lalu jalankan `-engine real`. Tetap **hanya target in-scope** yang disentuh.
 
-## Engine yang didukung
+## Engine DAST & recon
 
-BugHound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak di-bundle** ke dalam binary. Untuk scan nyata, pasang sendiri tool-nya, lalu BugHound memanggilnya sebagai subprocess dan menegakkan scope guard, rate limiter, serta egress (koneksi keluar engine dipaksa lewat proxy scope-guard BugHound). **Default `-engine mock`** tak butuh tool apa pun dan tak menyentuh jaringan.
+BugHound adalah **orchestrator**, bukan scanner: engine recon & DAST **tidak di-bundle** ke dalam binary. Untuk scan nyata, pasang sendiri tool-nya, lalu BugHound memanggilnya sebagai subprocess dan menegakkan scope guard, rate limiter, serta egress (koneksi keluar engine dipaksa lewat proxy scope-guard BugHound). **Default `-engine mock`** tak butuh tool apa pun dan tak menyentuh jaringan.
 
 | Engine | Peran | Adapter | Pasang |
 | --- | --- | --- | --- |
@@ -244,7 +251,6 @@ BugHound adalah **orchestrator**, bukan scanner: engine recon/DAST/SAST **tidak 
 | **ZAP** | DAST (proxy scanner) | mock + nyata | [OWASP ZAP](https://www.zaproxy.org/download/) (`zap.sh` di PATH) · `-zap-mode quick\|baseline\|full` |
 | **nuclei-dast** | DAST (fuzzing aktif: SQLi/XSS/SSTI/…) | nyata | — pakai `nuclei` + `katana` + template `dast/` · `-engine …,nuclei-dast` |
 | **retire.js** | SCA (library JS sisi-klien) | nyata | `npm i -g retire` (Node 18+) · image: `--build-arg WITH_RETIRE=true` · `-engine …,retire` |
-| **semgrep** | SAST | mock + nyata | `pipx install semgrep` · aktif via `-sast-root` |
 | **grpcurl** | gRPC (enumerasi + fuzz invokasi) | mock + nyata | `go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest` · `-grpc real` |
 
 Mengaktifkan engine nyata lewat flag `-engine` (daftar dipisah koma):
@@ -255,10 +261,38 @@ go run ./cmd/bughound -engine nuclei,ffuf                # ffuf pakai wordlist b
 go run ./cmd/bughound -engine nuclei,ffuf -ffuf-wordlist /path/wordlist.txt
 go run ./cmd/bughound -engine nuclei,zap -zap-mode full  # + ZAP spider & active scan
 go run ./cmd/bughound -engine nuclei,nuclei-dast,retire  # + fuzzing aktif & SCA klien JS
-go run ./cmd/bughound -sast-root /path/ke/repo           # aktifkan SAST (semgrep)
+go run ./cmd/bughound -sast-root /path/ke/repo           # aktifkan SAST (semgrep, bandit, gitleaks)
 ```
 
 `mock` (default) menjalankan versi mock semua engine (tanpa jaringan). Menambah engine baru = menulis **satu adapter** (bangun argumen → subprocess `ProxyAware` → `Parse` ke skema temuan); lihat `internal/engine/*` dan `internal/sast`.
+
+## SAST — analisis statis kode
+
+Selain menguji aplikasi yang **berjalan** (DAST), BugHound menganalisis **kode sumber** secara statis. Modul SAST berjalan **sepenuhnya lokal, tanpa menyentuh jaringan**, dan dikurung ke satu direktori lewat `-sast-root` dengan kebijakan **path-scope default-deny** (di luar root ditolak; symlink yang keluar diblok) — paralel dengan scope guard DAST, "keamanan sebagai batas struktural".
+
+Empat engine, semuanya dinormalkan ke **skema temuan yang sama** dengan DAST (severity, CWE, evidence, `dedup_key`) — jadi temuan statis dan dinamis hidup di satu daftar, triase, dan draft report yang sama:
+
+| Engine | Cakupan | Catatan | Pasang |
+| --- | --- | --- | --- |
+| **semgrep** | multi-bahasa (pola) | ruleset `p/default` di-*pre-bake* agar jalan **offline** | `pipx install semgrep` |
+| **bandit** | Python | `eval`, `shell=True`, MD5, SQL konkatenasi, flask debug, dll. | `pipx install bandit` |
+| **gitleaks** | *secret* (semua berkas) | nilai secret **selalu ter-redaksi** (`--redact` + jaring pengaman internal) — tak pernah masuk temuan/log/report | [rilis gitleaks](https://github.com/gitleaks/gitleaks/releases) |
+| **FindSecBugs** | bytecode JVM (`.jar`/`.class`) | **opt-in** (butuh JRE + SpotBugs); image `--build-arg WITH_FINDSECBUGS=true` | SpotBugs + plugin FindSecBugs |
+
+**Normalizer SARIF 2.1.0.** gitleaks & FindSecBugs menulis **SARIF**; satu *normalizer* bersama memetakannya ke skema temuan (termasuk `security-severity` numerik → severity, ekstraksi CWE dari tag/properties). Karena generik, menambah engine ber-SARIF lain (mis. **CodeQL**) cukup menulis adapter tipis yang memanggil `NormalizeSARIF`.
+
+**Cara menjalankan:**
+
+```bash
+# aktifkan SAST + kurung ke satu root (wajib; tanpa ini menu SAST nonaktif)
+go run ./cmd/bughound -sast-root /path/ke/repo
+# di image sast/full sudah di-set otomatis: BUGHOUND_SAST_ROOT=/data/sast
+```
+
+Di UI buka menu **SAST** (`/sast`): isi **subpath** (relatif ke root) → pilih **engine** (dropdown, satu per run) → **Jalankan**. Temuan masuk ke daftar **Findings** yang sama seperti DAST (filter, triase, draft report, export).
+
+> [!NOTE]
+> SAST membaca kode **apa adanya** — tak meng-*compile*, tak mengeksekusi, tak menjangkau jaringan. FindSecBugs menganalisis **bytecode**, jadi target harus sudah berupa `.jar`/`.class`; tanpa artefak JVM, engine mengembalikan 0 temuan (bukan error).
 
 ## Fitur lanjutan
 
@@ -345,7 +379,7 @@ make release VERSION=v0.1.0   # override versi yang di-embed
 
 `make release` menghasilkan arsip untuk `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, dan `windows/amd64` beserta `SHA256SUMS.txt`. Versi di-inject ke binary (`-ldflags -X main.version`) dan tampil di footer UI serta `bughound -version`.
 
-Push tag `vX.Y.Z` memicu dua workflow: [`release.yml`](.github/workflows/release.yml) (test → build semua target → GitHub Release berisi arsip + checksum) dan [`docker.yml`](.github/workflows/docker.yml) (build & push image gabungan ke GHCR).
+Push tag `vX.Y.Z` memicu dua workflow: [`release.yml`](.github/workflows/release.yml) (test → build semua target → GitHub Release berisi arsip + checksum) dan [`docker.yml`](.github/workflows/docker.yml) (build & push **3 varian image** — `full` / `dast` / `sast` — ke GHCR).
 
 ```bash
 git tag -a v0.1.0 -m "bughound v0.1.0"
@@ -361,7 +395,7 @@ internal/
   scope/             scope guard
   store/             persistensi (interface + Mem + SQLite)
   engine/            kontrak engine + adapter (nuclei, nuclei-dast, ffuf, zap, retire, recon) + mock
-  sast/              analisis statis sebagai plugin (registry + mock + semgrep)
+  sast/              SAST sebagai plugin (registry + mock + semgrep + bandit + gitleaks + FindSecBugs + normalizer SARIF)
   orchestrator/      alur scan dengan penegakan scope dua lapis
   web/               UI (Go + HTMX + template, aset di-embed) + API baca-saja /api/v1
 burp-ext/            extension Burp Suite (Montoya) — tarik temuan → Repeater
