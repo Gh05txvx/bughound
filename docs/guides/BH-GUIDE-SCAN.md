@@ -96,6 +96,30 @@ Kode **tidak** keluar jaringan. Dikurung ke root yang diset `-sast-root` (defaul
 
 Output SARIF (mis. CodeQL) dinormalkan via `NormalizeSARIF` → skema temuan seragam.
 
+### 2.6b Men-stage kode untuk SAST (lokal, OSS, atau diberi program)
+
+SAST **butuh kode**, bukan URL. Target yang hanya memberi URL HTTPS **tak bisa di-SAST** — itu wilayah DAST (lihat §4.J). SAST berlaku saat kodenya tersedia untukmu: kodebase sendiri, open-source (GitHub/GitLab), atau source yang program berikan. BugHound **tidak** mengunduh/meng-clone otomatis (tak ada jaringan di SAST) dan **tak punya upload kode via GUI** — **kamu** yang menaruh kode di bawah `-sast-root`.
+
+**Cara a — bind-mount folder host (disarankan: sekali setup, tanpa `cp` berulang).**
+Mount folder host *read-only* ke dalam sast-root saat menjalankan container:
+```bash
+docker run ... \
+  -e BUGHOUND_SAST_ROOT=/data/sast \
+  -v C:/path/ke/sast-ext:/data/sast/ext:ro \
+  ...
+```
+Lalu `git clone`/salin repo ke `C:/path/ke/sast-ext/<nama>` di host → langsung terbaca container. Di `/sast`, **Subpath** = `ext/<nama>`. Read-only karena SAST tak pernah menulis ke kode.
+
+**Cara b — `docker cp` (tanpa recreate container).**
+```bash
+git clone --depth 1 https://github.com/org/app /tmp/app
+docker cp /tmp/app bughound:/data/sast/app
+MSYS_NO_PATHCONV=1 docker exec -u root bughound chown -R bh:bh /data/sast/app
+```
+**Subpath** = `app`.
+
+> Path-scope tetap berlaku: apa pun di luar `-sast-root` ditolak (default-deny; `..`/symlink escape diblok). Secret di kode tetap ter-redaksi pada temuan.
+
 ### 2.7 Normalisasi, dedup & triase
 
 - Semua engine → satu skema (`BH-SPEC-FINDING`): severity/status/confidence/evidence/`owasp`.
@@ -188,9 +212,11 @@ Tiap skenario: **engine yang bekerja**, **input yang kamu isi**, dan **prasyarat
 - **Engine:** recon subfinder→httpx→katana, lalu DAST pada yang hidup.
 - **Isi:** `in_scope` = `*.example.com` (**hanya bila RoE/scope mengizinkan wildcard**); `seeds` = domain apex. Hanya subdomain in-scope yang di-scan.
 
-### G. SAST kode sumber
+### G. SAST kode sumber (termasuk target OSS/eksternal)
 - **Engine:** semgrep / bandit / gitleaks / findsecbugs (satu per run).
-- **Isi:** stage kode di bawah `-sast-root`; di `/sast` isi `program`, `subpath`, pilih `engine`. Jalankan beberapa kali untuk beberapa engine.
+- **Butuh kode, bukan URL.** Untuk target eksternal, SAST hanya berlaku bila kodenya tersedia (OSS atau diberi program); target URL-only → pakai DAST (§4.J).
+- **Isi:** stage kode di bawah `-sast-root` (**bind-mount** atau `docker cp` — lihat §2.6b); di `/sast` isi `program`, `subpath`, pilih `engine`. Jalankan beberapa kali untuk beberapa engine.
+- **Alur bila target OSS:** SAST repo → temukan sink kandidat → buktikan live via DAST/Burp (pakai `program` yang sama agar temuan gabung).
 - **Prasyarat:** server jalan dengan `-sast-root`/`BUGHOUND_SAST_ROOT`. FindSecBugs butuh image `WITH_FINDSECBUGS=true` + bytecode.
 
 ### H. Scan lewat Burp / proxy (lihat & rekam trafik, suntik header penanda)
