@@ -127,7 +127,7 @@ func Parse(r io.Reader) ([]*finding.Finding, error) {
 			Title:          truncate(title, 160),
 			Description:    strings.TrimSpace(res.Extra.Message),
 			Severity:       mapSemgrepSeverity(res.Extra.Severity),
-			Confidence:     mapSemgrepConfidence(res.Extra.Metadata.Confidence),
+			Confidence:     mapConfidenceHML(res.Extra.Metadata.Confidence),
 			Status:         finding.StatusNew,
 			SourceEngine:   "semgrep",
 			SourceTemplate: res.CheckID,
@@ -164,7 +164,9 @@ func mapSemgrepSeverity(s string) finding.Severity {
 	}
 }
 
-func mapSemgrepConfidence(s string) finding.Confidence {
+// mapConfidenceHML memetakan confidence bergaya HIGH/MEDIUM/LOW (dipakai semgrep
+// & bandit) ke enum; default MEDIUM.
+func mapConfidenceHML(s string) finding.Confidence {
 	switch strings.ToUpper(strings.TrimSpace(s)) {
 	case "HIGH":
 		return finding.ConfidenceHigh
