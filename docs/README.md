@@ -29,6 +29,7 @@ docs/
 
 | ID | Berkas | Inti |
 | --- | --- | --- |
+| `BH-GUIDE-SCAN` | `guides/BH-GUIDE-SCAN.md` | Mekanisme tiap fitur (scope guard, egress/proxy, DAST/SAST/recon, rate limiter, triase/report) + kebutuhan input per skenario scan; referensi field form Scan/SAST & flag startup. |
 | `BH-GUIDE-PROXY` | `guides/BH-GUIDE-PROXY.md` | Menu Proxy: rantai upstream, endpoint echo IP (wajib in-scope), proxy yang bisa dipakai, requirement untuk program bug bounty eksternal. |
 
 ## Catatan ekspor
