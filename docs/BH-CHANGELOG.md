@@ -4,12 +4,13 @@ Log rekayasa: **apa yang sudah dibangun** di repo (pelengkap spec/PRD yang menya
 
 ## Status ringkas
 
-Fondasi **M0**, MVP **M1**, triase & multi-engine **M2**: **selesai**. **M3** (pengerasan & rilis) berjalan: audit pre-launch lolos + diremediasi, export platform, dashboard, SAST plugin, adapter engine nyata (ffuf, ZAP). Rilis publik: **v0.1.0 → v0.3.2** (lintas-platform + `SHA256SUMS.txt`).
+Fondasi **M0**, MVP **M1**, triase & multi-engine **M2**: **selesai**. **M3** (pengerasan & rilis) berjalan: audit pre-launch lolos + diremediasi, export platform, dashboard, SAST plugin, adapter engine nyata (ffuf, ZAP, dalfox). Rilis publik: **v0.1.0 → v0.4.0** (lintas-platform + `SHA256SUMS.txt`).
 
 ## Rilis
 
 | Tag | Isi inti |
 | --- | --- |
+| `v0.4.0` | SAST aktif default (ruleset semgrep `p/default` di-pre-bake, siap-offline); engine XSS **dalfox** (adapter + normalisasi, request lewat proxy egress scope-enforced); **brute route API** opt-in per-scan (wordlist Assetnote `apiroutes`) + kalibrasi dinding yang menggemakan path — grup 401/403/500 sebentuk dikolaps jadi satu catatan sehingga rute nyata tak tenggelam |
 | `v0.3.2` | Brand "BugHound" diseragamkan (UI/docs/report); impor scope HackerOne/Bugcrowd; preset template per program; kategori OWASP 2021 + metode HTTP & clamp ukuran evidence di temuan; sejumlah pengerasan egress/scope |
 | `v0.3.1` | Pengerasan secret (redaksi master key & kredensial proxy chain, bungkus master key dengan Secret); buang dead code (BH-P06); ringkas intro README |
 | `v0.3.0` | Rilis besar: RBAC + login wajib, redesign UI, Bank Payload + seleksi template, throttle laju per-engine; dashboard (monitor scan live, hapus temuan/program); kualitas ffuf (kalibrasi catch-all SPA + dedup site-wide + enrichment robots.txt/OpenAPI); adapter retire.js (SCA klien) & nuclei-dast (fuzzing aktif); integrasi Burp (API baca-saja + extension); M3 lengkapi-draft; menu Proxy |
