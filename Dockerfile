@@ -1,14 +1,20 @@
 # syntax=docker/dockerfile:1
 #
-# Image gabungan: bughound (orchestrator) + engine nyata di dalam satu container.
-# Karena adapter memanggil engine sebagai subprocess di PATH, menaruh engine di
-# image = `-engine real`/`nuclei,ffuf,zap` langsung jalan tanpa pasang apa pun di host.
+# Image bughound multi-target: satu Dockerfile, tiga image berbeda toolchain.
+# Karena adapter memanggil engine/tool sebagai subprocess di PATH, menaruhnya di
+# image = langsung jalan tanpa pasang apa pun di host.
 #
-# Build (lean, tanpa ZAP):       docker build -t bughound .
-# Build + ZAP (berat, +JRE):     docker build --build-arg WITH_ZAP=true -t bughound:zap .
-# Build + retire.js (SCA, +Node): docker build --build-arg WITH_RETIRE=true -t bughound:retire .
+#   docker build --target dast  -t bughound:dast .        # DAST+recon, tanpa SAST (ramping, butuh egress)
+#   docker build --target sast  -t bughound:sast .        # SAST (semgrep+bandit+gitleaks), tanpa jaringan
+#   docker build               -t bughound:full .         # keduanya (target default)
+#
+# Build-arg DAST (dipakai target dast & full):
+#   --build-arg WITH_ZAP=true       (+JRE, ~500MB; DAST aktif ZAP)
+#   --build-arg WITH_RETIRE=true    (+Node; SCA library JS klien)
+# Build-arg SAST (dipakai target sast & full):
+#   --build-arg WITH_FINDSECBUGS=true   (+JRE+SpotBugs; SAST bytecode JVM)
 
-# --- Stage 1: build binary bughound ---
+# --- Stage: build binary bughound ---
 FROM golang:1.27-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -17,7 +23,7 @@ COPY . .
 ARG VERSION=docker
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/bughound ./cmd/bughound
 
-# --- Stage 2: engine CLI berbasis Go (ter-isolasi agar cache rapi) ---
+# --- Stage: engine CLI berbasis Go (ter-isolasi agar cache rapi) ---
 FROM golang:1.27-bookworm AS engines
 ENV GOBIN=/engines
 # libpcap-dev dibutuhkan untuk mem-build naabu (gopacket).
@@ -34,64 +40,54 @@ RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
  && go install github.com/ffuf/ffuf/v2@latest \
  && go install github.com/hahwul/dalfox/v2@v2.13.0
 
-# --- Stage 3: runtime ---
-FROM debian:bookworm-slim AS runtime
-ARG WITH_ZAP=false
-# ZAP: versi di-pin + SHA-256 diverifikasi (unduhan pihak ketiga → fail-closed
-# bila checksum tak cocok). Bump versi: ganti keduanya (lihat rilis zaproxy).
-ARG ZAP_VERSION=2.17.0
-ARG ZAP_SHA256=efe799aaa3627db683b43f00c9c210aea0b75c00cc8f0a0f0434d12bb3ddde5a
-# retire.js (SCA library JS klien) opsional. Node di bookworm = 18.x; retire 6.x
-# butuh Node ^20.19||>=22.12, jadi di-pin ke 5.x (engines.node >= 18) yang jalan.
-ARG WITH_RETIRE=false
-ARG RETIRE_VERSION=5.7.0
-
-# semgrep (SAST) via pip + CA certs + libpcap0.8 (runtime naabu).
-RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates python3 python3-pip libpcap0.8 \
- && pip3 install --no-cache-dir --break-system-packages semgrep \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Pre-bake ruleset semgrep `p/default` ke berkas lokal supaya SAST semgrep JALAN
-# OFFLINE — egress runtime dikunci scope guard, jadi menarik ruleset dari
-# registry saat scan akan diblok (alasan sama dgn pre-bake nuclei-templates).
-# Diunduh sekali saat build via python3 (sudah terpasang untuk semgrep; tanpa
-# dependensi curl di image lean), lalu divalidasi. Fail-closed: unduh/validasi
-# gagal => build gagal keras (bukan diam-diam mengirim image tanpa ruleset SAST).
+# --- Stage: assets (unduh aset build-time; tak ikut ke runtime) ---
+# Wordlist route API (Assetnote "apiroutes") dinormalkan di sini lalu DI-COPY ke
+# image DAST, sehingga image runtime tak perlu python/curl hanya untuk unduh ini.
+# Fail-closed: unduh gagal / isi kurang => build gagal keras.
+FROM debian:bookworm-slim AS assets
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
 RUN set -eux; \
-    mkdir -p /opt/semgrep; \
-    python3 -c "import urllib.request; r=urllib.request.Request('https://semgrep.dev/c/p/default', headers={'User-Agent':'bughound-build'}); open('/opt/semgrep/default.yml','wb').write(urllib.request.urlopen(r, timeout=120).read())"; \
-    semgrep --validate --config /opt/semgrep/default.yml --metrics=off; \
-    chmod 0644 /opt/semgrep/default.yml
-
-# SAST semgrep memakai ruleset lokal di atas + version-check jaringan dimatikan
-# => benar-benar offline. Runner (internal/sast) membaca BUGHOUND_SEMGREP_CONFIG;
-# bila diganti ke shorthand registry (mis. p/golang), butuh egress ke registry.
-ENV BUGHOUND_SEMGREP_CONFIG=/opt/semgrep/default.yml \
-    SEMGREP_ENABLE_VERSION_CHECK=0
-
-# Pre-bake wordlist route API (Assetnote "apiroutes": path API nyata yang paling
-# sering diamati di web, terurut frekuensi) supaya opsi "Brute route API" di form
-# scan jalan OFFLINE — egress runtime dikunci scope guard, jadi menarik wordlist
-# saat scan akan diblok (alasan sama dgn pre-bake semgrep & nuclei-templates).
-# Diunduh sekali saat build via python3 (image lean tak punya curl), dinormalkan
-# ke bentuk FUZZ (tanpa slash tepi, tanpa query/komentar/wildcard/spasi),
-# ter-dedup (urutan frekuensi dipertahankan), dipangkas ke 10000 path terpopuler.
-# Fail-closed: unduh gagal / isi kurang => build gagal keras (bukan diam-diam
-# mengirim image tanpa wordlist). Berkas world-readable → user runtime 'bh' baca.
-# Versi tanggal di-pin (ketertelusuran); power user bisa timpa via env
-# BUGHOUND_API_WORDLIST ke wordlist sendiri saat runtime.
-RUN set -eux; \
-    mkdir -p /usr/local/share/bughound/wordlists; \
-    python3 -c "import urllib.request; r=urllib.request.Request('https://wordlists-cdn.assetnote.io/data/automated/httparchive_apiroutes_2025_06_28.txt', headers={'User-Agent':'bughound-build'}); open('/tmp/apiroutes.raw','wb').write(urllib.request.urlopen(r, timeout=300).read())"; \
+    mkdir -p /assets; \
+    curl -fsSL -A bughound-build "https://wordlists-cdn.assetnote.io/data/automated/httparchive_apiroutes_2025_06_28.txt" -o /tmp/apiroutes.raw; \
     sed -e 's/\r$//' -e 's/?.*$//' -e 's#^/*##' -e 's#/*$##' /tmp/apiroutes.raw \
       | grep -vE '^$|^#|[[:space:]]|\*|\$' \
       | awk '!seen[$0]++' \
-      | head -n 10000 > /usr/local/share/bughound/wordlists/apiroutes.txt; \
+      | head -n 10000 > /assets/apiroutes.txt; \
     rm -f /tmp/apiroutes.raw; \
-    test "$(wc -l < /usr/local/share/bughound/wordlists/apiroutes.txt)" -ge 1000; \
-    chmod 0644 /usr/local/share/bughound/wordlists/apiroutes.txt
+    test "$(wc -l < /assets/apiroutes.txt)" -ge 1000
 
+# --- Stage: base (runtime bersama semua target) ---
+FROM debian:bookworm-slim AS base
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Jalan sebagai non-root; data (db, kunci, anchor) di /data.
+RUN useradd -m -u 10001 bh && mkdir -p /data && chown bh:bh /data
+WORKDIR /data
+EXPOSE 8787
+# Default AMAN: bind 0.0.0.0 (untuk -p docker) TAPI engine mock (tak ada scan
+# nyata). Untuk DAST nyata (image dast/full): override -engine nuclei,ffuf,zap...
+ENTRYPOINT ["bughound"]
+CMD ["-addr", "0.0.0.0:8787", "-db", "/data/bughound.db"]
+
+# --- Stage: dast-tools (engine DAST+recon; induk bersama dast & full) ---
+# TANPA binary bughound di sini — binary disalin TERAKHIR di tiap leaf agar
+# perubahan source tak membatalkan layer toolchain yang mahal.
+FROM base AS dast-tools
+ARG WITH_ZAP=false
+# ZAP: versi di-pin + SHA-256 diverifikasi (fail-closed bila checksum tak cocok).
+ARG ZAP_VERSION=2.17.0
+ARG ZAP_SHA256=efe799aaa3627db683b43f00c9c210aea0b75c00cc8f0a0f0434d12bb3ddde5a
+# retire.js opsional. Node bookworm = 18.x; retire 6.x butuh Node >=20, jadi 5.x.
+ARG WITH_RETIRE=false
+ARG RETIRE_VERSION=5.7.0
+USER root
+# libpcap0.8 = runtime naabu.
+RUN apt-get update && apt-get install -y --no-install-recommends libpcap0.8 \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=engines /engines/ /usr/local/bin/
+COPY --from=assets /assets/apiroutes.txt /usr/local/share/bughound/wordlists/apiroutes.txt
+RUN chmod 0644 /usr/local/share/bughound/wordlists/apiroutes.txt
 # ZAP opsional (butuh JRE; menambah ~500MB). Default tidak dipasang.
 RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
       apt-get update; \
@@ -102,9 +98,7 @@ RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
       ln -s "/opt/ZAP_${ZAP_VERSION}/zap.sh" /usr/local/bin/zap.sh; \
       apt-get clean; rm -rf /var/lib/apt/lists/*; \
     fi
-
-# retire.js opsional (butuh Node + npm). Default tidak dipasang. Versi di-pin;
-# fail-closed: bila install/`retire --version` gagal, build gagal keras.
+# retire.js opsional (butuh Node + npm). fail-closed bila `retire --version` gagal.
 RUN if [ "$WITH_RETIRE" = "true" ]; then set -eux; \
       apt-get update; \
       apt-get install -y --no-install-recommends nodejs npm; \
@@ -113,48 +107,52 @@ RUN if [ "$WITH_RETIRE" = "true" ]; then set -eux; \
       retire --version; \
       apt-get clean; rm -rf /var/lib/apt/lists/*; \
     fi
-
-COPY --from=engines /engines/ /usr/local/bin/
-
-# Jalan sebagai non-root; data (db, kunci, anchor) di /data.
-RUN useradd -m -u 10001 bh && mkdir -p /data && chown bh:bh /data
 USER bh
-WORKDIR /data
-
-# SAST aktif secara default — tak perlu flag/command terpisah setelah deploy.
-# Root analisis diarahkan ke /data/sast (di dalam volume data); bughound membuat
-# dir ini saat boot bila belum ada (volume kosong menutupi dir bawaan image),
-# lalu mengurung SAST ke sana (path-scope, default-deny, tanpa jaringan). Taruh
-# kode target yang ingin dianalisis di /data/sast atau subdir-nya. Override:
-# jalankan dengan -sast-root <dir> atau set BUGHOUND_SAST_ROOT lain.
-ENV BUGHOUND_SAST_ROOT=/data/sast
-
-# Pre-bake nuclei-templates saat build (sumber 'trusted' = repo resmi
-# projectdiscovery, satu-satunya sumber tepercaya di awal per BH-SPEC-PAYLOAD).
-# Dengan template ada di disk, nuclei tak perlu — dan di runtime TAK BISA —
-# menariknya sendiri: egress runtime dikunci scope guard (cuma in-scope), jadi
-# unduhan template ke GitHub memang akan diblok. Dijalankan sebagai user 'bh'
-# agar template + config mendarat di $HOME-nya (/home/bh/nuclei-templates),
-# lokasi default yang dibaca nuclei saat scan — sehingga runner tak butuh -t.
-# Fail-closed: bila unduh gagal, build gagal keras (bukan diam-diam mengirim
-# image tanpa satu pun check). Versi template tercatat di
-# ~/.config/nuclei/.templates-config.json untuk ketertelusuran; pinning versi
-# yang sebenarnya menyusul di bank payload (Fase 2 BH-SPEC-PAYLOAD).
+# Pre-bake nuclei-templates (sumber 'trusted' repo resmi projectdiscovery) agar
+# runtime tak perlu — dan dengan egress terkunci TAK BISA — menariknya. Sebagai
+# user 'bh' agar mendarat di $HOME (/home/bh/nuclei-templates), lokasi default.
+# Fail-closed: unduh gagal => build gagal keras.
 RUN nuclei -update-templates
 
-# Binary bughound disalin TERAKHIR: perubahan source hanya membatalkan layer ini
-# (tak ada layer mahal setelahnya), sehingga bake template di atas tetap ter-cache
-# lintas rebuild. COPY berjalan di tingkat builder (file jadi milik root, 0755);
-# USER runtime tetap bh dari atas (COPY tak mengubah USER).
+# --- Stage: dast (DAST image final) ---
+FROM dast-tools AS dast
+USER root
 COPY --from=build /out/bughound /usr/local/bin/bughound
+USER bh
 
-EXPOSE 8787
+# --- Stage: sast-tools (toolchain SAST; induk sast) ---
+FROM base AS sast-tools
+ARG WITH_FINDSECBUGS=false
+USER root
+COPY scripts/docker-sast-install.sh /tmp/docker-sast-install.sh
+RUN WITH_FINDSECBUGS="$WITH_FINDSECBUGS" sh /tmp/docker-sast-install.sh && rm -f /tmp/docker-sast-install.sh
+# SAST semgrep offline (ruleset lokal pre-bake) + SAST aktif default ke /data/sast
+# (bughound membuat dir saat boot bila belum ada; path-scope, default-deny).
+ENV BUGHOUND_SEMGREP_CONFIG=/opt/semgrep/default.yml \
+    SEMGREP_ENABLE_VERSION_CHECK=0 \
+    BUGHOUND_SAST_ROOT=/data/sast
+USER bh
 
-# Default AMAN: bind 0.0.0.0 (untuk -p docker) TAPI engine mock (tak ada scan
-# nyata). Untuk scan nyata, override: ... -engine nuclei,ffuf,zap  (+ -auth).
-# Catatan SAST: hidup default via ENV BUGHOUND_SAST_ROOT di atas; adapter mock &
-# semgrep dua-duanya langsung pakai. Ruleset semgrep `p/default` sudah di-pre-bake
-# ke /opt/semgrep/default.yml (ENV BUGHOUND_SEMGREP_CONFIG) sehingga SAST jalan
-# OFFLINE tanpa registry. Taruh kode target yang mau dianalisis di /data/sast.
-ENTRYPOINT ["bughound"]
-CMD ["-addr", "0.0.0.0:8787", "-db", "/data/bughound.db"]
+# --- Stage: sast (SAST image final) ---
+FROM sast-tools AS sast
+USER root
+COPY --from=build /out/bughound /usr/local/bin/bughound
+USER bh
+
+# --- Stage: full (DAST + SAST; target default) ---
+# FROM dast-tools agar layer engine/template di-cache bersama image `dast`; lalu
+# tambahkan toolchain SAST. Binary disalin TERAKHIR.
+FROM dast-tools AS full
+ARG WITH_FINDSECBUGS=false
+USER root
+COPY scripts/docker-sast-install.sh /tmp/docker-sast-install.sh
+RUN WITH_FINDSECBUGS="$WITH_FINDSECBUGS" sh /tmp/docker-sast-install.sh && rm -f /tmp/docker-sast-install.sh
+# Pulihkan biner engine projectdiscovery SETELAH install SAST: pip (dependensi
+# semgrep) memasang CLI `httpx` Python ke /usr/local/bin/httpx yang menimpa httpx
+# recon. COPY ulang engines agar tool DAST yang menang (hanya di image full).
+COPY --from=engines /engines/ /usr/local/bin/
+ENV BUGHOUND_SEMGREP_CONFIG=/opt/semgrep/default.yml \
+    SEMGREP_ENABLE_VERSION_CHECK=0 \
+    BUGHOUND_SAST_ROOT=/data/sast
+COPY --from=build /out/bughound /usr/local/bin/bughound
+USER bh
