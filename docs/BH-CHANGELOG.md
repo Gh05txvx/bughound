@@ -4,12 +4,13 @@ Log rekayasa: **apa yang sudah dibangun** di repo (pelengkap spec/PRD yang menya
 
 ## Status ringkas
 
-Fondasi **M0**, MVP **M1**, triase & multi-engine **M2**: **selesai**. **M3** (pengerasan & rilis) berjalan: audit pre-launch lolos + diremediasi, export platform, dashboard, SAST plugin, adapter engine nyata (ffuf, ZAP, dalfox). Rilis publik: **v0.1.0 → v0.4.0** (lintas-platform + `SHA256SUMS.txt`).
+Fondasi **M0**, MVP **M1**, triase & multi-engine **M2**: **selesai**. **M3** (pengerasan & rilis) berjalan: audit pre-launch lolos + diremediasi, export platform, dashboard, SAST plugin, adapter engine nyata (ffuf, ZAP, dalfox). Rilis publik: **v0.1.0 → v0.5.0** (lintas-platform + `SHA256SUMS.txt`).
 
 ## Rilis
 
 | Tag | Isi inti |
 | --- | --- |
+| `v0.5.0` | SAST diperluas: adapter **Bandit** (Python), **Gitleaks** (deteksi secret, redaksi ganda), **FindSecBugs** (bytecode JVM, opt-in) + **normalizer SARIF 2.1.0** generik (satu jalur normalisasi untuk CodeQL/SpotBugs/gitleaks & emitter SARIF lain), ketiganya otomatis muncul di dropdown `/sast`; **image Docker multi-target** `dast`/`sast`/`full` — toolchain DAST & SAST dapat dipakai terpisah (image sendiri), ketiga varian dipublish ke GHCR (`-dast`/`-sast`/utama) |
 | `v0.4.0` | SAST aktif default (ruleset semgrep `p/default` di-pre-bake, siap-offline); engine XSS **dalfox** (adapter + normalisasi, request lewat proxy egress scope-enforced); **brute route API** opt-in per-scan (wordlist Assetnote `apiroutes`) + kalibrasi dinding yang menggemakan path — grup 401/403/500 sebentuk dikolaps jadi satu catatan sehingga rute nyata tak tenggelam |
 | `v0.3.2` | Brand "BugHound" diseragamkan (UI/docs/report); impor scope HackerOne/Bugcrowd; preset template per program; kategori OWASP 2021 + metode HTTP & clamp ukuran evidence di temuan; sejumlah pengerasan egress/scope |
 | `v0.3.1` | Pengerasan secret (redaksi master key & kredensial proxy chain, bungkus master key dengan Secret); buang dead code (BH-P06); ringkas intro README |
