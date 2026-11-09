@@ -1,8 +1,12 @@
 name: docker
 
-# Saat tag versi dipush, bangun image gabungan (bughound + engine) dan push ke
-# GitHub Container Registry (ghcr.io). Image lean (tanpa ZAP) — ZAP tetap bisa
-# di-build lokal dengan --build-arg WITH_ZAP=true.
+# Saat tag versi dipush, bangun image dan push ke GitHub Container Registry
+# (ghcr.io). Tiga varian dari satu Dockerfile multi-target:
+#   - full (default): DAST + SAST  → tag utama (vX.Y.Z, X.Y, latest)
+#   - dast          : recon + DAST → tag bersufiks  -dast (mis. 0.5.0-dast)
+#   - sast          : hanya SAST   → tag bersufiks  -sast (mis. 0.5.0-sast)
+# Semua varian lean (tanpa ZAP) — ZAP tetap bisa di-build lokal dengan
+# --build-arg WITH_ZAP=true; FindSecBugs dengan --build-arg WITH_FINDSECBUGS=true.
 on:
   push:
     tags:
@@ -16,6 +20,20 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: full
+            flavor: latest=true
+          - target: dast
+            flavor: |
+              latest=false
+              suffix=-dast
+          - target: sast
+            flavor: |
+              latest=false
+              suffix=-sast
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,24 +48,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Metadata (tag & label)
+      - name: Metadata (tag & label) — ${{ matrix.target }}
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
+          flavor: ${{ matrix.flavor }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - name: Build & push
+      - name: Build & push — ${{ matrix.target }}
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: ${{ matrix.target }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
