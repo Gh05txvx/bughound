@@ -139,6 +139,12 @@ Report generator menyusun **draft** dari temuan terkonfirmasi; export format **H
 
 Form `/grpc`: `program`, `targets`, checkbox `fuzz`. Engine nyata `grpcurl` (startup `-grpc real`, `-grpc-plaintext` untuk tanpa TLS). Enumerasi service/method via reflection.
 
+### 2.11 Stop & Run ulang
+
+- **Stop** (Dashboard ▸ Proses scanning, atau status run di `/scan`) menghentikan satu run: engine yang sedang jalan dibunuh, run lain tak terganggu. Temuan yang sudah tersimpan tetap ada.
+- **Run ulang** menjalankan lagi run yang sudah berakhir dengan parameter yang sama. Scope dinilai ulang dari definisi program **saat ini**.
+- Keduanya butuh peran operator/admin dan tercatat di audit (`run.stop`, `run.rerun`). Riwayat run disimpan di memori, jadi hilang saat server di-restart.
+
 ---
 
 ## 3. Referensi field form **Scan** (`/scan`)
@@ -249,3 +255,4 @@ Tiap skenario: **engine yang bekerja**, **input yang kamu isi**, dan **prasyarat
 | SAST "dinonaktifkan" | Server jalan tanpa `-sast-root`; set root + pakai `subpath` yang benar. |
 | Proxy ke Burp gagal dari container | Pakai `host.docker.internal:8080`, bukan `127.0.0.1:8080`. |
 | retire/findsecbugs tak ada | Image di-build tanpa `WITH_RETIRE`/`WITH_FINDSECBUGS`; rebuild + tambah ke roster. |
+| Scan kelamaan / salah target | Tekan **Stop** di Dashboard ▸ Proses scanning. Tak perlu restart container (restart menghentikan semua run). |
