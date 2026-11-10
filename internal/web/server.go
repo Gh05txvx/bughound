@@ -78,6 +78,10 @@ type Server struct {
 	captureMu sync.Mutex
 	captures  map[string]*captureSession // sesi capture reverse-proxy aktif per program
 
+	specMu    sync.Mutex
+	specs     map[string]scanSpec // run id → parameter scan, untuk "Run ulang"
+	specOrder []string            // urutan masuk; dipangkas ke rerunKeep
+
 	sessMu   sync.Mutex
 	sessions map[string]sessionInfo // token sesi login → pengguna+peran
 
@@ -167,6 +171,7 @@ func NewServer(cfg Config) (*Server, error) {
 		version:        version,
 		sastRoot:       strings.TrimSpace(cfg.SASTRoot),
 		captures:       map[string]*captureSession{},
+		specs:          map[string]scanSpec{},
 		sessions:       map[string]sessionInfo{},
 		pages:          pages,
 	}
@@ -711,6 +716,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /scan", s.handleScanForm)
 	s.mux.HandleFunc("POST /scan", s.handleScanRun)
 	s.mux.HandleFunc("GET /runs/{id}", s.handleRunStatus)
+	s.mux.HandleFunc("POST /runs/{id}/stop", s.handleRunStop)
+	s.mux.HandleFunc("POST /runs/{id}/rerun", s.handleRunRerun)
 	s.mux.HandleFunc("GET /findings", s.handleFindings)
 	s.mux.HandleFunc("POST /findings/bulk", s.handleBulkTriage)
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
@@ -890,25 +897,73 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SaveProgram(r.Context(), prog)
 
 	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
-	runID := s.enqueueScan(program, guard, seeds, targets, rps, proxyChain, sel, openapiSpec)
+	runID := s.enqueueScan(program, guard, scanSpec{
+		seeds: seeds, targets: targets, rps: rps, proxyChain: proxyChain, sel: sel, openapiSpec: openapiSpec,
+	})
 
 	if run, ok := s.queue.Get(runID); ok {
-		s.renderPartial(w, r, "scan", "run_status", toRunView(run))
+		s.renderPartial(w, r, "scan", "run_status", s.runViewFor(r, run))
 	}
+}
+
+// scanSpec adalah parameter satu scan selain scope, disimpan in-memory agar run
+// bisa dijalankan ulang dari panel Proses scanning (seumur riwayat run di queue,
+// hilang saat restart). Scope sengaja TIDAK disimpan: Run ulang menilai ulang
+// scope program terkini dari store.
+type scanSpec struct {
+	seeds, targets []string
+	rps            float64
+	proxyChain     []string // bisa memuat kredensial user:pass: jangan dirender/di-log
+	sel            Selection
+	openapiSpec    []byte
+}
+
+// String/GoString meredaksi isi spec (rantai proxy bisa memuat kredensial) agar
+// tak bocor bila tak sengaja diformat ke log/galat (Prinsip #5). fmt tak
+// memanggil String() milik field unexported, jadi penjaganya di holder ini.
+func (scanSpec) String() string      { return "scanSpec{redacted}" }
+func (sp scanSpec) GoString() string { return sp.String() }
+
+// rerunKeep membatasi spec yang diingat (spec bisa memuat OpenAPI besar); cukup
+// untuk semua baris panel Proses scanning.
+const rerunKeep = 2 * scansLiveLimit
+
+func (s *Server) rememberSpec(runID string, sp scanSpec) {
+	s.specMu.Lock()
+	defer s.specMu.Unlock()
+	s.specs[runID] = sp
+	s.specOrder = append(s.specOrder, runID)
+	for len(s.specOrder) > rerunKeep {
+		delete(s.specs, s.specOrder[0])
+		s.specOrder = s.specOrder[1:]
+	}
+}
+
+func (s *Server) specFor(runID string) (scanSpec, bool) {
+	s.specMu.Lock()
+	defer s.specMu.Unlock()
+	sp, ok := s.specs[runID]
+	return sp, ok
 }
 
 // enqueueScan menjalankan satu scan di latar belakang (worker pool) dan
 // mengembalikan run id seketika. Satu jalur peluncuran scan dipakai bersama oleh
-// form Scan dan "promote" dari Capture. Task memakai ctx milik queue (bukan
-// r.Context()) agar tak dibatalkan saat response web dikirim. Rate limiter selalu
-// dipasang (tak bisa dimatikan); scope guard menjadi satu-satunya gate.
-func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets []string, rps float64, proxyChain []string, sel Selection, openapiSpec []byte) string {
+// form Scan, "promote" dari Capture, dan Run ulang. Task memakai ctx milik queue
+// (bukan r.Context()) agar tak dibatalkan saat response web dikirim; ctx itu
+// hanya dibatalkan oleh Stop. Rate limiter selalu dipasang (tak bisa
+// dimatikan); scope guard menjadi satu-satunya gate.
+func (s *Server) enqueueScan(program string, guard *scope.Guard, sp scanSpec) string {
 	storeRef := s.store
-	return s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
-		s.auditAppend(ctx, audit.Event{Kind: "run.start", Program: program, RunID: runID, Message: scanLabel(seeds, targets)})
+	seeds, targets, rps, sel := sp.seeds, sp.targets, sp.rps, sp.sel
+	runID := s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
+		// Audit memakai ctx TANPA pembatalan: Stop membatalkan ctx run (engine
+		// dibunuh), tetapi jejak audit wajib tetap utuh (Prinsip #6). Store
+		// SQLite menolak query pada ctx yang sudah batal.
+		actx := context.WithoutCancel(ctx)
+		s.auditAppend(actx, audit.Event{Kind: "run.start", Program: program, RunID: runID, Message: scanLabel(seeds, targets)})
 
 		auditSink := func(e orchestrator.AuditEvent) {
-			s.auditAppend(ctx, audit.Event{
+			s.auditAppend(actx, audit.Event{
 				Kind: "scope.decision", Program: e.Program, RunID: e.RunID, Target: e.Target,
 				Allowed: e.Allowed, Reason: string(e.Reason), Layer: string(e.Layer), Message: e.MatchedEntry,
 			})
@@ -929,30 +984,44 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, seeds, targets 
 		if len(seeds) > 0 && rec != nil {
 			o.UseRecon(rec)
 		}
-		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: proxyChain, OpenAPISpec: openapiSpec})
+		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: sp.proxyChain, OpenAPISpec: sp.openapiSpec})
+		sum := runSummary(res)
 		if err != nil {
-			s.auditAppend(ctx, audit.Event{Kind: "run.finish", Program: program, RunID: runID, Message: "gagal: " + err.Error()})
-			return jobs.Summary{}, err
+			msg := "gagal: " + err.Error()
+			if ctx.Err() != nil {
+				msg = fmt.Sprintf("dihentikan: saved=%d dup=%d denied=%d", res.FindingsSaved, res.Duplicates, len(res.Denied))
+			}
+			s.auditAppend(actx, audit.Event{Kind: "run.finish", Program: program, RunID: runID, Message: msg})
+			return sum, err
 		}
-		s.auditAppend(ctx, audit.Event{Kind: "run.finish", Program: program, RunID: runID,
+		s.auditAppend(actx, audit.Event{Kind: "run.finish", Program: program, RunID: runID,
 			Message: fmt.Sprintf("saved=%d dup=%d denied=%d", res.FindingsSaved, res.Duplicates, len(res.Denied))})
-
-		sum := jobs.Summary{
-			Discovered: res.Discovered,
-			Scanned:    res.Scanned,
-			Saved:      res.FindingsSaved,
-			Duplicates: res.Duplicates,
-		}
-		for _, d := range res.Denied {
-			sum.Denied = append(sum.Denied, fmt.Sprintf("%s — %s (%s)", d.Target, d.Reason, d.Layer))
-		}
 		for _, ee := range res.EngineErrors {
-			sum.Warnings = append(sum.Warnings, fmt.Sprintf("engine %s @ %s: %s", ee.Engine, ee.Target, ee.Err))
-			s.auditAppend(ctx, audit.Event{Kind: "run.engine_error", Program: program, RunID: runID,
+			s.auditAppend(actx, audit.Event{Kind: "run.engine_error", Program: program, RunID: runID,
 				Message: fmt.Sprintf("engine %s gagal di %s: %s", ee.Engine, ee.Target, ee.Err)})
 		}
 		return sum, nil
 	})
+	s.rememberSpec(runID, sp)
+	return runID
+}
+
+// runSummary meringkas hasil orchestrator untuk queue. Pada run yang gagal atau
+// dihentikan, res berisi hasil parsial (temuan yang sudah tersimpan tetap ada).
+func runSummary(res orchestrator.ScanResult) jobs.Summary {
+	sum := jobs.Summary{
+		Discovered: res.Discovered,
+		Scanned:    res.Scanned,
+		Saved:      res.FindingsSaved,
+		Duplicates: res.Duplicates,
+	}
+	for _, d := range res.Denied {
+		sum.Denied = append(sum.Denied, fmt.Sprintf("%s — %s (%s)", d.Target, d.Reason, d.Layer))
+	}
+	for _, ee := range res.EngineErrors {
+		sum.Warnings = append(sum.Warnings, fmt.Sprintf("engine %s @ %s: %s", ee.Engine, ee.Target, ee.Err))
+	}
+	return sum
 }
 
 func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {
@@ -961,7 +1030,86 @@ func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "run tidak ditemukan", http.StatusNotFound)
 		return
 	}
-	s.renderPartial(w, r, "scan", "run_status", toRunView(run))
+	s.renderPartial(w, r, "scan", "run_status", s.runViewFor(r, run))
+}
+
+// handleRunStop menghentikan run yang antre/berjalan. Context run dibatalkan
+// sehingga subprocess engine ikut dibunuh; temuan yang sudah tersimpan tetap
+// ada. State-changing → operator+ & CSRF lewat middleware. Audit run.stop
+// hanya bila panggilan ini yang menghentikan (Stop berulang = no-op).
+func (s *Server) handleRunStop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	run, ok := s.queue.Get(id)
+	if !ok {
+		http.Error(w, "run tidak ditemukan", http.StatusNotFound)
+		return
+	}
+	if s.queue.Cancel(id) {
+		me, _ := s.currentUser(r)
+		s.auditAppend(r.Context(), audit.Event{Kind: "run.stop", Program: run.Program, RunID: id, Allowed: true,
+			Message: fmt.Sprintf("%s menghentikan run (%s)", me, run.Status)})
+	}
+	if r.FormValue("view") == "dashboard" {
+		s.renderScansLive(w, r, "")
+		return
+	}
+	run, _ = s.queue.Get(id)
+	s.renderPartial(w, r, "scan", "run_status", s.runViewFor(r, run))
+}
+
+// handleRunRerun menjalankan ulang run yang sudah berakhir dengan parameter scan
+// yang sama. Scope TIDAK diambil dari run asal: dinilai ulang dari definisi
+// program terkini di store (fail closed bila program hilang atau scope tak
+// valid), lalu lewat enqueueScan sehingga scope guard, rate limiter, dan egress
+// sama persis dengan scan biasa. Membalas panel Proses scanning.
+func (s *Server) handleRunRerun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	run, ok := s.queue.Get(id)
+	if !ok {
+		s.renderScansLive(w, r, "Run tidak ditemukan; riwayat run hilang bila server di-restart.")
+		return
+	}
+	if run.Status == jobs.Queued || run.Status == jobs.Running {
+		s.renderScansLive(w, r, "Run masih berjalan. Hentikan dulu atau tunggu selesai.")
+		return
+	}
+	sp, ok := s.specFor(id)
+	if !ok {
+		s.renderScansLive(w, r, "Parameter run ini sudah tak tersimpan. Jalankan dari menu Scan.")
+		return
+	}
+	me, _ := s.currentUser(r)
+	reason := ""
+	var guard *scope.Guard
+	if prog, err := s.store.GetProgram(r.Context(), run.Program); err != nil {
+		reason = "program tak punya scope tersimpan"
+	} else if g, errs := scope.New(prog.InScope, prog.OutScope); len(errs) > 0 {
+		reason = "scope program tak valid: " + errs[0].Error()
+	} else {
+		guard = g
+	}
+	if guard == nil {
+		s.auditAppend(r.Context(), audit.Event{Kind: "run.rerun", Program: run.Program, RunID: id, Allowed: false,
+			Reason: reason, Message: fmt.Sprintf("%s: run ulang ditolak", me)})
+		s.renderScansLive(w, r, "Run ulang ditolak: "+reason+".")
+		return
+	}
+	newID := s.enqueueScan(run.Program, guard, sp)
+	s.auditAppend(r.Context(), audit.Event{Kind: "run.rerun", Program: run.Program, RunID: newID, Allowed: true,
+		Message: fmt.Sprintf("%s menjalankan ulang %s", me, id)})
+	s.renderScansLive(w, r, "")
+}
+
+// canControl: operator+ (atau auth nonaktif) boleh Stop / Run ulang; viewer
+// hanya melihat. Gerbang sebenarnya tetap middleware authorize().
+func (s *Server) canControl(r *http.Request) bool {
+	return s.authDisabled || auth.CanWrite(s.roleOf(r))
+}
+
+func (s *Server) runViewFor(r *http.Request, run *jobs.Run) runView {
+	v := toRunView(run)
+	v.CanControl = s.canControl(r)
+	return v
 }
 
 type runView struct {
@@ -971,6 +1119,8 @@ type runView struct {
 	Label      string
 	Err        string
 	Active     bool
+	Stopping   bool // Stop diminta, engine sedang dihentikan
+	CanControl bool // peran boleh Stop
 	Discovered int
 	Scanned    int
 	Saved      int
@@ -987,6 +1137,7 @@ func toRunView(r *jobs.Run) runView {
 		Label:      r.Label,
 		Err:        r.Err,
 		Active:     r.Status == jobs.Queued || r.Status == jobs.Running,
+		Stopping:   r.Stopping,
 		Discovered: r.Summary.Discovered,
 		Scanned:    len(r.Summary.Scanned),
 		Saved:      r.Summary.Saved,
@@ -1831,8 +1982,11 @@ type scanLiveRow struct {
 	Label       string
 	Status      string
 	Active      bool
+	Stopping    bool
 	Done        bool
 	Failed      bool
+	Cancelled   bool
+	CanRerun    bool // run berakhir & parameternya masih diingat
 	Saved       int
 	Scanned     int
 	Discovered  int
@@ -1842,14 +1996,17 @@ type scanLiveRow struct {
 }
 
 type scansLivePage struct {
-	Rows        []scanLiveRow
-	ActiveCount int
-	QueuedCount int
-	DoneCount   int
-	Total       int
-	HasAny      bool
-	Interval    string // interval polling HTMX (adaptif)
-	UpdatedAt   string
+	Rows           []scanLiveRow
+	ActiveCount    int
+	QueuedCount    int
+	DoneCount      int
+	CancelledCount int
+	Total          int
+	HasAny         bool
+	Interval       string // interval polling HTMX (adaptif)
+	UpdatedAt      string
+	CanControl     bool   // tampilkan tombol Stop / Run ulang (operator+)
+	Notice         string // pesan aksi Stop/Run ulang (mis. alasan penolakan)
 }
 
 const scansLiveLimit = 12
@@ -1857,11 +2014,18 @@ const scansLiveLimit = 12
 // handleDashboardScans merender panel "Proses scanning" (live) dari job queue
 // in-process — read-only, tanpa jaringan & tanpa query store (murah untuk
 // polling). HTMX memanggilnya berulang (trigger self-chained) sehingga status
-// run tampil berubah real-time: antre → berjalan → selesai/gagal, lengkap durasi.
+// run tampil berubah real-time: antre → berjalan → selesai/gagal/dihentikan,
+// lengkap durasi.
 func (s *Server) handleDashboardScans(w http.ResponseWriter, r *http.Request) {
+	s.renderScansLive(w, r, "")
+}
+
+// renderScansLive merender panel Proses scanning; notice (opsional) tampil
+// sebagai baris info, dipakai aksi Stop/Run ulang.
+func (s *Server) renderScansLive(w http.ResponseWriter, r *http.Request, notice string) {
 	now := time.Now()
 	runs := s.queue.List("") // semua, terbaru dulu
-	page := scansLivePage{Total: len(runs), UpdatedAt: now.Format("15:04:05")}
+	page := scansLivePage{Total: len(runs), UpdatedAt: now.Format("15:04:05"), CanControl: s.canControl(r), Notice: notice}
 	for _, rn := range runs {
 		switch rn.Status {
 		case jobs.Queued:
@@ -1870,17 +2034,23 @@ func (s *Server) handleDashboardScans(w http.ResponseWriter, r *http.Request) {
 			page.ActiveCount++
 		case jobs.Done:
 			page.DoneCount++
+		case jobs.Cancelled:
+			page.CancelledCount++
 		}
 		if len(page.Rows) >= scansLiveLimit {
 			continue
 		}
 		v := toRunView(rn)
+		_, hasSpec := s.specFor(rn.ID)
 		page.Rows = append(page.Rows, scanLiveRow{
 			ID: v.ID, Program: v.Program, Label: rn.Label,
 			Status:      string(rn.Status),
 			Active:      v.Active,
+			Stopping:    rn.Stopping,
 			Done:        rn.Status == jobs.Done,
 			Failed:      rn.Status == jobs.Failed,
+			Cancelled:   rn.Status == jobs.Cancelled,
+			CanRerun:    !v.Active && hasSpec,
 			Saved:       v.Saved,
 			Scanned:     v.Scanned,
 			Discovered:  v.Discovered,
@@ -1899,7 +2069,8 @@ func (s *Server) handleDashboardScans(w http.ResponseWriter, r *http.Request) {
 	s.renderPartial(w, r, "dashboard", "scans_live", page)
 }
 
-// runElapsed: berjalan = sejak mulai; selesai/gagal = total runtime; antre = tunggu.
+// runElapsed: berjalan = sejak mulai; berakhir = total runtime; antre = tunggu.
+// Run yang dihentikan saat antre tak punya StartedAt → "—".
 func runElapsed(r *jobs.Run, now time.Time) string {
 	switch r.Status {
 	case jobs.Queued:
@@ -2485,7 +2656,7 @@ func (s *Server) handleCapturePromote(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "capture", "base", page)
 		return
 	}
-	runID := s.enqueueScan(program, guard, nil, targets, rps, nil, Selection{}, nil)
+	runID := s.enqueueScan(program, guard, scanSpec{targets: targets, rps: rps})
 	s.auditAppend(r.Context(), audit.Event{Kind: "capture.promote", Program: program, RunID: runID, Allowed: true, Message: fmt.Sprintf("%d endpoint", len(targets))})
 	http.Redirect(w, r, fmt.Sprintf("/capture?program=%s&run=%s&n=%d", url.QueryEscape(program), url.QueryEscape(runID), len(targets)), http.StatusSeeOther)
 }

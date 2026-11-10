@@ -4,7 +4,11 @@
   {{if .Active}}
     <div class="result-summary">
       <span class="chip">run {{.ID}}</span>
-      <span class="chip warn">⏳ {{.Status}}…</span>
+      {{if .Stopping}}<span class="chip warn">⏳ menghentikan…</span>
+      {{else}}<span class="chip warn">⏳ {{.Status}}…</span>
+      {{if .CanControl}}<button type="button" class="btn ghost small danger" title="Hentikan scan ini"
+        hx-post="/runs/{{.ID}}/stop" hx-target="#run-{{.ID}}" hx-swap="outerHTML" hx-disabled-elt="this"
+        hx-confirm="Hentikan scan ini? Engine dihentikan; temuan yang sudah tersimpan tetap ada.">Stop</button>{{end}}{{end}}
     </div>
     <p class="muted small">Scan berjalan di latar belakang (rate limiter aktif di jalur eksekusi). Status diperbarui otomatis.</p>
   {{else if eq .Status "failed"}}
@@ -13,6 +17,14 @@
       <span class="chip warn">gagal</span>
     </div>
     <div class="errors"><p>{{.Err}}</p></div>
+  {{else if eq .Status "cancelled"}}
+    <div class="result-summary">
+      <span class="chip">run {{.ID}}</span>
+      <span class="chip">dihentikan</span>
+      <span class="chip good">{{.Saved}} temuan tersimpan</span>
+    </div>
+    <p class="muted small">Scan dihentikan sebelum selesai; temuan yang sudah tersimpan tetap ada.</p>
+    {{if .Saved}}<div class="actions"><a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a></div>{{end}}
   {{else}}
     <div class="result-summary">
       <span class="chip ok">run {{.ID}}</span>

@@ -4,10 +4,11 @@
   <div class="panel-head">
     <h2>Proses scanning <span class="live-dot" title="pembaruan langsung"></span></h2>
     <span class="muted small">
-      {{if .HasAny}}aktif <b class="mono">{{.ActiveCount}}</b> · antre <b class="mono">{{.QueuedCount}}</b> · selesai <b class="mono">{{.DoneCount}}</b> · diperbarui {{.UpdatedAt}}
+      {{if .HasAny}}aktif <b class="mono">{{.ActiveCount}}</b> · antre <b class="mono">{{.QueuedCount}}</b> · selesai <b class="mono">{{.DoneCount}}</b>{{if .CancelledCount}} · dihentikan <b class="mono">{{.CancelledCount}}</b>{{end}} · diperbarui {{.UpdatedAt}}
       {{else}}belum ada scan{{end}}
     </span>
   </div>
+  {{if .Notice}}<div class="banner live-notice">{{.Notice}}</div>{{end}}
   {{if .HasAny}}
   <div class="panel-body flush">
     <table class="tbl livescan-tbl">
@@ -20,13 +21,16 @@
         <td class="prog mono">{{.Program}}</td>
         <td class="mono muted truncate">{{if .Label}}{{.Label}}{{else}}—{{end}}</td>
         <td>
-          {{if eq .Status "running"}}<span class="pill st-running"><span class="dot run"></span>berjalan</span>
+          {{if .Stopping}}<span class="pill st-stopping">menghentikan…</span>
+          {{else if eq .Status "running"}}<span class="pill st-running"><span class="dot run"></span>berjalan</span>
           {{else if eq .Status "queued"}}<span class="pill st-new"><span class="dot"></span>antre</span>
           {{else if eq .Status "failed"}}<span class="pill st-failed">gagal</span>
+          {{else if .Cancelled}}<span class="pill st-cancelled">dihentikan</span>
           {{else}}<span class="pill st-confirmed"><span class="dot ok"></span>selesai</span>{{end}}
         </td>
         <td class="prog-cell">
-          {{if eq .Status "running"}}<div class="pbar run"><span></span></div>
+          {{if or .Stopping .Cancelled}}<div class="pbar stopped"></div>
+          {{else if eq .Status "running"}}<div class="pbar run"><span></span></div>
           {{else if eq .Status "queued"}}<div class="pbar queued"></div>
           {{else if eq .Status "failed"}}<div class="pbar fail"></div>
           {{else}}<div class="pbar done"></div>{{end}}
@@ -34,18 +38,28 @@
         <td class="mono">
           {{if .Done}}<span class="chip good">{{.Saved}} temuan</span> <span class="muted small">{{.Scanned}} discan · {{.DeniedCount}} ditolak</span>
           {{else if .Failed}}<span class="muted small truncate" title="{{.Err}}">{{.Err}}</span>
+          {{else if .Cancelled}}<span class="muted small">{{.Saved}} temuan tersimpan sebelum dihentikan</span>
+          {{else if .Stopping}}<span class="muted small">menghentikan engine…</span>
           {{else if eq .Status "running"}}<span class="muted small">memindai…</span>
           {{else}}<span class="muted small">menunggu slot</span>{{end}}
         </td>
         <td class="muted mono">{{.Elapsed}}</td>
-        <td>{{if .Done}}<a class="btn ghost small" href="/findings?program={{.Program}}">findings</a>{{end}}</td>
+        <td class="row-actions">
+          {{if and $.CanControl .Active (not .Stopping)}}<button type="button" class="btn ghost small danger" title="Hentikan scan ini"
+            hx-post="/runs/{{.ID}}/stop?view=dashboard" hx-target="#live-scans" hx-swap="outerHTML" hx-disabled-elt="this"
+            hx-confirm="Hentikan scan {{.Program}}? Engine dihentikan; temuan yang sudah tersimpan tetap ada.">Stop</button>{{end}}
+          {{if and $.CanControl .CanRerun}}<button type="button" class="btn ghost small" title="Jalankan ulang dengan parameter yang sama"
+            hx-post="/runs/{{.ID}}/rerun?view=dashboard" hx-target="#live-scans" hx-swap="outerHTML" hx-disabled-elt="this"
+            hx-confirm="Jalankan ulang scan {{.Program}} dengan parameter yang sama? Scope dinilai ulang dari definisi program saat ini.">Run ulang</button>{{end}}
+          {{if or .Done (and .Cancelled .Saved)}}<a class="btn ghost small" href="/findings?program={{.Program}}">findings</a>{{end}}
+        </td>
       </tr>
       {{end}}
       </tbody>
     </table>
   </div>
   {{else}}
-  <div class="empty"><p class="muted">Belum ada scan berjalan. <a href="/scan">Jalankan scan →</a> — prosesnya tampil live di sini (antre → berjalan → selesai).</p></div>
+  <div class="empty"><p class="muted">Belum ada scan berjalan. <a href="/scan">Jalankan scan →</a> — prosesnya tampil live di sini (antre → berjalan → selesai), lengkap tombol Stop &amp; Run ulang.</p></div>
   {{end}}
 </div>
 {{end}}
