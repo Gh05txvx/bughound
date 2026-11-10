@@ -19,10 +19,11 @@ import (
 type Status string
 
 const (
-	Queued  Status = "queued"
-	Running Status = "running"
-	Done    Status = "done"
-	Failed  Status = "failed"
+	Queued    Status = "queued"
+	Running   Status = "running"
+	Done      Status = "done"
+	Failed    Status = "failed"
+	Cancelled Status = "cancelled" // dihentikan pengguna (Stop) sebelum selesai
 )
 
 // Summary adalah ringkasan hasil scan yang disimpan di Run. Sengaja generik
@@ -38,10 +39,14 @@ type Summary struct {
 
 // Run melacak satu pekerjaan scan.
 type Run struct {
-	ID         string
-	Program    string
-	Label      string
-	Status     Status
+	ID      string
+	Program string
+	Label   string
+	Status  Status
+	// Stopping: Stop diminta saat run berjalan; context-nya sudah dibatalkan
+	// dan worker menunggu task berhenti sebelum memfinalkan Cancelled.
+	Stopping bool
+	// Summary juga terisi pada run gagal/dihentikan (hasil parsial).
 	Summary    Summary
 	Err        string
 	EnqueuedAt time.Time
@@ -50,7 +55,8 @@ type Run struct {
 }
 
 // Task adalah pekerjaan yang dijalankan worker. Menerima ctx milik QUEUE (bukan
-// request HTTP) agar scan tetap berjalan setelah response web dikirim.
+// request HTTP) agar scan tetap berjalan setelah response web dikirim; ctx itu
+// dibatalkan hanya oleh Cancel(runID).
 type Task func(ctx context.Context, runID string) (Summary, error)
 
 type job struct {
@@ -64,9 +70,10 @@ type Queue struct {
 	base context.Context
 	now  func() time.Time
 
-	mu    sync.RWMutex
-	runs  map[string]*Run
-	order []string
+	mu      sync.RWMutex
+	runs    map[string]*Run
+	order   []string
+	cancels map[string]context.CancelFunc // run berjalan → pembatal context-nya
 
 	wg        sync.WaitGroup
 	closeOnce sync.Once
@@ -78,10 +85,11 @@ func New(workers int) *Queue {
 		workers = 1
 	}
 	q := &Queue{
-		ch:   make(chan job, 256),
-		base: context.Background(),
-		now:  time.Now,
-		runs: map[string]*Run{},
+		ch:      make(chan job, 256),
+		base:    context.Background(),
+		now:     time.Now,
+		runs:    map[string]*Run{},
+		cancels: map[string]context.CancelFunc{},
 	}
 	q.wg.Add(workers)
 	for i := 0; i < workers; i++ {
@@ -93,22 +101,80 @@ func New(workers int) *Queue {
 func (q *Queue) worker() {
 	defer q.wg.Done()
 	for j := range q.ch {
-		q.update(j.id, func(r *Run) {
-			r.Status = Running
-			r.StartedAt = q.now().UTC()
-		})
-		sum, err := runTask(q.base, j)
-		q.update(j.id, func(r *Run) {
-			r.FinishedAt = q.now().UTC()
-			if err != nil {
-				r.Status = Failed
-				r.Err = err.Error()
-			} else {
-				r.Status = Done
-				r.Summary = sum
-			}
-		})
+		ctx, cancel := context.WithCancel(q.base)
+		if q.begin(j.id, cancel) {
+			sum, err := runTask(ctx, j)
+			q.finish(j.id, sum, err)
+		}
+		cancel()
 	}
+}
+
+// begin menandai run berjalan dan mendaftarkan pembatalnya. false = run sudah
+// dihentikan selagi antre, jadi tak dijalankan.
+func (q *Queue) begin(id string, cancel context.CancelFunc) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	r, ok := q.runs[id]
+	if !ok || r.Status != Queued {
+		return false
+	}
+	r.Status = Running
+	r.StartedAt = q.now().UTC()
+	q.cancels[id] = cancel
+	return true
+}
+
+// finish memfinalkan run. Galat setelah Stop diminta = Cancelled, bukan Failed;
+// task yang tetap tuntas walau Stop diminta tetap Done.
+func (q *Queue) finish(id string, sum Summary, err error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.cancels, id)
+	r, ok := q.runs[id]
+	if !ok {
+		return
+	}
+	r.FinishedAt = q.now().UTC()
+	r.Summary = sum
+	switch {
+	case err == nil:
+		r.Status = Done
+	case r.Stopping:
+		r.Status = Cancelled
+		r.Err = err.Error()
+	default:
+		r.Status = Failed
+		r.Err = err.Error()
+	}
+	r.Stopping = false
+}
+
+// Cancel menghentikan run. Run antre langsung Cancelled (tak pernah jalan); run
+// berjalan dibatalkan lewat context-nya (subprocess engine ikut dibunuh
+// exec.CommandContext) lalu difinalkan worker. true hanya bila panggilan INI
+// yang menghentikan; false untuk run tak dikenal, sudah selesai, atau sudah
+// sedang dihentikan (idempoten).
+func (q *Queue) Cancel(id string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	r, ok := q.runs[id]
+	if !ok {
+		return false
+	}
+	switch {
+	case r.Status == Queued:
+		r.Status = Cancelled
+		r.FinishedAt = q.now().UTC()
+		return true
+	case r.Status == Running && !r.Stopping:
+		r.Stopping = true
+		if cancel := q.cancels[id]; cancel != nil {
+			cancel()
+		}
+		return true
+	}
+	return false
 }
 
 // runTask menjalankan task dan memulihkan panik menjadi error.
@@ -167,14 +233,6 @@ func (q *Queue) List(program string) []*Run {
 func (q *Queue) Close() {
 	q.closeOnce.Do(func() { close(q.ch) })
 	q.wg.Wait()
-}
-
-func (q *Queue) update(id string, fn func(*Run)) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if r, ok := q.runs[id]; ok {
-		fn(r)
-	}
 }
 
 func (q *Queue) newID() string {
