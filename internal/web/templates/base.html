@@ -62,7 +62,7 @@
       </nav>
       <div class="sidebar-foot">
         <div class="pill st-confirmed small">scope guard aktif</div>
-        <div class="muted small">engine: mock (tanpa jaringan)</div>
+        <div class="muted small">{{engineLabel}}</div>
         <div class="muted small">BugHound {{appVersion}}</div>
         {{if .User}}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf" value="{{.Body.CSRF}}"><button type="submit" class="linklike">Keluar</button></form>{{end}}
       </div>

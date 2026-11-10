@@ -152,7 +152,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if version == "" {
 		version = "dev"
 	}
-	pages, err := parseTemplates(version)
+	pages, err := parseTemplates(version, engineLabel(cfg.Engines))
 	if err != nil {
 		return nil, err
 	}
@@ -2874,7 +2874,25 @@ func safeFilename(s string) string {
 	return b.String()
 }
 
-func parseTemplates(version string) (map[string]*template.Template, error) {
+// engineLabel adalah teks footer sidebar dari engine yang benar-benar
+// dikonfigurasi. Engine ProxyAware menyentuh jaringan (lewat proxy egress scope
+// guard), kriteria yang sama dengan orchestrator; tanpa satu pun berarti mock.
+func engineLabel(engines []engine.Engine) string {
+	names := make([]string, 0, len(engines))
+	network := false
+	for _, e := range engines {
+		names = append(names, e.Name())
+		if _, ok := e.(engine.ProxyAware); ok {
+			network = true
+		}
+	}
+	if !network {
+		return "engine: mock (tanpa jaringan)"
+	}
+	return "engine: nyata (" + strings.Join(names, ", ") + ")"
+}
+
+func parseTemplates(version, engineLbl string) (map[string]*template.Template, error) {
 	funcs := template.FuncMap{
 		"sevClass":    func(s finding.Severity) string { return "sev-" + strings.ToLower(string(s)) },
 		"statusClass": func(s finding.Status) string { return "st-" + strings.ToLower(string(s)) },
@@ -2889,7 +2907,8 @@ func parseTemplates(version string) (map[string]*template.Template, error) {
 			}
 			return false
 		},
-		"appVersion": func() string { return version },
+		"appVersion":  func() string { return version },
+		"engineLabel": func() string { return engineLbl },
 	}
 	sets := map[string][]string{
 		"dashboard":    {"templates/base.html", "templates/dashboard.html", "templates/scans_live.html"},
