@@ -231,7 +231,8 @@ func main() {
 		if len(engines) == 0 {
 			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap,retire,nuclei-dast,dalfox)", *engineMode)
 		}
-		log.Printf("engine: NYATA (%s + recon subfinder/httpx/katana) — egress lewat proxy scope guard · throttle per-engine aktif (laju dari rps scan, default %d/dtk)", strings.Join(names, ", "), engineRate(0))
+		// Rantai recon dari Name() pipeline agar log tak basi saat tahapnya berubah.
+		log.Printf("engine: NYATA (%s) + %s — egress HTTP lewat proxy scope guard; naabu (TCP langsung) hanya ke host in-scope · throttle per-engine aktif (laju dari rps scan, default %d/dtk)", strings.Join(names, ", "), rec.Name(), engineRate(0))
 		log.Printf("PERINGATAN: hanya scan target yang sah (in-scope / lab / izin eksplisit)")
 		for _, n := range names {
 			if n == "ffuf" && strings.TrimSpace(*ffufWordlist) == "" {
