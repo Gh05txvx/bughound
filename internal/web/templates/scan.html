@@ -7,7 +7,7 @@
     <label>Program</label>
     <input type="text" name="program" value="{{.Program}}" autocomplete="off" required>
 
-    <label>Seed domain untuk recon <span class="muted small">(opsional · subfinder→httpx→katana, mock — hasilnya tetap disaring scope guard)</span></label>
+    <label>Seed domain untuk recon <span class="muted small">(opsional · {{reconLabel}})</span></label>
     <textarea name="seeds" rows="2" spellcheck="false">{{.Seeds}}</textarea>
 
     <label>In-scope <span class="muted small">(satu entri per baris · domain, *.wildcard, URL, IP, CIDR)</span></label>

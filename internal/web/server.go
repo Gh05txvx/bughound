@@ -152,7 +152,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if version == "" {
 		version = "dev"
 	}
-	pages, err := parseTemplates(version, engineLabel(cfg.Engines))
+	pages, err := parseTemplates(version, engineLabel(cfg.Engines), reconLabel(cfg.Recon))
 	if err != nil {
 		return nil, err
 	}
@@ -2892,7 +2892,25 @@ func engineLabel(engines []engine.Engine) string {
 	return "engine: nyata (" + strings.Join(names, ", ") + ")"
 }
 
-func parseTemplates(version, engineLbl string) (map[string]*template.Template, error) {
+// reconLabel adalah keterangan kolom seed di form scan dari recon yang benar-benar
+// dikonfigurasi, dengan kriteria yang sama: recon ProxyAware menyentuh jaringan.
+// Rantai tool diambil dari Name() agar tak basi saat pipeline berubah.
+func reconLabel(rec recon.Engine) string {
+	if rec == nil {
+		return "recon tidak aktif di instance ini: seed diabaikan"
+	}
+	chain := rec.Name()
+	if i, j := strings.IndexByte(chain, '('), strings.LastIndexByte(chain, ')'); i >= 0 && j > i {
+		chain = chain[i+1 : j]
+	}
+	mode := "recon mock, tanpa jaringan"
+	if _, ok := rec.(engine.ProxyAware); ok {
+		mode = "recon nyata"
+	}
+	return mode + ": " + chain + " — hasilnya tetap disaring scope guard"
+}
+
+func parseTemplates(version, engineLbl, reconLbl string) (map[string]*template.Template, error) {
 	funcs := template.FuncMap{
 		"sevClass":    func(s finding.Severity) string { return "sev-" + strings.ToLower(string(s)) },
 		"statusClass": func(s finding.Status) string { return "st-" + strings.ToLower(string(s)) },
@@ -2909,6 +2927,7 @@ func parseTemplates(version, engineLbl string) (map[string]*template.Template, e
 		},
 		"appVersion":  func() string { return version },
 		"engineLabel": func() string { return engineLbl },
+		"reconLabel":  func() string { return reconLbl },
 	}
 	sets := map[string][]string{
 		"dashboard":    {"templates/base.html", "templates/dashboard.html", "templates/scans_live.html"},
