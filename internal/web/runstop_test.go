@@ -196,6 +196,66 @@ func TestRunStopFinishedIsNoop(t *testing.T) {
 	}
 }
 
+func TestRunDeleteFromDashboard(t *testing.T) {
+	srv, _, al := newStopServer(t, nuclei.Mock{})
+	id := startScan(t, srv)
+	waitStatus(t, srv, id, jobs.Done)
+
+	delBtn := `hx-post="/runs/` + id + `/delete?view=dashboard"`
+	if panel := do(t, srv, "GET", "/dashboard/scans", nil).Body.String(); !strings.Contains(panel, delBtn) {
+		t.Fatalf("run selesai harus punya tombol Hapus:\n%s", panel)
+	}
+
+	rec := do(t, srv, "POST", "/runs/"+id+"/delete?view=dashboard", url.Values{})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="live-scans"`) {
+		t.Fatalf("hapus harus membalas panel: %d\n%s", rec.Code, rec.Body.String())
+	}
+	if _, ok := srv.queue.Get(id); ok {
+		t.Error("run yang dihapus tak boleh lagi ada di queue")
+	}
+	if strings.Contains(rec.Body.String(), id) {
+		t.Error("panel tak boleh lagi menampilkan run yang dihapus")
+	}
+	if _, ok := srv.specFor(id); ok {
+		t.Error("spec run-ulang harus ikut dibuang")
+	}
+	if ev := auditOf(t, al, "run.delete"); len(ev) != 1 || !ev[0].Allowed || ev[0].RunID != id {
+		t.Errorf("hapus harus diaudit untuk run itu: %+v", ev)
+	}
+	// Hapus run yang sudah hilang = tetap 200, tak diaudit ulang.
+	if rec := do(t, srv, "POST", "/runs/"+id+"/delete?view=dashboard", url.Values{}); rec.Code != http.StatusOK {
+		t.Errorf("hapus run yang sudah hilang = %d, ingin 200", rec.Code)
+	}
+	if n := len(auditOf(t, al, "run.delete")); n != 1 {
+		t.Errorf("run.delete tercatat %d kali, ingin 1", n)
+	}
+}
+
+func TestRunDeleteActiveRefused(t *testing.T) {
+	eng := newBlockEngine()
+	srv, _, al := newStopServer(t, eng)
+	id := startScan(t, srv)
+	waitStarted(t, eng)
+
+	// Run berjalan: tak ada tombol Hapus, dan POST ditolak dengan pesan.
+	if panel := do(t, srv, "GET", "/dashboard/scans", nil).Body.String(); strings.Contains(panel, "/delete?view=dashboard") {
+		t.Error("run berjalan tak boleh punya tombol Hapus")
+	}
+	rec := do(t, srv, "POST", "/runs/"+id+"/delete?view=dashboard", url.Values{})
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Hentikan dulu") {
+		t.Fatalf("hapus run berjalan harus ditolak dgn pesan:\n%s", rec.Body.String())
+	}
+	if _, ok := srv.queue.Get(id); !ok {
+		t.Error("run berjalan harus tetap ada")
+	}
+	if n := len(auditOf(t, al, "run.delete")); n != 0 {
+		t.Errorf("hapus yang ditolak tak boleh diaudit, ada %d", n)
+	}
+	// Bereskan agar Close() di cleanup tak menggantung menunggu engine.
+	do(t, srv, "POST", "/runs/"+id+"/stop", url.Values{})
+	waitStatus(t, srv, id, jobs.Cancelled)
+}
+
 func TestRunRerunUsesCurrentScope(t *testing.T) {
 	srv, st, al := newStopServer(t, nuclei.Mock{})
 	id := startScan(t, srv)
@@ -251,16 +311,16 @@ func TestRunControlsRBAC(t *testing.T) {
 	waitStatus(t, srv, id, jobs.Done)
 
 	vc, vsess := loginAs(t, srv, "view", "viewpw")
-	for _, path := range []string{"/runs/" + id + "/stop", "/runs/" + id + "/rerun"} {
+	for _, path := range []string{"/runs/" + id + "/stop", "/runs/" + id + "/rerun", "/runs/" + id + "/delete"} {
 		if rec := authedReq(srv, "POST", path, url.Values{}, vc, vsess); rec.Code != http.StatusForbidden {
 			t.Errorf("viewer POST %s = %d, ingin 403", path, rec.Code)
 		}
 	}
-	if b := authedReq(srv, "GET", "/dashboard/scans", nil, vc, vsess).Body.String(); strings.Contains(b, "/rerun") || strings.Contains(b, "/stop") {
-		t.Error("panel viewer tak boleh memuat tombol Stop/Run ulang")
+	if b := authedReq(srv, "GET", "/dashboard/scans", nil, vc, vsess).Body.String(); strings.Contains(b, "/rerun") || strings.Contains(b, "/stop") || strings.Contains(b, "/delete") {
+		t.Error("panel viewer tak boleh memuat tombol Stop/Run ulang/Hapus")
 	}
-	if b := authedReq(srv, "GET", "/dashboard/scans", nil, oc, osess).Body.String(); !strings.Contains(b, "/runs/"+id+"/rerun") {
-		t.Error("panel operator harus memuat tombol Run ulang")
+	if b := authedReq(srv, "GET", "/dashboard/scans", nil, oc, osess).Body.String(); !strings.Contains(b, "/runs/"+id+"/rerun") || !strings.Contains(b, "/runs/"+id+"/delete") {
+		t.Error("panel operator harus memuat tombol Run ulang & Hapus")
 	}
 	if rec := authedReq(srv, "POST", "/runs/"+id+"/rerun?view=dashboard", url.Values{}, oc, osess); rec.Code != http.StatusOK {
 		t.Errorf("operator run ulang = %d, ingin 200", rec.Code)

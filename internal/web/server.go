@@ -718,6 +718,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /runs/{id}", s.handleRunStatus)
 	s.mux.HandleFunc("POST /runs/{id}/stop", s.handleRunStop)
 	s.mux.HandleFunc("POST /runs/{id}/rerun", s.handleRunRerun)
+	s.mux.HandleFunc("POST /runs/{id}/delete", s.handleRunDelete)
 	s.mux.HandleFunc("GET /findings", s.handleFindings)
 	s.mux.HandleFunc("POST /findings/bulk", s.handleBulkTriage)
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
@@ -946,6 +947,23 @@ func (s *Server) specFor(runID string) (scanSpec, bool) {
 	return sp, ok
 }
 
+// forgetSpec membuang spec run-ulang yang tersimpan untuk sebuah run (dipakai
+// saat run dihapus dari monitor agar tak menyisakan parameter yatim).
+func (s *Server) forgetSpec(runID string) {
+	s.specMu.Lock()
+	defer s.specMu.Unlock()
+	if _, ok := s.specs[runID]; !ok {
+		return
+	}
+	delete(s.specs, runID)
+	for i, id := range s.specOrder {
+		if id == runID {
+			s.specOrder = append(s.specOrder[:i], s.specOrder[i+1:]...)
+			break
+		}
+	}
+}
+
 // enqueueScan menjalankan satu scan di latar belakang (worker pool) dan
 // mengembalikan run id seketika. Satu jalur peluncuran scan dipakai bersama oleh
 // form Scan, "promote" dari Capture, dan Run ulang. Task memakai ctx milik queue
@@ -1097,6 +1115,31 @@ func (s *Server) handleRunRerun(w http.ResponseWriter, r *http.Request) {
 	newID := s.enqueueScan(run.Program, guard, sp)
 	s.auditAppend(r.Context(), audit.Event{Kind: "run.rerun", Program: run.Program, RunID: newID, Allowed: true,
 		Message: fmt.Sprintf("%s menjalankan ulang %s", me, id)})
+	s.renderScansLive(w, r, "")
+}
+
+// handleRunDelete membuang satu run yang SUDAH BERAKHIR dari panel Proses
+// scanning (riwayat in-memory queue + spec run-ulang). HANYA membersihkan entri
+// pemantauan — temuan yang sudah tersimpan di store TIDAK ikut terhapus (itu
+// lewat Dashboard ▸ hapus temuan). Run aktif harus di-Stop dulu agar engine tak
+// jadi yatim. operator+ & CSRF lewat middleware. Membalas panel Proses scanning.
+func (s *Server) handleRunDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	run, ok := s.queue.Get(id)
+	if !ok {
+		s.renderScansLive(w, r, "Run tidak ditemukan; mungkin sudah dihapus atau hilang saat server di-restart.")
+		return
+	}
+	if run.Status == jobs.Queued || run.Status == jobs.Running {
+		s.renderScansLive(w, r, "Run masih berjalan. Hentikan dulu (Stop), lalu hapus dari daftar.")
+		return
+	}
+	if s.queue.Remove(id) {
+		s.forgetSpec(id)
+		me, _ := s.currentUser(r)
+		s.auditAppend(r.Context(), audit.Event{Kind: "run.delete", Program: run.Program, RunID: id, Allowed: true,
+			Message: fmt.Sprintf("%s menghapus entri run (%s) dari monitor; temuan tetap", me, run.Status)})
+	}
 	s.renderScansLive(w, r, "")
 }
 

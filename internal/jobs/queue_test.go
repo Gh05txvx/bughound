@@ -188,6 +188,51 @@ func TestQueueCancelNoop(t *testing.T) {
 	}
 }
 
+func TestQueueRemove(t *testing.T) {
+	q := New(1)
+	id := q.Enqueue("demo", "x", okTask)
+	q.Close() // run selesai (Done)
+
+	if q.Remove("tidak-ada") {
+		t.Error("Remove id asing harus false")
+	}
+	if !q.Remove(id) {
+		t.Fatal("Remove run selesai harus true")
+	}
+	if _, ok := q.Get(id); ok {
+		t.Error("run yang dihapus tak boleh lagi ada")
+	}
+	if n := len(q.List("")); n != 0 {
+		t.Errorf("daftar harus kosong setelah hapus, ada %d", n)
+	}
+	if q.Remove(id) {
+		t.Error("Remove kedua harus false (sudah hilang)")
+	}
+}
+
+func TestQueueRemoveActiveRefused(t *testing.T) {
+	q := New(1)
+	started := make(chan struct{})
+	id := q.Enqueue("demo", "x", blockingTask(started))
+	<-started
+
+	if q.Remove(id) {
+		t.Error("Remove run berjalan harus false (hentikan dulu)")
+	}
+	if _, ok := q.Get(id); !ok {
+		t.Error("run berjalan harus tetap terlacak")
+	}
+	q.Cancel(id)
+	q.Close()
+	// Setelah dihentikan (Cancelled) baru boleh dihapus.
+	if run, _ := q.Get(id); run.Status != Cancelled {
+		t.Fatalf("status=%s, ingin cancelled", run.Status)
+	}
+	if !q.Remove(id) {
+		t.Error("Remove run yang sudah dihentikan harus true")
+	}
+}
+
 func TestQueueStopTooLateStaysDone(t *testing.T) {
 	q := New(1)
 	started := make(chan struct{})

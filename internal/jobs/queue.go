@@ -177,6 +177,28 @@ func (q *Queue) Cancel(id string) bool {
 	return false
 }
 
+// Remove membuang run yang SUDAH BERAKHIR (done/failed/cancelled) dari riwayat
+// in-memory (panel Proses scanning). Run antre/berjalan TAK bisa dihapus — Stop
+// dulu — agar worker & subprocess engine tak jadi yatim (invarian: hanya run
+// non-aktif yang hilang dari pelacakan). false = run tak dikenal atau masih aktif.
+// Tak menyentuh store/temuan/audit; murni housekeeping daftar pemantauan.
+func (q *Queue) Remove(id string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	r, ok := q.runs[id]
+	if !ok || r.Status == Queued || r.Status == Running {
+		return false
+	}
+	delete(q.runs, id)
+	for i, oid := range q.order {
+		if oid == id {
+			q.order = append(q.order[:i], q.order[i+1:]...)
+			break
+		}
+	}
+	return true
+}
+
 // runTask menjalankan task dan memulihkan panik menjadi error.
 func runTask(ctx context.Context, j job) (sum Summary, err error) {
 	defer func() {

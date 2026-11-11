@@ -52,6 +52,9 @@
             hx-post="/runs/{{.ID}}/rerun?view=dashboard" hx-target="#live-scans" hx-swap="outerHTML" hx-disabled-elt="this"
             hx-confirm="Jalankan ulang scan {{.Program}} dengan parameter yang sama? Scope dinilai ulang dari definisi program saat ini.">Run ulang</button>{{end}}
           {{if or .Done (and .Cancelled .Saved)}}<a class="btn ghost small" href="/findings?program={{.Program}}">findings</a>{{end}}
+          {{if and $.CanControl (not .Active)}}<button type="button" class="btn ghost small danger" title="Hapus entri scan ini dari daftar (temuan tetap)"
+            hx-post="/runs/{{.ID}}/delete?view=dashboard" hx-target="#live-scans" hx-swap="outerHTML" hx-disabled-elt="this"
+            hx-confirm="Hapus entri scan {{.Program}} dari daftar Proses scanning? Ini hanya membersihkan monitor — temuan yang sudah tersimpan TIDAK ikut terhapus.">Hapus</button>{{end}}
         </td>
       </tr>
       {{end}}

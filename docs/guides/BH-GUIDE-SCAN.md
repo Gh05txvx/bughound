@@ -148,11 +148,12 @@ Report generator menyusun **draft** dari temuan terkonfirmasi; export format **H
 
 Form `/grpc`: `program`, `targets`, checkbox `fuzz`. Engine nyata `grpcurl` (startup `-grpc real`, `-grpc-plaintext` untuk tanpa TLS). Enumerasi service/method via reflection.
 
-### 2.11 Stop & Run ulang
+### 2.11 Stop, Run ulang & Hapus
 
 - **Stop** (Dashboard ▸ Proses scanning, atau status run di `/scan`) menghentikan satu run: engine yang sedang jalan dibunuh, run lain tak terganggu. Temuan yang sudah tersimpan tetap ada.
 - **Run ulang** menjalankan lagi run yang sudah berakhir dengan parameter yang sama. Scope dinilai ulang dari definisi program **saat ini**.
-- Keduanya butuh peran operator/admin dan tercatat di audit (`run.stop`, `run.rerun`). Riwayat run disimpan di memori, jadi hilang saat server di-restart.
+- **Hapus** membuang satu entri run yang **sudah berakhir** (selesai/gagal/dihentikan) dari daftar Proses scanning. Ini **hanya** membersihkan monitor — **temuan yang sudah tersimpan TIDAK ikut terhapus** (untuk hapus temuan: Dashboard ▸ hapus temuan program). Run yang masih berjalan tak bisa dihapus; **Stop dulu**, baru Hapus. Berguna saat entri scan lama masih nyangkut di daftar walau programnya sudah dibersihkan.
+- Ketiganya butuh peran operator/admin dan tercatat di audit (`run.stop`, `run.rerun`, `run.delete`). Riwayat run disimpan di memori, jadi hilang saat server di-restart.
 
 ---
 
