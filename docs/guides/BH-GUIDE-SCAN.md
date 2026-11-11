@@ -135,6 +135,15 @@ Report generator menyusun **draft** dari temuan terkonfirmasi; export format **H
 - API baca-saja `GET /api/v1/findings` (reuse HTTP Basic) — tarik temuan ke tooling.
 - Extension Montoya (`burp-ext/`) — muat temuan + **Send-to-Repeater** untuk verifikasi manual. Halaman onboarding di `/burp`.
 
+**Setia vs fallback.** Hanya temuan engine **aktif** (`nuclei-dast`, `dalfox`) yang membawa `evidence.request` (request mentah; header sensitif → `[REDACTED]`); extension mengirimnya utuh (method/path/body) ke Repeater. Temuan **pasif** (ZAP/ffuf/retire) tak punya request mentah → fallback **`GET` polos** dari `location.url`. Karena itu validasi IDOR/BAC tetap manual di Burp.
+
+**Uji handoff (end-to-end):**
+
+1. Scan target **ber-parameter** dengan roster memuat `dalfox`/`nuclei-dast` — mis. lab `http://<ip-lab>/greet?name=hunter` (XSS refleksi) dan `/search?q=hound` (SQLi error). `in_scope` memuat IP/CIDR lab.
+2. Di `/findings`: pastikan temuan XSS (`dalfox`) / SQLi (`nuclei-dast`) punya **request mentah** — tombol **Salin request** muncul = `evidence.request` terisi.
+3. Extension Burp: isi URL/user/pass + nama program → **Muat temuan** → pilih temuan **aktif** → **Kirim ke Repeater**.
+4. Verifikasi di Repeater: request **setia** (bukan `GET /` polos), host/port benar, header sensitif `[REDACTED]`. Pembanding: pilih temuan **pasif** → muncul `GET` polos.
+
 ### 2.10 gRPC (opsional)
 
 Form `/grpc`: `program`, `targets`, checkbox `fuzz`. Engine nyata `grpcurl` (startup `-grpc real`, `-grpc-plaintext` untuk tanpa TLS). Enumerasi service/method via reflection.
