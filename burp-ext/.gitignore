@@ -1,5 +1,8 @@
 # Artefak build Gradle — jangan di-commit.
 .gradle/
 build/
-# Wrapper jar (binary) tidak di-commit; buat dengan `gradle wrapper`.
-gradle/wrapper/gradle-wrapper.jar
+# Wrapper Gradle dibuat lokal dengan `gradle wrapper` dan tidak di-commit
+# (jar-nya biner; skrip & properties tak berguna tanpa jar itu).
+/gradle/wrapper/
+/gradlew
+/gradlew.bat
