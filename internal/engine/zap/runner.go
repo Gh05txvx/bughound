@@ -14,16 +14,19 @@ import (
 	"bughound/internal/finding"
 )
 
-// Runner adalah engine ZAP NYATA. Dua mode:
-//   - "quick"/"baseline" (default): quickscan `zap.sh -cmd -quickurl` (spider +
-//     pasif), cepat & ringan.
-//   - "full": Automation Framework (`-autorun plan.yaml`) dengan spider +
-//     activeScan + laporan JSON — cakupan lebih dalam (aktif menyerang), lebih lama.
+// Runner adalah engine ZAP NYATA. Dua mode, KEDUANYA lewat ZAP Automation
+// Framework (plan YAML → laporan traditional-json):
+//   - "quick"/"baseline" (default): spider + PASSIVE scan, TANPA active scan.
+//     Tidak mengirim payload serangan (setara zap-baseline): hanya aturan pasif
+//     (header hilang, versi/informasi bocor, berkas tersingkap). Aman & ringan.
+//   - "full": spider + ACTIVE scan (mengirim payload: SQLi/XSS/dst.) + laporan.
+//     Cakupan lebih dalam, lebih lama, dan AKTIF MENYERANG — hanya saat
+//     startup `-zap-mode full`.
 //
 // Bukan default; butuh OWASP ZAP terpasang. Bila UseProxy diset, koneksi ZAP
 // diarahkan ke proxy egress bughound lewat config upstream proxy (scope guard
-// per koneksi). Invokasi ZAP berat (JVM) & belum dijalankan di lingkungan ini;
-// args/plan & Parse diuji, eksekusi nyata dipakai sadar untuk target sah.
+// per koneksi). Invokasi ZAP berat (JVM); args/plan & Parse diuji, eksekusi nyata
+// dipakai sadar untuk target sah.
 type Runner struct {
 	Binary    string // default "zap.sh"
 	Mode      string // "quick" (default) | "baseline" | "full"
@@ -48,37 +51,24 @@ func (r *Runner) mode() string {
 	}
 }
 
+// active menandai mode yang mengirim payload serangan (active scan). HANYA "full".
+// quick/baseline sengaja pasif agar default aman untuk target bug bounty.
+func (r *Runner) active() bool { return r.mode() == "full" }
+
 // Scan memenuhi engine.Engine.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
 	bin := r.Binary
 	if bin == "" {
 		bin = "zap.sh"
 	}
-	if r.mode() == "full" {
-		return r.scanFull(ctx, bin, target, program, runID)
-	}
-	return r.scanQuick(ctx, bin, target, program, runID)
+	return r.scanPlan(ctx, bin, target, program, runID, r.active())
 }
 
-// scanQuick: quickscan menulis laporan JSON ke berkas, lalu Parse.
-func (r *Runner) scanQuick(ctx context.Context, bin, target, program, runID string) ([]*finding.Finding, error) {
-	tmp, err := os.CreateTemp("", "zap-*.json")
-	if err != nil {
-		return nil, fmt.Errorf("zap: berkas sementara: %w", err)
-	}
-	out := tmp.Name()
-	tmp.Close()
-	defer os.Remove(out)
-
-	if err := r.run(ctx, bin, r.buildArgs(target, out)); err != nil {
-		return nil, err
-	}
-	return readReport(out, program, runID)
-}
-
-// scanFull: Automation Framework (spider + activeScan + report JSON), lalu Parse.
-func (r *Runner) scanFull(ctx context.Context, bin, target, program, runID string) ([]*finding.Finding, error) {
-	dir, err := os.MkdirTemp("", "zap-full-*")
+// scanPlan menulis plan Automation Framework (spider + passive, atau + active bila
+// full), menjalankan ZAP, lalu Parse laporan JSON. active=false TAK mengirim
+// payload serangan apa pun.
+func (r *Runner) scanPlan(ctx context.Context, bin, target, program, runID string, active bool) ([]*finding.Finding, error) {
+	dir, err := os.MkdirTemp("", "zap-*")
 	if err != nil {
 		return nil, fmt.Errorf("zap: dir sementara: %w", err)
 	}
@@ -86,10 +76,10 @@ func (r *Runner) scanFull(ctx context.Context, bin, target, program, runID strin
 
 	const reportFile = "report.json"
 	planPath := filepath.Join(dir, "plan.yaml")
-	if err := os.WriteFile(planPath, []byte(planYAML(target, dir, reportFile)), 0o600); err != nil {
+	if err := os.WriteFile(planPath, []byte(planYAML(target, dir, reportFile, active)), 0o600); err != nil {
 		return nil, fmt.Errorf("zap: tulis plan: %w", err)
 	}
-	if err := r.run(ctx, bin, r.buildFullArgs(planPath)); err != nil {
+	if err := r.run(ctx, bin, r.buildPlanArgs(planPath)); err != nil {
 		return nil, err
 	}
 	return readReport(filepath.Join(dir, reportFile), program, runID)
@@ -113,21 +103,15 @@ func readReport(path, program, runID string) ([]*finding.Finding, error) {
 	return Parse(bytes.NewReader(data), program, runID)
 }
 
-func (r *Runner) buildArgs(target, out string) []string {
-	args := []string{"-cmd", "-quickurl", target, "-quickout", out, "-quickprogress"}
-	args = append(args, r.proxyConfigArgs()...)
-	return append(args, r.throttleArgs()...)
-}
-
-func (r *Runner) buildFullArgs(planPath string) []string {
+func (r *Runner) buildPlanArgs(planPath string) []string {
 	args := append([]string{"-cmd", "-autorun", planPath}, r.proxyConfigArgs()...)
 	return append(args, r.throttleArgs()...)
 }
 
-// throttleArgs menjepit keagresifan ZAP ke target (RateLimit req/dtk): satu
-// thread per host + jeda antar-request ~1000/rate ms pada active scanner. Mode
-// quick (spider + pasif) sudah ringan; jeda ini terutama meredam active scan
-// (mode full) agar scan tidak membanjiri/menumbangkan target.
+// throttleArgs menjepit keagresifan active scanner ZAP ke target (RateLimit
+// req/dtk): satu thread per host + jeda antar-request ~1000/rate ms. Hanya
+// berpengaruh pada mode full (active scan); di quick/baseline (pasif) ini no-op —
+// laju request pasif tetap dijepit oleh rate limiter di proxy egress bughound.
 func (r *Runner) throttleArgs() []string {
 	if r.RateLimit <= 0 {
 		return nil
@@ -158,21 +142,27 @@ func (r *Runner) proxyConfigArgs() []string {
 	}
 }
 
-// Batas waktu plan full (menit). Active scan tanpa batas bisa berjalan berjam-jam
-// dan membanjiri target — terutama di SPA catch-all yang permukaan spider-nya
-// hampir tak-hingga. Batas ini menjaga scan tetap tuntas & tak menumbangkan
-// target; throttle per-request (throttleArgs) tetap di jalur terpisah.
+// Batas waktu plan (menit). Active scan tanpa batas bisa berjalan berjam-jam dan
+// membanjiri target — terutama di SPA catch-all yang permukaan spider-nya hampir
+// tak-hingga. Batas ini menjaga scan tetap tuntas & tak menumbangkan target;
+// throttle per-request (throttleArgs) tetap di jalur terpisah.
 const (
-	spiderMaxDurationMin = 3  // spider berhenti setelah 3 menit
-	ascanMaxDurationMin  = 10 // total active scan maksimal 10 menit
-	ascanMaxRuleDurMin   = 2  // tiap rule active scan maksimal 2 menit
+	spiderMaxDurationMin      = 3  // spider berhenti setelah 3 menit
+	passiveWaitMaxDurationMin = 5  // tunggu antrean passive scan kosong maksimal 5 menit
+	ascanMaxDurationMin       = 10 // total active scan maksimal 10 menit (mode full)
+	ascanMaxRuleDurMin        = 2  // tiap rule active scan maksimal 2 menit (mode full)
 )
 
-// planYAML menyusun rencana ZAP Automation Framework: spider → activeScan →
-// laporan traditional-json. Spider & activeScan dibatasi durasinya (lihat konstanta
-// di atas) agar tuntas di host kecil dan tak membanjiri target.
-func planYAML(target, reportDir, reportFile string) string {
-	return "" +
+// planYAML menyusun rencana ZAP Automation Framework. Selalu: spider → (job scan) →
+// laporan traditional-json. Job scan tergantung active:
+//   - active=false (quick/baseline): passiveScan-wait — tunggu aturan PASIF tuntas,
+//     tanpa mengirim satu pun payload serangan.
+//   - active=true (full): activeScan — kirim payload (SQLi/XSS/dst.).
+//
+// Spider & activeScan dibatasi durasinya (lihat konstanta) agar tuntas di host
+// kecil dan tak membanjiri target.
+func planYAML(target, reportDir, reportFile string, active bool) string {
+	plan := "" +
 		"env:\n" +
 		"  contexts:\n" +
 		"    - name: bughound\n" +
@@ -184,12 +174,21 @@ func planYAML(target, reportDir, reportFile string) string {
 		"    parameters:\n" +
 		"      context: bughound\n" +
 		"      url: \"" + target + "\"\n" +
-		"      maxDuration: " + strconv.Itoa(spiderMaxDurationMin) + "\n" +
-		"  - type: activeScan\n" +
-		"    parameters:\n" +
-		"      context: bughound\n" +
-		"      maxScanDurationInMins: " + strconv.Itoa(ascanMaxDurationMin) + "\n" +
-		"      maxRuleDurationInMins: " + strconv.Itoa(ascanMaxRuleDurMin) + "\n" +
+		"      maxDuration: " + strconv.Itoa(spiderMaxDurationMin) + "\n"
+	if active {
+		plan += "" +
+			"  - type: activeScan\n" +
+			"    parameters:\n" +
+			"      context: bughound\n" +
+			"      maxScanDurationInMins: " + strconv.Itoa(ascanMaxDurationMin) + "\n" +
+			"      maxRuleDurationInMins: " + strconv.Itoa(ascanMaxRuleDurMin) + "\n"
+	} else {
+		plan += "" +
+			"  - type: passiveScan-wait\n" +
+			"    parameters:\n" +
+			"      maxDuration: " + strconv.Itoa(passiveWaitMaxDurationMin) + "\n"
+	}
+	return plan + "" +
 		"  - type: report\n" +
 		"    parameters:\n" +
 		"      template: traditional-json\n" +

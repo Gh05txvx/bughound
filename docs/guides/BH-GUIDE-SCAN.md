@@ -72,7 +72,7 @@ Roster engine ditetapkan **saat startup** lewat flag `-engine` (daftar dipisah k
 | --- | --- | --- | --- |
 | `nuclei` | Template matcher (exposures, misconfig, CVE server-side, header hilang) | `targets`/`seeds` (URL/host) | Disaring oleh `tags` + `severity`. |
 | `ffuf` | Content discovery (brute path) | base URL di `targets` | Centang **api_routes** → wordlist Assetnote `apiroutes` (bagus untuk `/api`, `/openapi.json`). Kalibrasi dinding 401/403/500. |
-| `zap` | Spider + aturan ZAP | base URL | **`quick`/`baseline` = PASIF saja** (header, info leak). **Aktif (inject) hanya bila startup `-zap-mode full`.** |
+| `zap` | Spider + aturan ZAP | base URL | **`quick`/`baseline` = spider + passive scan** (header, versi/info bocor, berkas tersingkap — **TANPA kirim payload serangan**). **Active scan (inject) hanya bila startup `-zap-mode full`.** |
 | `nuclei-dast` | **DAST aktif**: crawl katana → fuzz parameter (SQLi/injeksi) | URL **ber-parameter** (`/search?q=`) atau hasil crawl | Non-destruktif + throttle. Temuan = kandidat draft→verify. |
 | `dalfox` | **DAST aktif khusus XSS** | URL **ber-parameter** (`/greet?name=`) | Normalkan PoC → temuan. |
 | `retire` | SCA library JS klien (CVE sisi-klien) | halaman yang memuat JS | **Opt-in**: image harus di-build `WITH_RETIRE=true` + `retire` ada di roster. |
@@ -135,14 +135,14 @@ Report generator menyusun **draft** dari temuan terkonfirmasi; export format **H
 - API baca-saja `GET /api/v1/findings` (reuse HTTP Basic) — tarik temuan ke tooling.
 - Extension Montoya (`burp-ext/`) — muat temuan + **Send-to-Repeater** untuk verifikasi manual. Halaman onboarding di `/burp`.
 
-**Setia vs fallback.** Hanya temuan engine **aktif** (`nuclei-dast`, `dalfox`) yang membawa `evidence.request` (request mentah; header sensitif → `[REDACTED]`); extension mengirimnya utuh (method/path/body) ke Repeater. Temuan **pasif** (ZAP/ffuf/retire) tak punya request mentah → fallback **`GET` polos** dari `location.url`. Karena itu validasi IDOR/BAC tetap manual di Burp.
+**Setia vs fallback.** Temuan dari `nuclei` (termasuk mode DAST) dan `dalfox` membawa `evidence.request` (request mentah; header sensitif → `[REDACTED]`); extension mengirimnya utuh (method/path/body — termasuk `OPTIONS`/`POST`) ke Repeater. Temuan tanpa request mentah (`zap`, `ffuf`, `retire`) → fallback **`GET` polos** dari `location.url` (payload ZAP tetap ada di URL temuan, jadi masih reproduktif minus header). Karena itu validasi IDOR/BAC tetap manual di Burp.
 
 **Uji handoff (end-to-end):**
 
-1. Scan target **ber-parameter** dengan roster memuat `dalfox`/`nuclei-dast` — mis. lab `http://<ip-lab>/greet?name=hunter` (XSS refleksi) dan `/search?q=hound` (SQLi error). `in_scope` memuat IP/CIDR lab.
-2. Di `/findings`: pastikan temuan XSS (`dalfox`) / SQLi (`nuclei-dast`) punya **request mentah** — tombol **Salin request** muncul = `evidence.request` terisi.
-3. Extension Burp: isi URL/user/pass + nama program → **Muat temuan** → pilih temuan **aktif** → **Kirim ke Repeater**.
-4. Verifikasi di Repeater: request **setia** (bukan `GET /` polos), host/port benar, header sensitif `[REDACTED]`. Pembanding: pilih temuan **pasif** → muncul `GET` polos.
+1. Scan target **ber-parameter** dengan roster memuat `dalfox` + `nuclei-dast` — mis. lab `http://<ip-lab>/greet?name=hunter` (XSS refleksi) dan `/search?q=hound`. `in_scope` memuat IP/CIDR lab. (ZAP `quick` pasif **tak** meng-inject; untuk SQLi andalkan `nuclei-dast`, atau tambah `-zap-mode full`.)
+2. Di `/findings/{id}`: temuan `nuclei`/`dalfox` punya **request mentah** — tombol **Salin request** muncul = `evidence.request` terisi.
+3. Extension Burp: isi URL/user/pass + nama program → **Muat temuan** → pilih temuan `nuclei`/`dalfox` → **Kirim ke Repeater**.
+4. Verifikasi di Repeater: request **setia** (bukan `GET /` polos), host/port benar, header sensitif `[REDACTED]`. Pembanding: pilih temuan `zap`/`ffuf` → muncul `GET` polos ke `location.url`.
 
 ### 2.10 gRPC (opsional)
 

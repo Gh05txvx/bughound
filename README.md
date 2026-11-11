@@ -198,7 +198,7 @@ Buka <http://127.0.0.1:8787> → **login dulu** (lihat [Login dan peran](#login-
 | `-key` | — | Path kunci master enkripsi secret (atau env `BUGHOUND_MASTER_KEY`); `-rotate-key` merotasinya. |
 | `-sast-root` | — | Root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini (path scope, default-deny). |
 | `-ffuf-wordlist` | bawaan | Wordlist untuk engine ffuf nyata. |
-| `-zap-mode` | `quick` | Mode ZAP nyata: `quick` · `baseline` · `full` (spider + active scan via Automation Framework). |
+| `-zap-mode` | `quick` | Mode ZAP nyata: `quick`/`baseline` (spider + passive, tanpa serangan) · `full` (+ active scan via Automation Framework). |
 | `-grpc` | `mock` | Engine enumerasi gRPC: `mock` · `real` (grpcurl). `-grpc-plaintext` untuk gRPC tanpa TLS. |
 | `-nuclei-templates` / `-custom-templates` | auto | Dir template untuk Bank Payload (`BH-SPEC-PAYLOAD`); kosong = auto-deteksi. |
 | `-version` | — | Cetak versi build lalu keluar. |

@@ -54,7 +54,7 @@ func main() {
 	rotateKey := flag.Bool("rotate-key", false, "rotasi kunci master: re-enkripsi semua secret ke kunci baru lalu keluar")
 	sastRoot := flag.String("sast-root", "", "root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini")
 	ffufWordlist := flag.String("ffuf-wordlist", "", "path wordlist untuk engine ffuf nyata (kosong = wordlist bawaan)")
-	zapMode := flag.String("zap-mode", "quick", "mode engine ZAP nyata: quick | baseline | full (full = spider + active scan)")
+	zapMode := flag.String("zap-mode", "quick", "mode engine ZAP nyata: quick|baseline (spider + passive, TANPA serangan) | full (+ active scan)")
 	grpcMode := flag.String("grpc", "mock", "engine enumerasi gRPC: mock | real (grpcurl, butuh binary)")
 	grpcPlaintext := flag.Bool("grpc-plaintext", false, "gRPC tanpa TLS (-plaintext) untuk engine gRPC nyata")
 	nucleiTemplates := flag.String("nuclei-templates", "", "dir nuclei-templates untuk Bank Payload (kosong = auto: env NUCLEI_TEMPLATES_DIR / $HOME/nuclei-templates)")
@@ -239,7 +239,12 @@ func main() {
 				log.Printf("ffuf: -ffuf-wordlist kosong, memakai wordlist bawaan")
 			}
 			if n == "zap" {
-				log.Printf("zap: mode %q", strings.ToLower(strings.TrimSpace(*zapMode)))
+				m := strings.ToLower(strings.TrimSpace(*zapMode))
+				if m == "full" {
+					log.Printf("zap: mode %q — spider + ACTIVE scan (mengirim payload serangan)", m)
+				} else {
+					log.Printf("zap: mode %q — spider + passive scan (tanpa serangan; pakai -zap-mode full untuk active)", m)
+				}
 			}
 		}
 	}

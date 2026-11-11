@@ -60,8 +60,8 @@ func TestParseSample(t *testing.T) {
 
 func TestRunnerArgs(t *testing.T) {
 	r := &Runner{}
-	plain := strings.Join(r.buildArgs("https://demo.test", "/tmp/o.json"), " ")
-	for _, want := range []string{"-cmd", "-quickurl https://demo.test", "-quickout /tmp/o.json"} {
+	plain := strings.Join(r.buildPlanArgs("/tmp/plan.yaml"), " ")
+	for _, want := range []string{"-cmd", "-autorun /tmp/plan.yaml"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("args harus memuat %q; dapat %q", want, plain)
 		}
@@ -71,7 +71,7 @@ func TestRunnerArgs(t *testing.T) {
 	}
 
 	r.UseProxy("127.0.0.1:9000")
-	withProxy := strings.Join(r.buildArgs("https://demo.test", "o"), " ")
+	withProxy := strings.Join(r.buildPlanArgs("/tmp/plan.yaml"), " ")
 	for _, want := range []string{
 		"network.connection.httpProxy.host=127.0.0.1",
 		"network.connection.httpProxy.port=9000",
@@ -84,47 +84,62 @@ func TestRunnerArgs(t *testing.T) {
 }
 
 // throttleArgs: tanpa RateLimit tak ada jeda; dengan RateLimit=20 → 1 thread per
-// host + jeda 1000/20=50ms, berlaku di mode quick maupun full (active scan).
+// host + jeda 1000/20=50ms (berpengaruh pada active scan mode full).
 func TestRunnerThrottle(t *testing.T) {
-	if plain := strings.Join((&Runner{}).buildArgs("https://demo.test", "/tmp/o.json"), " "); strings.Contains(plain, "scanner.delayInMs") {
+	if plain := strings.Join((&Runner{}).buildPlanArgs("/tmp/plan.yaml"), " "); strings.Contains(plain, "scanner.delayInMs") {
 		t.Errorf("tanpa RateLimit tak boleh ada throttle; dapat %q", plain)
 	}
-	r := &Runner{RateLimit: 20}
-	for _, got := range []string{
-		strings.Join(r.buildArgs("https://demo.test", "/tmp/o.json"), " "),
-		strings.Join(r.buildFullArgs("/tmp/plan.yaml"), " "),
-	} {
-		for _, want := range []string{"scanner.threadPerHost=1", "scanner.delayInMs=50"} {
-			if !strings.Contains(got, want) {
-				t.Errorf("throttle harus memuat %q; dapat %q", want, got)
-			}
+	got := strings.Join((&Runner{RateLimit: 20}).buildPlanArgs("/tmp/plan.yaml"), " ")
+	for _, want := range []string{"scanner.threadPerHost=1", "scanner.delayInMs=50"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("throttle harus memuat %q; dapat %q", want, got)
 		}
 	}
 }
 
-func TestRunnerFullMode(t *testing.T) {
-	if (&Runner{}).mode() != "quick" {
-		t.Error("mode default harus quick")
+func TestRunnerModes(t *testing.T) {
+	if (&Runner{}).mode() != "quick" || (&Runner{}).active() {
+		t.Error("mode default harus quick & PASIF (active=false)")
 	}
-	r := &Runner{Mode: "full"}
-	if r.mode() != "full" {
-		t.Error("Mode=full harus terbaca")
+	if (&Runner{Mode: "baseline"}).active() {
+		t.Error("baseline harus pasif (active=false)")
 	}
-	r.UseProxy("127.0.0.1:9000")
-	args := strings.Join(r.buildFullArgs("/tmp/plan.yaml"), " ")
+	full := &Runner{Mode: "full"}
+	if full.mode() != "full" || !full.active() {
+		t.Error("Mode=full harus terbaca & aktif")
+	}
+	full.UseProxy("127.0.0.1:9000")
+	args := strings.Join(full.buildPlanArgs("/tmp/plan.yaml"), " ")
 	for _, want := range []string{"-autorun /tmp/plan.yaml", "network.connection.httpProxy.host=127.0.0.1"} {
 		if !strings.Contains(args, want) {
-			t.Errorf("full args harus memuat %q; dapat %q", want, args)
+			t.Errorf("args harus memuat %q; dapat %q", want, args)
 		}
 	}
-	plan := planYAML("https://demo.test", "/out", "report.json")
-	for _, want := range []string{
-		"activeScan", "spider", "https://demo.test", "traditional-json", `reportFile: "report.json"`,
-		// batas waktu wajib ada: tanpa ini active scan bisa tak-hingga di SPA catch-all.
-		"maxDuration: 3", "maxScanDurationInMins: 10", "maxRuleDurationInMins: 2",
-	} {
-		if !strings.Contains(plan, want) {
-			t.Errorf("plan harus memuat %q", want)
+}
+
+// Jaminan keamanan opsi (a): plan mode PASIF (quick/baseline) TAK PERNAH memuat
+// activeScan; plan FULL memuat activeScan, bukan passiveScan-wait. Keduanya tetap
+// spider + laporan JSON + batas durasi.
+func TestPlanYAMLActiveVsPassive(t *testing.T) {
+	common := []string{"spider", "https://demo.test", "traditional-json", `reportFile: "report.json"`, "maxDuration: 3"}
+
+	passive := planYAML("https://demo.test", "/out", "report.json", false)
+	for _, want := range append([]string{"passiveScan-wait", "maxDuration: 5"}, common...) {
+		if !strings.Contains(passive, want) {
+			t.Errorf("plan pasif harus memuat %q", want)
 		}
+	}
+	if strings.Contains(passive, "activeScan") {
+		t.Errorf("plan pasif TAK BOLEH memuat activeScan:\n%s", passive)
+	}
+
+	active := planYAML("https://demo.test", "/out", "report.json", true)
+	for _, want := range append([]string{"activeScan", "maxScanDurationInMins: 10", "maxRuleDurationInMins: 2"}, common...) {
+		if !strings.Contains(active, want) {
+			t.Errorf("plan aktif harus memuat %q", want)
+		}
+	}
+	if strings.Contains(active, "passiveScan-wait") {
+		t.Errorf("plan aktif tak perlu passiveScan-wait:\n%s", active)
 	}
 }
