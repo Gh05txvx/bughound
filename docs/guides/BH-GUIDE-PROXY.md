@@ -1,6 +1,6 @@
 # BH-GUIDE-PROXY — Proxy chain, endpoint echo IP & upstream proxy
 
-> Panduan operasional menu **Proxy** (`/proxy`, nav *Pengujian*): menguji rantai upstream proxy sebelum dipakai scan, dan memverifikasi apakah IP yang dilihat target benar-benar berubah. Ditulis sesuai implementasi (`internal/egress`, `internal/web`). Terakhir diperbarui: 2026-11-03.
+> Panduan operasional menu **Proxy** (`/proxy`, nav *Pengujian*): menguji rantai upstream proxy sebelum dipakai scan, dan memverifikasi apakah IP yang dilihat target benar-benar berubah. Ditulis sesuai implementasi (`internal/egress`, `internal/web`, `internal/geoip`). Terakhir diperbarui: 2026-11-12.
 
 Menu ini **diagnostik**, bukan jalur scan. Rantai yang kamu masukkan di sini tidak otomatis dipakai scan — scan tetap mengambil rantai dari field **Upstream proxy / rantai** di form **Scan**. Gunakan menu Proxy untuk *membuktikan rantai bekerja & IP berubah*, lalu salin rantai yang terbukti ke form Scan.
 
@@ -90,6 +90,30 @@ socks5://127.0.0.1:9050
 | **Layanan publik** | `https://api.ipify.org`, `https://ifconfig.me/ip`, `https://icanhazip.com`, `https://checkip.amazonaws.com`, `https://ipinfo.io/ip` | hanya jika **kamu tambahkan ke in-scope** program. Pilih yang membalas IP sebagai teks polos agar parsing bersih. |
 
 **Format body yang dikenali:** `203.0.113.9`, `{"ip":"203.0.113.9"}`, `your ip is 203.0.113.9` — token IPv4/IPv6 pertama diambil. Kosong bila tak ada IP.
+
+### Negara & ASN IP exit (GeoIP offline — opsional)
+
+BugHound bisa **melabeli IP sumber & exit dengan negara dan ASN**, tepat di bawah IP-nya (mis. `185.220.101.4  🇳🇱 Netherlands (NL) · AS205100 — DigitalOcean, LLC`). Berguna untuk program yang mensyaratkan egress dari **negara/ASN tertentu**.
+
+**Offline, tanpa kompromi egress.** Lookup memakai database MaxMind **GeoLite2 lokal** (`.mmdb`) — **tak pernah** memanggil layanan geolokasi pihak ketiga (ipinfo.io, ip-api.com, dll). Memanggilnya berarti egress ke aset out-of-scope (melanggar Prinsip #2); karena itu BugHound hanya membaca file DB yang kamu sediakan sendiri. Fitur **opsional** dan **degradasi mulus**: tanpa DB, menu Proxy tetap menampilkan IP, hanya tanpa negara.
+
+**Mengaktifkan:**
+
+1. Unduh database gratis **GeoLite2** dari MaxMind (butuh akun gratis): `GeoLite2-Country.mmdb` (untuk negara) dan opsional `GeoLite2-ASN.mmdb` (untuk ASN/organisasi).
+2. Taruh file di host atau mount ke container, lalu set env sebelum start:
+
+   ```bash
+   BUGHOUND_GEOIP_COUNTRY_DB=/data/geoip/GeoLite2-Country.mmdb
+   BUGHOUND_GEOIP_ASN_DB=/data/geoip/GeoLite2-ASN.mmdb   # opsional
+   ```
+
+3. Start BugHound; log mencetak `geoip: aktif …`. Bila env tak diset atau file gagal dibuka, log mencetak alasannya dan fitur mati mulus (menu Proxy menampilkan hint cara mengaktifkan).
+
+**Catatan:**
+
+- Murni **label tampilan** — tak menyentuh scope guard, egress, rate limiter, atau secret.
+- IP privat/tak terdaftar → negara kosong (ditandai "tak ditemukan di DB GeoIP").
+- Data GeoLite2 milik MaxMind; patuhi ketentuan lisensinya (termasuk update berkala agar akurat).
 
 ---
 

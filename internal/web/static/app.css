@@ -157,6 +157,7 @@ a.btn:hover { text-decoration: none; }
 .chip.ok { color: #d8d2ff; border-color: #3b3576; background: var(--accent-dim); }
 .chip.good { background: var(--ok-dim); border-color: #2c5a3c; color: #9be3b6; }
 .chip.warn { background: var(--warn-dim); border-color: #5d4a1f; color: #e6c877; }
+.geo { margin-left: 6px; font-size: 10px; color: var(--fg-dim); opacity: 0.9; }
 .errors { border-left: 3px solid var(--danger); background: var(--danger-dim); padding: 8px 12px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin: 10px 0; }
 .errors p { margin: 4px 0; color: #f0a594; }
 .errors ul { margin: 6px 0; }

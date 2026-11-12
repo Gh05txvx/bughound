@@ -24,6 +24,7 @@ import (
 	"bughound/internal/engine/nuclei"
 	"bughound/internal/engine/retire"
 	"bughound/internal/engine/zap"
+	"bughound/internal/geoip"
 	"bughound/internal/payload"
 	"bughound/internal/recon"
 	"bughound/internal/secret"
@@ -300,7 +301,20 @@ func main() {
 		log.Printf("bank payload: %d sumber [%s] — refresh via /payloads atau `bughound templates update`", len(payloadSources), strings.Join(ids, ", "))
 	}
 
-	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, NewEngines: engineFactory, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: sastRootEff, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext, PayloadSources: payloadSources})
+	// GeoIP (opsional): melabeli IP egress di menu Proxy dengan negara & ASN dari
+	// database GeoLite2 LOKAL. Sepenuhnya OFFLINE — tak pernah memanggil layanan
+	// geolokasi pihak ketiga (menjaga egress-isolation, Prinsip #2). Nonaktif bila
+	// env tak diset; bila DB gagal dibuka, fitur mati mulus (menu Proxy tetap
+	// menampilkan IP tanpa negara). Server menutup DB saat shutdown.
+	var geoResolver geoip.Resolver = geoip.Nop{}
+	if gdb, gerr := geoip.Open(os.Getenv("BUGHOUND_GEOIP_COUNTRY_DB"), os.Getenv("BUGHOUND_GEOIP_ASN_DB")); gerr != nil {
+		log.Printf("geoip: DB tak dimuat (%v) — menu Proxy tetap tampil IP tanpa negara", gerr)
+	} else if gdb != nil {
+		geoResolver = gdb
+		log.Printf("geoip: aktif — pelabelan negara/ASN IP egress dari DB GeoLite2 lokal (offline)")
+	}
+
+	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, NewEngines: engineFactory, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: sastRootEff, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext, PayloadSources: payloadSources, GeoIP: geoResolver})
 	if err != nil {
 		log.Fatalf("bughound: gagal inisialisasi: %v", err)
 	}

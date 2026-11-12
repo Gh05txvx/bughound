@@ -30,6 +30,7 @@ import (
 	"bughound/internal/engine"
 	"bughound/internal/engine/grpc"
 	"bughound/internal/finding"
+	"bughound/internal/geoip"
 	"bughound/internal/jobs"
 	"bughound/internal/openapi"
 	"bughound/internal/orchestrator"
@@ -72,8 +73,9 @@ type Server struct {
 	authDisabled   bool // true = akses terbuka tanpa login (hanya -no-auth / test)
 	queue          *jobs.Queue
 	version        string
-	sastRoot       string       // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
-	grpcEngine     grpc.Scanner // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
+	sastRoot       string         // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
+	grpcEngine     grpc.Scanner   // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
+	geo            geoip.Resolver // lookup negara/ASN IP egress (offline; Nop bila DB tak dimuat)
 
 	captureMu sync.Mutex
 	captures  map[string]*captureSession // sesi capture reverse-proxy aktif per program
@@ -138,6 +140,10 @@ type Config struct {
 	// default mock. GRPCPlaintext mengirim -plaintext (gRPC tanpa TLS).
 	GRPCReal      bool
 	GRPCPlaintext bool
+	// GeoIP (opsional) melabeli IP egress di menu Proxy dengan negara & ASN dari
+	// database GeoLite2 LOKAL (offline — tak pernah memanggil layanan pihak
+	// ketiga). nil = fitur mati; menu Proxy tetap menampilkan IP tanpa negara.
+	GeoIP geoip.Resolver
 }
 
 // NewServer menyiapkan server dengan store dan engine yang diberikan.
@@ -174,6 +180,10 @@ func NewServer(cfg Config) (*Server, error) {
 		specs:          map[string]scanSpec{},
 		sessions:       map[string]sessionInfo{},
 		pages:          pages,
+		geo:            cfg.GeoIP,
+	}
+	if s.geo == nil {
+		s.geo = geoip.Nop{} // fitur mati tanpa nil-check di jalur request
 	}
 	if cfg.GRPCReal {
 		s.grpcEngine = &grpc.Runner{Plaintext: cfg.GRPCPlaintext}
@@ -201,6 +211,9 @@ func (s *Server) Close() error {
 	s.captures = map[string]*captureSession{}
 	s.captureMu.Unlock()
 	s.queue.Close()
+	if c, ok := s.geo.(io.Closer); ok {
+		_ = c.Close() // tutup reader GeoIP bila DB dimuat (Nop bukan Closer)
+	}
 	return nil
 }
 
@@ -2362,6 +2375,10 @@ type proxyEchoResult struct {
 	SourceStatus, ExitStatus int
 	SourceErr, ExitErr       string
 	Changed                  bool
+	// Geolokasi offline IP egress (kosong bila DB GeoIP tak dimuat). GeoLoaded
+	// menandai apakah kolom negara perlu ditampilkan sama sekali.
+	GeoLoaded          bool
+	SourceGeo, ExitGeo geoip.Info
 }
 
 // handleProxyForm menampilkan menu diagnostik proxy.
@@ -2484,7 +2501,9 @@ func (s *Server) proxyEchoCheck(r *http.Request, program string, chain []string,
 		SourceIP:     egress.ExtractClientIP(direct.Body),
 		SourceStatus: direct.Status,
 		SourceErr:    direct.Err,
+		GeoLoaded:    s.geo.Loaded(),
 	}
+	out.SourceGeo = s.geo.Resolve(out.SourceIP)
 	if !direct.Allowed {
 		return out, ""
 	}
@@ -2495,6 +2514,7 @@ func (s *Server) proxyEchoCheck(r *http.Request, program string, chain []string,
 	}
 	exit := chained.Fetch(r.Context(), echo, timeout)
 	out.ExitIP, out.ExitStatus, out.ExitErr = egress.ExtractClientIP(exit.Body), exit.Status, exit.Err
+	out.ExitGeo = s.geo.Resolve(out.ExitIP)
 	out.Changed = out.SourceIP != "" && out.ExitIP != "" && out.SourceIP != out.ExitIP
 	return out, ""
 }

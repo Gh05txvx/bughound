@@ -65,13 +65,15 @@
 <div class="errors">Echo <b>ditolak scope guard</b>: {{.Reason}}. Tambahkan host echo ke <b>in-scope</b> program agar bisa diuji (default-deny · Prinsip #2).</div>
 {{else}}
 <div class="result-summary">
-  <span class="chip">IP sumber (tanpa proxy): <b class="mono">{{if .SourceIP}}{{.SourceIP}}{{else}}—{{end}}</b></span>
-  <span class="chip">IP exit (lewat rantai): <b class="mono">{{if .ExitIP}}{{.ExitIP}}{{else}}—{{end}}</b></span>
+  <span class="chip">IP sumber (tanpa proxy): <b class="mono">{{if .SourceIP}}{{.SourceIP}}{{else}}—{{end}}</b>{{if not .SourceGeo.Empty}} <span class="geo">{{.SourceGeo.Display}}</span>{{end}}</span>
+  <span class="chip">IP exit (lewat rantai): <b class="mono">{{if .ExitIP}}{{.ExitIP}}{{else}}—{{end}}</b>{{if not .ExitGeo.Empty}} <span class="geo">{{.ExitGeo.Display}}</span>{{end}}</span>
   {{if .Changed}}<span class="chip ok">IP berubah ✓</span>{{else if and .SourceIP .ExitIP}}<span class="chip warn">IP sama</span>{{end}}
 </div>
 {{if .SourceErr}}<p class="muted small mono">sumber: {{.SourceErr}}</p>{{end}}
 {{if .ExitErr}}<p class="muted small mono">exit: {{.ExitErr}}</p>{{end}}
 {{if and .Changed (not .ExitErr)}}<p class="muted small">Rantai proxy mengganti IP yang dilihat target — egress keluar lewat exit node, bukan IP host BugHound.</p>{{end}}
+{{if and .GeoLoaded .ExitIP .ExitGeo.Empty}}<p class="muted small">Negara IP exit tak ditemukan di DB GeoIP (IP privat/tak terdaftar).</p>{{end}}
+{{if not .GeoLoaded}}<p class="muted small">ℹ️ Pelabelan negara/ASN nonaktif — DB GeoIP (GeoLite2) belum dimuat. Set <span class="mono">BUGHOUND_GEOIP_COUNTRY_DB</span> (opsional <span class="mono">BUGHOUND_GEOIP_ASN_DB</span>) untuk mengaktifkan — offline, tanpa panggilan ke layanan eksternal.</p>{{end}}
 {{end}}
 {{end}}
 {{end}}
