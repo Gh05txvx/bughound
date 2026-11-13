@@ -182,3 +182,48 @@ func TestAnalyzeErrors(t *testing.T) {
 		t.Fatal("key kosong harus error")
 	}
 }
+
+// TestAnalyzeSurfacesAPIMessage: pesan error API (mis. saldo kredit) HARUS
+// tampil agar operator tahu akar masalah — bukan cuma tipe galat buram —
+// tanpa membocorkan key.
+func TestAnalyzeSurfacesAPIMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}`)
+	}))
+	defer srv.Close()
+	c := NewClient("claude-sonnet-5-5")
+	c.Endpoint, c.HTTP = srv.URL, srv.Client()
+
+	_, err := c.Analyze(context.Background(), "sk-DISTINCTIVE-KEY-9x", Input{URL: "https://demo.test/"})
+	if err == nil {
+		t.Fatal("status 400 harus error")
+	}
+	if !strings.Contains(err.Error(), "credit balance is too low") {
+		t.Fatalf("pesan API tak tampil: %v", err)
+	}
+	if !strings.Contains(err.Error(), "invalid_request_error") {
+		t.Fatalf("tipe galat hilang: %v", err)
+	}
+	if strings.Contains(err.Error(), "DISTINCTIVE-KEY-9x") {
+		t.Fatalf("key bocor ke pesan error: %v", err)
+	}
+}
+
+// TestSanitizeMsg: karakter kontrol dibuang, spasi diratakan, dipangkas rune-safe.
+func TestSanitizeMsg(t *testing.T) {
+	got := sanitizeMsg("baris1\n\tbaris2\x00\x07  rapat")
+	if strings.ContainsAny(got, "\n\t\x00\x07") {
+		t.Fatalf("karakter kontrol tersisa: %q", got)
+	}
+	if strings.Contains(got, "  ") {
+		t.Fatalf("spasi ganda tak diratakan: %q", got)
+	}
+	long := sanitizeMsg(strings.Repeat("x", 500))
+	if rc := len([]rune(long)); rc > 201 { // 200 + elipsis
+		t.Fatalf("tak dipangkas: %d rune", rc)
+	}
+	if !strings.HasSuffix(long, "…") {
+		t.Fatalf("penanda pangkas hilang: %q", long)
+	}
+}

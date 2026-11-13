@@ -278,8 +278,15 @@ func (c *Client) Analyze(ctx context.Context, apiKey string, in Input) (Analysis
 	_ = json.Unmarshal(raw, &ar)
 
 	if resp.StatusCode != http.StatusOK {
-		// Jangan bocorkan request/key; ringkas tipe galat saja.
+		// Tampilkan tipe + pesan API agar operator tahu akar masalah (mis.
+		// "credit balance too low", model tak tersedia, versi). Pesan ini
+		// umpan balik Anthropic atas request/akun — BUKAN secret kita: API tak
+		// pernah memantulkan x-api-key atau body kita. Di-sanitasi (buang
+		// karakter kontrol) + dipangkas agar aman ke UI; tak masuk audit.
 		if ar.Error != nil && ar.Error.Type != "" {
+			if msg := sanitizeMsg(ar.Error.Message); msg != "" {
+				return Analysis{}, fmt.Errorf("aiassist: Claude API menolak (%s): %s", sanitize(ar.Error.Type), msg)
+			}
 			return Analysis{}, fmt.Errorf("aiassist: Claude API menolak (%s)", sanitize(ar.Error.Type))
 		}
 		return Analysis{}, fmt.Errorf("aiassist: Claude API status %d", resp.StatusCode)
@@ -337,6 +344,29 @@ func sanitize(s string) string {
 	}, s)
 	if len(s) > 60 {
 		s = s[:60]
+	}
+	return s
+}
+
+// sanitizeMsg merapikan pesan galat API untuk ditampilkan ke operator: buang
+// karakter kontrol (anti-injeksi ke UI/log), ratakan spasi berlebih, pangkas
+// rune-safe. Pesan ini umpan balik request/akun dari Anthropic (saldo, nama
+// model, versi) — bukan key/evidence kita.
+func sanitizeMsg(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t' || r == '\r':
+			return ' '
+		case r < 0x20 || r == 0x7f:
+			return -1
+		default:
+			return r
+		}
+	}, s)
+	s = strings.Join(strings.Fields(s), " ")
+	const max = 200
+	if rs := []rune(s); len(rs) > max {
+		s = string(rs[:max]) + "…"
 	}
 	return s
 }
