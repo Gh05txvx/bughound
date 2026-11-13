@@ -505,3 +505,118 @@ a.btn { display: inline-flex; }
 .ai-safety { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); color: var(--warn); }
 .ai-foot { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
 .ai-foot .btn { margin-left: auto; }
+
+/* ============================================================
+   TEMA: Glassmorphism (frosted glass) — lapisan override di atas
+   tema gelap. Permukaan utama jadi panel kaca tembus cahaya +
+   backdrop-blur di atas latar aurora indigo; kontrol kecil cukup
+   tembus cahaya + garis tipis agar ikut terbaca sebagai kaca tanpa
+   beban blur bertumpuk. Teks tetap kontras tinggi (data terbaca).
+   Tak ada gerak baru → aman utk prefers-reduced-motion. Blok sengaja
+   terpisah agar mudah disetel atau dicabut.
+   ============================================================ */
+:root {
+  --glass: rgba(24, 30, 50, .32);
+  --glass-2: rgba(40, 48, 74, .24);
+  --glass-strong: rgba(16, 21, 36, .58);
+  --glass-border: rgba(192, 202, 240, .24);
+  --glass-border-2: rgba(202, 212, 244, .36);
+  --glass-hi: rgba(255, 255, 255, .13);
+  --blur: 20px;
+  --blur-lg: 34px;
+  --tr: .19s cubic-bezier(.22, .61, .36, 1);
+  --shadow-1: inset 0 1px 0 var(--glass-hi), 0 16px 44px rgba(0, 0, 0, .46);
+  --shadow-2: inset 0 1px 0 var(--glass-hi), 0 26px 66px rgba(0, 0, 0, .6);
+}
+
+/* latar vibrant: aurora indigo/biru/violet menyebar (termasuk tengah) agar
+   frost berwarna di seluruh viewport, bukan cuma di tepi */
+body {
+  background:
+    radial-gradient(1120px 640px at 8% -8%, rgba(124, 108, 255, .34), transparent 66%),
+    radial-gradient(1020px 700px at 92% 2%, rgba(64, 132, 255, .26), transparent 66%),
+    radial-gradient(1040px 840px at 60% 116%, rgba(186, 92, 255, .24), transparent 66%),
+    radial-gradient(1500px 940px at 50% 42%, rgba(96, 86, 190, .13), transparent 72%),
+    linear-gradient(180deg, #0c1019, var(--bg));
+  background-attachment: fixed;
+}
+
+/* permukaan kaca — frost berat (chrome); saturate utk frost berwarna kaya */
+.sidebar, .topbar, .login-card {
+  -webkit-backdrop-filter: blur(var(--blur-lg)) saturate(1.4);
+  backdrop-filter: blur(var(--blur-lg)) saturate(1.4);
+}
+/* permukaan kaca — frost standar */
+.card, .panel, .statcard, .master, .detail, .banner, .ai-card, .tbl th {
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.3);
+  backdrop-filter: blur(var(--blur)) saturate(1.3);
+}
+
+.sidebar { background: var(--glass); border-right: 1px solid var(--glass-border); box-shadow: var(--shadow-1); }
+.sidebar nav a:hover { background: rgba(255, 255, 255, .05); }
+.sidebar nav a.active { background: rgba(124, 108, 255, .18); }
+.topbar { background: var(--glass-strong); border-bottom: 1px solid var(--glass-border); }
+
+.card, .panel, .master, .detail, .ai-card { background: var(--glass); border-color: var(--glass-border); box-shadow: var(--shadow-1); }
+.statcard { background: linear-gradient(162deg, rgba(44, 52, 78, .54), rgba(22, 28, 44, .44)); border-color: var(--glass-border); box-shadow: var(--shadow-1); }
+.panel-head, .fchips, .import-box { border-color: var(--glass-border); }
+.banner { background: var(--glass-2); border-color: var(--glass-border); }
+.banner.ok { background: var(--ok-dim); border-color: var(--ok); }
+
+/* tabel: header sticky frosted & pekat (baris tak tembus); garis halus */
+.tbl th, .panel .tbl th { background: var(--glass-strong); }
+.tbl th, .tbl td { border-bottom-color: var(--glass-border); }
+.tbl tbody tr:nth-child(even) { background: rgba(255, 255, 255, .032); }
+.tbl.findings tr.row:hover { background: rgba(255, 255, 255, .07); }
+.tbl.findings tr.selected { background: rgba(124, 108, 255, .2); box-shadow: inset 3px 0 0 var(--accent); }
+.bulk-bar { background: var(--glass-2); border-bottom-color: var(--glass-border); }
+
+/* kontrol: tembus cahaya + garis tipis (tanpa blur sendiri). CTA primer tetap solid. */
+.btn { background: var(--glass-2); border-color: var(--glass-border-2); }
+.btn:hover { background: rgba(255, 255, 255, .08); border-color: var(--accent); }
+.btn.ghost { background: transparent; }
+.btn.primary { background: linear-gradient(180deg, var(--accent-2), var(--accent)); border-color: var(--accent); }
+input[type=text], input[type=password], textarea, select { background: rgba(8, 11, 18, .5); border-color: var(--glass-border-2); }
+.chip, .pill, .tab, .fchip, .hero-sub { background: var(--glass-2); border-color: var(--glass-border-2); }
+pre.ev, .ai-mut { background: rgba(6, 9, 15, .55); border-color: var(--glass-border); }
+
+/* login: kartu kaca di tengah aurora lebih kuat */
+.login-body {
+  background:
+    radial-gradient(900px 520px at 50% -8%, rgba(124, 108, 255, .28), transparent 58%),
+    radial-gradient(640px 520px at 86% 108%, rgba(70, 132, 255, .18), transparent 60%),
+    var(--bg);
+}
+.login-card { background: var(--glass); border-color: var(--glass-border-2); box-shadow: var(--shadow-2); }
+
+/* fallback: peramban tanpa backdrop-filter → naikkan opasitas agar tetap terbaca */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root { --glass: rgba(20, 26, 40, .93); --glass-2: rgba(34, 42, 62, .92); --glass-strong: rgba(14, 19, 30, .97); }
+}
+
+/* ============================================================
+   MOTION: transisi antar-menu + gerak masuk konten (halus, hemat).
+   Navigasi antar-menu = full page (link biasa) → View Transitions API
+   memberi crossfade mulus lintas-dokumen; sidebar identik antar-halaman
+   jadi tampak diam. Konten .bodywrap meluncur-masuk tiap navigasi (juga
+   fallback utk peramban tanpa View Transitions). SEMUA gerak dimatikan
+   saat pengguna minta prefers-reduced-motion (WCAG 2.3.3).
+   ============================================================ */
+@view-transition { navigation: auto; }
+::view-transition-old(root) { animation: vt-fade-out .22s ease both; }
+::view-transition-new(root) { animation: vt-fade-in .34s cubic-bezier(.22, .61, .36, 1) both; }
+@keyframes vt-fade-out { to { opacity: 0; } }
+@keyframes vt-fade-in { from { opacity: 0; } }
+
+.bodywrap { animation: page-in .34s cubic-bezier(.22, .61, .36, 1) both; }
+@keyframes page-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+/* micro-interaksi lebih halus: nav bergeser lembut saat hover */
+.sidebar nav a { transition: background var(--tr), color var(--tr), transform var(--tr); }
+.sidebar nav a:hover { transform: translateX(2px); }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+  .bodywrap { animation: none !important; }
+  .sidebar nav a:hover { transform: none !important; }
+}
