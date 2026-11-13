@@ -170,7 +170,7 @@ func (p *Proxy) Listen(addr string) (string, func() error, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	srv := &http.Server{Handler: p}
+	srv := &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	return ln.Addr().String(), srv.Close, nil
 }

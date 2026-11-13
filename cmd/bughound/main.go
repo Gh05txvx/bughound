@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"bughound/internal/audit"
 	"bughound/internal/auth"
@@ -323,7 +324,7 @@ func main() {
 	log.Printf("bughound di http://%s", *addr)
 	log.Printf("scope guard aktif · rate limiter wajib · tanpa auto-submit")
 
-	httpSrv := &http.Server{Addr: *addr, Handler: srv}
+	httpSrv := &http.Server{Addr: *addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
 	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("bughound: server berhenti: %v", err)
 	}
@@ -392,7 +393,7 @@ func resolveSASTRoot(flagVal, envVal string) (root, logMsg string) {
 	if root == "" {
 		return "", ""
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o750); err != nil {
 		return "", fmt.Sprintf("sast: root %q tak bisa disiapkan (%v) — SAST dinonaktifkan", root, err)
 	}
 	return root, fmt.Sprintf("sast: aktif, dikurung ke root %q (analisis statis lokal, tanpa jaringan)", root)

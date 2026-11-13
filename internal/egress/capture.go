@@ -174,7 +174,7 @@ func (g *Gateway) Listen(addr string) (string, func() error, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	srv := &http.Server{Handler: g}
+	srv := &http.Server{Handler: g, ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	return ln.Addr().String(), srv.Close, nil
 }
