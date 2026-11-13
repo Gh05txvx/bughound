@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -84,6 +85,35 @@ func TestDashboardDeleteFindings(t *testing.T) {
 	b := do(t, srv, "GET", "/dashboard?ok=findings-deleted&program=acme&n=2", nil).Body.String()
 	if !strings.Contains(b, "temuan program") || !strings.Contains(b, "dihapus") {
 		t.Error("flash hapus temuan tak muncul")
+	}
+}
+
+// TestDashboardDeleteFindingsPurgesAICache memastikan menghapus temuan sebuah
+// program ikut membuang cache analisis AI-nya (tak ada baris yatim), sementara
+// cache program lain tetap utuh.
+func TestDashboardDeleteFindingsPurgesAICache(t *testing.T) {
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+	fa, _ := st.Save(ctx, mkWebFinding("acme", "run1", "ssrf", "https://acme.io/a", finding.SeverityCritical))
+	fg, _ := st.Save(ctx, mkWebFinding("globex", "run1", "redir", "https://globex.io/c", finding.SeverityHigh))
+
+	for _, a := range []store.AIAnalysis{
+		{FindingID: fa.ID, Program: "acme", Model: "m", SourceHash: "h", Payload: "{}"},
+		{FindingID: fg.ID, Program: "globex", Model: "m", SourceHash: "h", Payload: "{}"},
+	} {
+		if err := st.PutAIAnalysis(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if rec := do(t, srv, "POST", "/dashboard/findings/delete", url.Values{"program": {"acme"}}); rec.Code != http.StatusSeeOther {
+		t.Fatalf("hapus temuan = %d, ingin 303", rec.Code)
+	}
+	if _, err := st.GetAIAnalysis(ctx, fa.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("cache AI acme harus terbuang bersama temuannya, dapat err=%v", err)
+	}
+	if _, err := st.GetAIAnalysis(ctx, fg.ID); err != nil {
+		t.Errorf("cache AI globex tak boleh ikut terhapus: %v", err)
 	}
 }
 

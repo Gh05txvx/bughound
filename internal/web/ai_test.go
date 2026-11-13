@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -86,6 +87,27 @@ func TestAICard_ServesFromCacheNoNetwork(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("kartu cache tak memuat %q:\n%s", want, body)
 		}
+	}
+}
+
+// TestAICard_ErrorPathRenders menjaga agar kartu saat GENERATE GAGAL (Err terisi,
+// Analysis nil) tetap dirender rapi, bukan meledak di template. Baris
+// {{if and .Analysis (not .Analysis.Hypotheses)}} harus aman saat Analysis nil.
+func TestAICard_ErrorPathRenders(t *testing.T) {
+	srv, _ := newAIServer(t)
+	var buf bytes.Buffer
+	err := srv.pages["ai"].ExecuteTemplate(&buf, "ai_card", aiCardData{
+		Ready:     true,
+		FindingID: "f1",
+		Engine:    "nuclei",
+		Safety:    aiSafetyNote,
+		Err:       "boom-network",
+	})
+	if err != nil {
+		t.Fatalf("render jalur-error gagal (template meledak saat Analysis nil): %v", err)
+	}
+	if !strings.Contains(buf.String(), "boom-network") {
+		t.Fatalf("pesan error tak tampil:\n%s", buf.String())
 	}
 }
 

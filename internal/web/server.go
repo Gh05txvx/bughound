@@ -2074,8 +2074,15 @@ func (s *Server) handleDashboardDeleteFindings(w http.ResponseWriter, r *http.Re
 		http.Error(w, "gagal menghapus temuan: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Buang cache analisis AI milik program ini agar tak ada baris yatim yang
+	// menumpuk. Best-effort: temuan sudah terhapus, kegagalan bersih-bersih tak
+	// boleh menggagalkan permintaan. Jumlahnya dicatat agar audit tetap utuh.
+	aiPurged := 0
+	if s.aistore != nil {
+		aiPurged, _ = s.aistore.DeleteAIAnalysisByProgram(r.Context(), program)
+	}
 	s.auditAppend(r.Context(), audit.Event{Kind: "findings.delete", Program: program, Allowed: true,
-		Message: fmt.Sprintf("%s menghapus %d temuan program (definisi scope tetap)", me, n)})
+		Message: fmt.Sprintf("%s menghapus %d temuan program + %d cache AI (definisi scope tetap)", me, n, aiPurged)})
 	http.Redirect(w, r, fmt.Sprintf("/dashboard?ok=findings-deleted&program=%s&n=%d", url.QueryEscape(program), n), http.StatusSeeOther)
 }
 
