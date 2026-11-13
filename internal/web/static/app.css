@@ -220,6 +220,15 @@ a.btn:hover { text-decoration: none; }
 .tab { text-decoration: none; color: var(--fg-dim); padding: 5px 11px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); font-size: 12px; transition: background var(--tr), color var(--tr); }
 .tab:hover { color: var(--fg); background: var(--bg-2); text-decoration: none; }
 .tab.active { background: var(--accent-dim); color: #d8d2ff; border-color: #3b3576; }
+/* Prioritas (SAW/SPK) view */
+.pri-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 14px; }
+.pri-head p { margin: 4px 0 0; max-width: 72ch; }
+.tbl.priority td { vertical-align: middle; }
+.tbl.priority .num { text-align: right; width: 34px; color: var(--fg-dim); }
+.scorecell { min-width: 128px; }
+.pri-bar { height: 6px; background: var(--bg-2); border-radius: 3px; overflow: hidden; margin-bottom: 3px; }
+.pri-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: 3px; }
+.factors { display: flex; gap: 5px; flex-wrap: wrap; }
 .master-detail { display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; align-items: start; }
 .master { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-1); }
 .detail { background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px; min-height: 220px; box-shadow: var(--shadow-1); }

@@ -1,0 +1,63 @@
+{{define "content"}}
+<div class="findings-head">
+  {{if .Programs}}
+  <div class="prog-tabs">
+    {{range .Programs}}
+      <a href="/priority?program={{.}}" class="tab {{if eq . $.Program}}active{{end}}">{{.}}</a>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+
+{{if not .Program}}
+  <div class="panel"><div class="empty rich">
+    <div class="empty-ico"><svg class="ico"><use href="#i-activity"/></svg></div>
+    <h3>Belum ada program</h3>
+    <p class="muted">Pilih atau buat program untuk melihat prioritas verifikasi (SAW/SPK).</p>
+    <div class="empty-cta"><a class="btn primary" href="/scan"><svg class="ico"><use href="#i-radio"/></svg>Jalankan scan pertama</a></div>
+  </div></div>
+{{else if not .Scored}}
+  <div class="panel"><div class="empty rich">
+    <div class="empty-ico"><svg class="ico"><use href="#i-shield-check"/></svg></div>
+    <h3>Tak ada temuan untuk diprioritaskan</h3>
+    <p class="muted">Dari {{.Total}} temuan di program ini, tak ada yang lolos prefilter (info / duplikat / false-positive / ignored disaring) — atau memang belum ada temuan.</p>
+    <div class="empty-cta"><a class="btn" href="/findings?program={{.Program}}"><svg class="ico"><use href="#i-alert"/></svg>Lihat semua temuan</a></div>
+  </div></div>
+{{else}}
+  <div class="panel">
+    <div class="pri-head">
+      <div>
+        <strong>Prioritas verifikasi · SAW/SPK</strong>
+        <p class="muted small">{{len .Scored}} prioritas dari {{.Total}} temuan — satu wakil per klaster; info/duplikat/FP disaring. Skor &amp; urutan identik dengan tool MCP <code>rank</code>. Deterministik (bukan LLM); verifikasi tetap manual di Burp.</p>
+      </div>
+      <a class="btn ghost" href="/findings?program={{.Program}}">Semua temuan →</a>
+    </div>
+    <table class="tbl priority">
+      <thead><tr>
+        <th class="num">#</th><th>Skor</th><th>Sev</th><th>Type</th>
+        <th>Engine</th><th>Target</th><th>Pendorong</th>
+      </tr></thead>
+      <tbody>
+      {{range .Scored}}
+        <tr class="row" onclick="location.href='/findings?program={{$.Program}}&amp;id={{.Finding.ID}}'" style="cursor:pointer">
+          <td class="num mono">{{.Rank}}</td>
+          <td class="scorecell">
+            <div class="pri-bar" aria-hidden="true"><span style="width:{{.Pct}}%"></span></div>
+            <span class="mono small">{{printf "%.3f" .Score}}</span>
+          </td>
+          <td><span class="badge {{sevClass .Finding.Severity}}">{{.Finding.Severity}}</span></td>
+          <td class="mono">{{.Finding.Type}}</td>
+          <td class="mono small muted">{{.Finding.SourceEngine}}</td>
+          <td class="mono truncate" onclick="event.stopPropagation()">
+            <a href="/findings?program={{$.Program}}&amp;id={{.Finding.ID}}" title="Buka di Findings">{{.Finding.Location.URL}}</a>
+          </td>
+          <td class="factors">
+            {{range .TopFactors 2}}<span class="chip">{{.Label}}</span>{{end}}
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+{{end}}
+{{end}}

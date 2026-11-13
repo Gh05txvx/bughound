@@ -42,6 +42,7 @@ import (
 	"bughound/internal/scope"
 	"bughound/internal/secret"
 	"bughound/internal/store"
+	"bughound/internal/triage"
 )
 
 //go:embed templates
@@ -733,6 +734,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /runs/{id}/rerun", s.handleRunRerun)
 	s.mux.HandleFunc("POST /runs/{id}/delete", s.handleRunDelete)
 	s.mux.HandleFunc("GET /findings", s.handleFindings)
+	s.mux.HandleFunc("GET /priority", s.handlePriority)
 	s.mux.HandleFunc("POST /findings/bulk", s.handleBulkTriage)
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
 	s.mux.HandleFunc("POST /findings/{id}/status", s.handleTriage)
@@ -1268,6 +1270,36 @@ func (s *Server) handleFindings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, r, "findings", "base", page)
+}
+
+type priorityPage struct {
+	Nav      string
+	Title    string
+	Program  string
+	CSRF     string
+	Programs []string
+	Scored   []triage.Scored
+	Total    int // jumlah temuan program sebelum prefilter (konteks "N dari M")
+}
+
+// handlePriority menampilkan peringkat "prioritas verifikasi" (SAW/SPK) temuan
+// sebuah program — sama dengan tool MCP `rank`, dihitung in-process (paket
+// triage). Baca-saja: tak menyentuh target, tak mengubah store.
+func (s *Server) handlePriority(w http.ResponseWriter, r *http.Request) {
+	program := strings.TrimSpace(r.URL.Query().Get("program"))
+	progs := s.programNames(r.Context())
+	if program == "" && len(progs) > 0 {
+		program = progs[0]
+	}
+	var all []*finding.Finding
+	if program != "" {
+		all, _ = s.store.List(r.Context(), store.Query{Program: program})
+	}
+	page := priorityPage{
+		Nav: "priority", Title: "Prioritas", Program: program, CSRF: s.csrfToken(r),
+		Programs: progs, Scored: triage.Rank(all), Total: len(all),
+	}
+	s.render(w, r, "priority", "base", page)
 }
 
 func (s *Server) handleBulkTriage(w http.ResponseWriter, r *http.Request) {
@@ -3003,6 +3035,7 @@ func parseTemplates(version, engineLbl, reconLbl string) (map[string]*template.T
 		"burp":         {"templates/base.html", "templates/burp.html"},
 		"scan":         {"templates/base.html", "templates/scan.html", "templates/scan_result.html", "templates/run_status.html"},
 		"findings":     {"templates/base.html", "templates/findings.html", "templates/finding_detail.html"},
+		"priority":     {"templates/base.html", "templates/priority.html"},
 		"report":       {"templates/base.html", "templates/report.html"},
 		"report_print": {"templates/report_print.html"},
 		"settings":     {"templates/base.html", "templates/settings.html"},
