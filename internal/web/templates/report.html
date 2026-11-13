@@ -53,8 +53,11 @@
 
 <p class="muted small">Report ini <b>draft</b>. Export HackerOne/Bugcrowd hanya memformat draft untuk kamu salin &amp; submit <b>manual</b> — tidak ada tombol submit, tidak ada pengiriman otomatis.</p>
 {{else}}
-<div class="empty">
-  <p class="muted">Belum ada temuan <b>terkonfirmasi</b> untuk program ini. Konfirmasi temuan di halaman <a href="/findings?program={{$prog}}">Findings</a> dulu.</p>
+<div class="empty rich">
+  <div class="empty-ico"><svg class="ico"><use href="#i-file"/></svg></div>
+  <h3>Draft report masih kosong</h3>
+  <p class="muted">Belum ada temuan <b>terkonfirmasi</b> untuk program ini. Konfirmasi temuan dulu, lalu draft-nya muncul di sini siap di-export.</p>
+  <div class="empty-cta"><a class="btn primary" href="/findings?program={{$prog}}"><svg class="ico"><use href="#i-alert"/></svg>Ke Findings</a></div>
 </div>
 {{end}}
 {{end}}

@@ -1,29 +1,67 @@
 {{define "content"}}
 {{if .Note}}<div class="banner ok"><span class="dot ok"></span>{{.Note}}</div>{{end}}
-<div class="statrow">
-  <div class="statcard">
-    <div class="sc-top"><span class="sc-label">Programs</span><span class="sc-ico"><svg class="ico"><use href="#i-target"/></svg></span></div>
-    <div class="sc-kpi">{{.TotalPrograms}}</div>
-    <div class="sc-sub">cakupan scope aktif</div>
-  </div>
-  <div class="statcard">
-    <div class="sc-top"><span class="sc-label">Temuan</span><span class="sc-ico violet"><svg class="ico"><use href="#i-alert"/></svg></span></div>
-    <div class="sc-kpi">{{.TotalFindings}}</div>
-    <div class="sc-sub">{{.TotalNew}} baru · tanpa duplikat</div>
-  </div>
-  <div class="statcard">
-    <div class="sc-top"><span class="sc-label">Terkonfirmasi</span><span class="sc-ico ok"><svg class="ico"><use href="#i-shield-check"/></svg></span></div>
-    <div class="sc-kpi">{{.TotalConfirmed}}</div>
-    <div class="sc-sub">dari {{.TotalFindings}} temuan</div>
-  </div>
-  <div class="statcard">
-    <div class="sc-top"><span class="sc-label">Run</span><span class="sc-ico"><svg class="ico"><use href="#i-radio"/></svg></span></div>
-    <div class="sc-kpi">{{.TotalRuns}}</div>
-    <div class="sc-sub">eksekusi engine</div>
-  </div>
-</div>
+<div class="dash">
 
-<div class="grid-dash">
+  {{if .TotalFindings}}
+  <!-- Hero: postur temuan + komposisi severity (fokus "at a glance") -->
+  <section class="dash-hero">
+    <div class="panel hero-main">
+      <div class="panel-head">
+        <h2>Postur temuan</h2>
+        <span class="muted small">lintas-program · tanpa duplikat</span>
+      </div>
+      <div class="panel-body">
+        <div class="hero-grid">
+          <div class="hero-figure">
+            <div class="hero-kpi">{{.TotalFindings}}</div>
+            <div class="hero-kpi-label">Total temuan</div>
+            <div class="hero-subs">
+              <span class="hero-sub"><b>{{.TotalNew}}</b> baru</span>
+              <span class="hero-sub ok"><b>{{.TotalConfirmed}}</b> terkonfirmasi</span>
+            </div>
+          </div>
+          <div class="hero-sev">
+            <span class="sevbar lg" role="img" aria-label="distribusi severity">{{range .SevTotals}}<span class="seg {{sevClass .Severity}}" style="flex-grow:{{.Count}}" title="{{.Severity}}: {{.Count}}"></span>{{end}}</span>
+            <div class="sevlegend">
+              {{range .SevTotals}}<span class="lg-item {{if not .Count}}zero{{end}}"><span class="lg-dot {{sevClass .Severity}}"></span>{{.Severity}} <b>{{.Count}}</b></span>{{end}}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="panel hero-donut">
+      <div class="panel-head"><h3>Komposisi severity</h3><span class="muted small">bobot</span></div>
+      <div class="panel-body">
+        <div class="donutwrap single">
+          <div class="donut" style="background: {{.SevDonut}}">
+            <div class="donut-mid"><div class="n">{{.TotalFindings}}</div><div class="l">temuan</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+  {{end}}
+
+  <!-- KPI sekunder -->
+  <div class="statrow secondary">
+    <div class="statcard">
+      <div class="sc-top"><span class="sc-label">Programs</span><span class="sc-ico"><svg class="ico"><use href="#i-target"/></svg></span></div>
+      <div class="sc-kpi">{{.TotalPrograms}}</div>
+      <div class="sc-sub">cakupan scope aktif</div>
+    </div>
+    <div class="statcard">
+      <div class="sc-top"><span class="sc-label">Terkonfirmasi</span><span class="sc-ico ok"><svg class="ico"><use href="#i-shield-check"/></svg></span></div>
+      <div class="sc-kpi">{{.TotalConfirmed}}</div>
+      <div class="sc-sub">dari {{.TotalFindings}} temuan</div>
+    </div>
+    <div class="statcard">
+      <div class="sc-top"><span class="sc-label">Run</span><span class="sc-ico violet"><svg class="ico"><use href="#i-radio"/></svg></span></div>
+      <div class="sc-kpi">{{.TotalRuns}}</div>
+      <div class="sc-sub">eksekusi engine</div>
+    </div>
+  </div>
+
+  <!-- Temuan per program -->
   <div class="panel">
     <div class="panel-head">
       <h2>Temuan per program</h2>
@@ -72,37 +110,25 @@
       </table>
     </div>
     {{else}}
-    <div class="empty">
-      <p class="muted">Belum ada program atau temuan. <a href="/programs/edit">Buat program →</a> atau <a href="/scan">jalankan scan pertama →</a></p>
+    <div class="empty rich">
+      <div class="empty-ico"><svg class="ico"><use href="#i-target"/></svg></div>
+      <h3>Belum ada program atau temuan</h3>
+      <p class="muted">Tentukan scope sebuah program lalu jalankan scan pertama — hasilnya muncul di sini, lengkap distribusi severity &amp; monitor live.</p>
+      <div class="empty-cta">
+        <a class="btn primary" href="/programs/edit"><svg class="ico"><use href="#i-plus"/></svg>Buat program</a>
+        <a class="btn" href="/scan"><svg class="ico"><use href="#i-radio"/></svg>Jalankan scan</a>
+      </div>
     </div>
     {{end}}
   </div>
 
-  <div class="panel">
-    <div class="panel-head"><h3>Komposisi severity</h3><span class="muted small">lintas-program</span></div>
-    <div class="panel-body">
-      {{if .TotalFindings}}
-      <div class="donutwrap">
-        <div class="donut" style="background: {{.SevDonut}}">
-          <div class="donut-mid"><div class="n">{{.TotalFindings}}</div><div class="l">temuan</div></div>
-        </div>
-        <div class="sevlegend">
-          {{range .SevTotals}}<span class="lg-item {{if not .Count}}zero{{end}}"><span class="lg-dot {{sevClass .Severity}}"></span>{{.Severity}} <b>{{.Count}}</b></span>{{end}}
-        </div>
-      </div>
-      {{else}}
-      <p class="muted">Belum ada temuan untuk dirangkum.</p>
-      {{end}}
+  <!-- Monitor scan live: dimuat & diperbarui sendiri lewat HTMX (polling adaptif). -->
+  <div id="live-scans" class="panel live-scans" hx-get="/dashboard/scans" hx-trigger="load" hx-swap="outerHTML">
+    <div class="panel-head">
+      <h2>Proses scanning <span class="live-dot"></span></h2>
+      <span class="muted small">memuat…</span>
     </div>
+    <div class="panel-body"><p class="muted small">Memuat status scan…</p></div>
   </div>
-</div>
-
-<!-- Monitor scan live: dimuat & diperbarui sendiri lewat HTMX (polling adaptif). -->
-<div id="live-scans" class="panel live-scans" hx-get="/dashboard/scans" hx-trigger="load" hx-swap="outerHTML">
-  <div class="panel-head">
-    <h2>Proses scanning <span class="live-dot"></span></h2>
-    <span class="muted small">memuat…</span>
-  </div>
-  <div class="panel-body"><p class="muted small">Memuat status scan…</p></div>
 </div>
 {{end}}

@@ -10,9 +10,12 @@
 </div>
 
 {{if not .Program}}
-  <div class="empty">
-    <p>Belum ada program. <a href="/scan">Jalankan scan pertama →</a></p>
-  </div>
+  <div class="panel"><div class="empty rich">
+    <div class="empty-ico"><svg class="ico"><use href="#i-alert"/></svg></div>
+    <h3>Belum ada program</h3>
+    <p class="muted">Pilih atau buat program untuk mulai triase temuan di sini.</p>
+    <div class="empty-cta"><a class="btn primary" href="/scan"><svg class="ico"><use href="#i-radio"/></svg>Jalankan scan pertama</a></div>
+  </div></div>
 {{else}}
 
 <form method="get" action="/findings" class="filters">
@@ -62,7 +65,11 @@
       </table>
     </form>
     {{else}}
-      <div class="empty"><p class="muted">Tidak ada temuan untuk filter ini. <a href="/findings?program={{.Program}}">reset filter</a> atau jalankan scan.</p></div>
+      <div class="empty rich">
+        <div class="empty-ico"><svg class="ico"><use href="#i-alert"/></svg></div>
+        <h3>Tidak ada temuan</h3>
+        <p class="muted">Tak ada yang cocok dengan filter ini. <a href="/findings?program={{.Program}}">reset filter</a> atau jalankan scan baru.</p>
+      </div>
     {{end}}
   </div>
 
