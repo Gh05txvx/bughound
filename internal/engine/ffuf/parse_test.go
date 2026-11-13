@@ -12,7 +12,7 @@ import (
 )
 
 func TestParseSample(t *testing.T) {
-	fs, err := Parse(strings.NewReader(string(SampleJSON())), "demo", "run1")
+	fs, err := Parse(strings.NewReader(string(sampleJSON)), "demo", "run1")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}

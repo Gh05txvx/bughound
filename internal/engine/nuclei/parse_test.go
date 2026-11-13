@@ -9,7 +9,7 @@ import (
 )
 
 func TestParseSample(t *testing.T) {
-	fs, err := Parse(strings.NewReader(string(SampleJSONL())), "demo", "run1")
+	fs, err := Parse(strings.NewReader(string(sampleJSONL)), "demo", "run1")
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestParseSample(t *testing.T) {
 }
 
 func TestParseSanitizesSecrets(t *testing.T) {
-	fs, err := Parse(strings.NewReader(string(SampleJSONL())), "demo", "r")
+	fs, err := Parse(strings.NewReader(string(sampleJSONL)), "demo", "r")
 	if err != nil {
 		t.Fatal(err)
 	}

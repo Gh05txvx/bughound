@@ -22,9 +22,6 @@ func (Mock) Scan(_ context.Context, _ string, program, runID string) ([]*finding
 	return Parse(bytes.NewReader(sampleJSONL), program, runID)
 }
 
-// SampleJSONL mengembalikan output nuclei sampel (JSONL) untuk demonstrasi/test.
-func SampleJSONL() []byte { return sampleJSONL }
-
 // sampleJSONL dibangun dari struct agar newline di request/response ter-escape
 // dengan benar (satu event = satu baris), tanpa file eksternal.
 var sampleJSONL = buildSample()

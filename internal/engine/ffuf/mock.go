@@ -20,9 +20,6 @@ func (Mock) Scan(_ context.Context, _ string, program, runID string) ([]*finding
 	return Parse(bytes.NewReader(sampleJSON), program, runID)
 }
 
-// SampleJSON mengembalikan output ffuf sampel untuk demonstrasi/test.
-func SampleJSON() []byte { return sampleJSON }
-
 var sampleJSON = buildSample()
 
 func buildSample() []byte {
