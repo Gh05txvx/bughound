@@ -1,0 +1,65 @@
+{{define "ai_card"}}
+{{if .NotConfigured}}
+<div class="ai-card muted small">
+  Analisis AI belum diaktifkan.
+  {{if .CanConfig}}<a href="/ai/settings">Aktifkan di menu MCP / AI →</a>{{else}}Minta admin mengaktifkan di menu MCP / AI.{{end}}
+</div>
+{{else}}
+<div class="ai-card">
+  <div class="ai-card-top">
+    <span class="chip">{{.Engine}}</span>
+    <span class="badge {{sevClass .Severity}}">{{.Severity}}</span>
+    <span class="chip">conf {{.Confidence}}</span>
+    {{if .OWASP}}<span class="chip">{{.OWASP}}</span>{{end}}
+    <span class="ai-model muted small">via {{.Model}}</span>
+  </div>
+  <div class="ai-target mono small muted">{{if .Target.Method}}<b>{{.Target.Method}}</b> {{end}}{{.Target.URL}}{{if .Target.Parameter}} · param <b>{{.Target.Parameter}}</b>{{if .Target.ParamLocation}} ({{.Target.ParamLocation}}){{end}}{{end}}</div>
+
+  {{if .Err}}
+  <div class="ai-err small">⚠️ Gagal menghasilkan analisis: {{.Err}}
+    <button class="btn ghost small" hx-post="/ai/finding/{{.FindingID}}/regen" hx-target="#ai-card-{{.FindingID}}" hx-swap="innerHTML">Coba lagi</button>
+  </div>
+  {{end}}
+
+  {{with .Analysis}}
+  <div class="ai-dec ai-dec-{{.Decision}}">
+    {{if eq .Decision "verify_now"}}Prioritas: verifikasi sekarang
+    {{else if eq .Decision "likely_fp"}}Kemungkinan false positive
+    {{else}}Perlu info lebih dulu{{end}}
+  </div>
+  {{if .Why}}<p class="ai-why">{{.Why}}</p>{{end}}
+
+  {{if .Hypotheses}}
+  <div class="ai-sub">Uji di Burp Repeater <span class="muted small">(manual, non-destruktif)</span></div>
+  <ol class="ai-hyps">
+    {{range .Hypotheses}}
+    <li>
+      <code class="ai-mut">{{.Mutation}}</code>
+      <div class="small"><span class="muted">harapkan:</span> {{.Expected}}</div>
+      {{if .Confirms}}<div class="small"><span class="muted">membuktikan:</span> {{.Confirms}}</div>{{end}}
+    </li>
+    {{end}}
+  </ol>
+  {{end}}
+  {{if .Notes}}<p class="muted small">{{.Notes}}</p>{{end}}
+  {{end}}
+
+  {{if and (not .Err) (not .Analysis)}}
+  <p class="muted small">Belum ada analisis.</p>
+  {{end}}
+
+  {{if and .Analysis (not .Analysis.Hypotheses)}}
+    {{if .SeedHints}}<div class="small"><span class="muted">benih uji (deterministik):</span> {{join .SeedHints "; "}}</div>{{end}}
+  {{end}}
+
+  <div class="ai-safety small">⚠️ {{.Safety}}</div>
+
+  {{if .Analysis}}
+  <div class="ai-foot muted small">
+    {{if .Cached}}dari cache{{else}}baru dibuat{{end}}{{if .GeneratedAt}} · {{.GeneratedAt}}{{end}}
+    <button class="btn ghost small" hx-post="/ai/finding/{{.FindingID}}/regen" hx-target="#ai-card-{{.FindingID}}" hx-swap="innerHTML">Regenerasi</button>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}

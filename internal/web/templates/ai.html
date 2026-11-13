@@ -1,0 +1,54 @@
+{{define "content"}}
+<div class="panel">
+  <div class="panel-head"><h3>MCP / AI — analisis what-if dengan Claude</h3></div>
+  <p class="muted">
+    Menu ini menghubungkan BugHound ke <b>Claude API</b> memakai API key milikmu. Saat sebuah
+    temuan dibuka, BugHound mengirim <b>konteks temuan yang sudah discrub</b> ke Claude untuk
+    menghasilkan <b>kartu what-if</b> (hipotesis + rencana validasi manual) yang tampil langsung
+    di detail temuan.
+  </p>
+  <ul class="list small muted">
+    <li>🔒 <b>API key = secret</b>: tersimpan terenkripsi di vault, teredaksi, tak pernah ke log/report/commit; setiap akses ter-audit.</li>
+    <li>🌐 <b>Egress terbatas</b>: hanya ke <span class="mono">api.anthropic.com</span> (kontrol-plane), terpisah dari scope guard scan. Aktif hanya bila key terpasang.</li>
+    <li>✂️ <b>Evidence discrub</b> sebelum dikirim (header/kredensial/PII diredaksi + dipotong).</li>
+    <li>🧭 <b>Advisory</b>: saran uji non-destruktif untuk dijalankan manual di Burp — tanpa auto-submit. Hasil di-cache per temuan (hemat biaya API-mu).</li>
+  </ul>
+</div>
+
+{{if .Saved}}<div class="panel ok-flash"><span class="chip ok">tersimpan</span> Setelan AI diperbarui.</div>{{end}}
+
+{{if not .Available}}
+<div class="panel"><p class="muted">Fitur AI tak tersedia: store atau vault tidak dikonfigurasi pada instance ini.</p></div>
+{{else}}
+<div class="panel">
+  <div class="panel-head"><h3>Konfigurasi</h3>
+    {{if .KeyPresent}}<span class="pill st-confirmed small">API key terpasang</span>{{else}}<span class="pill st-new small">belum ada API key</span>{{end}}
+  </div>
+
+  <form method="post" action="/ai/settings" class="edit" autocomplete="off">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label class="fld">API key Claude
+      <input type="password" name="api_key" placeholder="{{if .KeyPresent}}••••••••  (kosongkan untuk pertahankan yang ada){{else}}sk-ant-...{{end}}" autocomplete="new-password">
+      <span class="muted small">
+        {{if .KeyPresent}}Terpasang{{if .KeyUpdated}} · diperbarui {{.KeyUpdated}}{{end}}. Isi hanya bila ingin mengganti.{{else}}Dapatkan dari console Anthropic. Disimpan terenkripsi.{{end}}
+      </span>
+    </label>
+    <label class="fld">Model
+      <select name="model">
+        {{range .Models}}<option value="{{.ID}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+      <span class="muted small">Biaya dibebankan ke API key-mu. Sonnet = seimbang; Haiku = termurah; Opus = terdalam.</span>
+    </label>
+    <button class="btn primary" type="submit">Simpan</button>
+  </form>
+
+  {{if .KeyPresent}}
+  <form method="post" action="/ai/key/delete" class="mt" onsubmit="return confirm('Hapus API key Claude? Fitur analisis AI akan nonaktif.');">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn danger" type="submit">Hapus API key</button>
+    <span class="muted small">Menonaktifkan analisis AI. Cache analisis yang sudah ada tetap tersimpan sampai temuan di-regenerasi.</span>
+  </form>
+  {{end}}
+</div>
+{{end}}
+{{end}}

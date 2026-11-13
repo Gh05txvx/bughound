@@ -97,6 +97,23 @@ func (s *SQLite) init() error {
 			k TEXT PRIMARY KEY,
 			v TEXT NOT NULL
 		);`,
+		// Cache analisis what-if AI per temuan (BH analyst/MCP di web). Hanya bagian
+		// yang ditalar LLM yang disimpan; dibuang/diregenerasi bila source_hash basi.
+		// Rahasia (API key) TIDAK di sini — itu di vault terenkripsi.
+		`CREATE TABLE IF NOT EXISTS ai_analysis (
+			finding_id  TEXT PRIMARY KEY,
+			program     TEXT NOT NULL,
+			model       TEXT NOT NULL,
+			source_hash TEXT NOT NULL,
+			payload     TEXT NOT NULL,
+			created_at  TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_ai_program ON ai_analysis(program);`,
+		// Setelan aplikasi non-rahasia (mis. model Claude terpilih untuk analisis AI).
+		`CREATE TABLE IF NOT EXISTS app_settings (
+			k TEXT PRIMARY KEY,
+			v TEXT NOT NULL
+		);`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {

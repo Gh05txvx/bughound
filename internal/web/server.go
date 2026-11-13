@@ -77,6 +77,8 @@ type Server struct {
 	sastRoot       string         // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
 	grpcEngine     grpc.Scanner   // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
 	geo            geoip.Resolver // lookup negara/ASN IP egress (offline; Nop bila DB tak dimuat)
+	aistore        store.AIStore  // cache analisis AI + setelan model; nil bila store tak mendukung
+	aiGen          sync.Map       // id temuan → *sync.Mutex: satu generate AI in-flight per temuan
 
 	captureMu sync.Mutex
 	captures  map[string]*captureSession // sesi capture reverse-proxy aktif per program
@@ -196,6 +198,11 @@ func NewServer(cfg Config) (*Server, error) {
 	if cs, ok := cfg.Store.(store.CatalogStore); ok {
 		s.catalog = cs
 	}
+	// Cache analisis AI + setelan model (AIStore). Bila store tak mendukung, menu
+	// MCP/AI & kartu what-if degradasi mulus (nonaktif) tanpa nil-panic.
+	if as, ok := cfg.Store.(store.AIStore); ok {
+		s.aistore = as
+	}
 	s.routes()
 	return s, nil
 }
@@ -309,6 +316,10 @@ func (s *Server) authUser(r *http.Request) (string, auth.Role, bool) {
 func authorize(role auth.Role, r *http.Request) bool {
 	switch {
 	case r.URL.Path == "/users" || strings.HasPrefix(r.URL.Path, "/users/"):
+		return auth.CanAdmin(role)
+	// Setelan AI menyimpan API key (secret) → khusus admin. Kartu what-if
+	// (/ai/finding/...) tak di sini: ikut aturan default (GET=baca, regen POST=tulis).
+	case r.URL.Path == "/ai/settings" || strings.HasPrefix(r.URL.Path, "/ai/key/"):
 		return auth.CanAdmin(role)
 	case r.URL.Path == "/logout":
 		return role.Valid()
@@ -751,6 +762,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /settings", s.handleSettings)
 	s.mux.HandleFunc("POST /settings/secrets", s.handleAddSecret)
 	s.mux.HandleFunc("POST /settings/secrets/delete", s.handleDeleteSecret)
+	// MCP/AI: setelan (admin — menyentuh secret) + kartu what-if per temuan (baca).
+	s.mux.HandleFunc("GET /ai/settings", s.handleAISettings)
+	s.mux.HandleFunc("POST /ai/settings", s.handleAISettingsSave)
+	s.mux.HandleFunc("POST /ai/key/delete", s.handleAIKeyDelete)
+	s.mux.HandleFunc("GET /ai/finding/{id}", s.handleAIFinding)
+	s.mux.HandleFunc("POST /ai/finding/{id}/regen", s.handleAIFindingRegen)
 	s.mux.HandleFunc("GET /audit", s.handleAudit)
 }
 
@@ -3039,6 +3056,7 @@ func parseTemplates(version, engineLbl, reconLbl string) (map[string]*template.T
 		"report":       {"templates/base.html", "templates/report.html"},
 		"report_print": {"templates/report_print.html"},
 		"settings":     {"templates/base.html", "templates/settings.html"},
+		"ai":           {"templates/base.html", "templates/ai.html", "templates/ai_card.html"},
 		"audit":        {"templates/base.html", "templates/audit.html"},
 		"programs":     {"templates/base.html", "templates/programs.html"},
 		"program_edit": {"templates/base.html", "templates/program_edit.html", "templates/program_preview.html"},

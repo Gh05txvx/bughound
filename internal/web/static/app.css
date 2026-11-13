@@ -485,3 +485,23 @@ a.btn { display: inline-flex; }
   .hero-grid { grid-template-columns: 1fr; }
   .hero-figure { border-right: 0; padding-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
 }
+
+/* ---- Kartu analisis AI (what-if) di detail temuan ---- */
+.mt { margin-top: 12px; }
+.ai-card { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-1); padding: 12px 14px; margin: 2px 0 4px; }
+.ai-card-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; margin-bottom: 6px; }
+.ai-card-top .ai-model { margin-left: auto; }
+.ai-target { margin-bottom: 8px; word-break: break-all; }
+.ai-dec { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 3px 9px; border-radius: 999px; margin-bottom: 8px; border: 1px solid var(--line-2); }
+.ai-dec-verify_now { background: var(--ok-dim); border-color: #2c5a3c; color: #9be3b6; }
+.ai-dec-likely_fp { background: var(--bg-2); color: var(--fg-dim); }
+.ai-dec-needs_more_info { background: var(--warn-dim); border-color: #5a4a1c; color: #e8cf86; }
+.ai-why { margin: 2px 0 10px; color: var(--fg); line-height: 1.5; }
+.ai-sub { font-size: 12px; color: var(--fg-dim); margin: 8px 0 6px; }
+.ai-hyps { margin: 0 0 8px; padding-left: 18px; display: flex; flex-direction: column; gap: 9px; }
+.ai-hyps li { line-height: 1.45; }
+.ai-mut { display: inline-block; background: var(--bg-elev); border: 1px solid var(--line-2); border-radius: 6px; padding: 2px 7px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #d8d2ff; word-break: break-all; }
+.ai-err { background: var(--danger-dim); border: 1px solid #5a2a1c; border-radius: 8px; padding: 8px 10px; margin: 6px 0; color: #efb9ab; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-safety { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); color: var(--warn); }
+.ai-foot { margin-top: 10px; display: flex; align-items: center; gap: 10px; }
+.ai-foot .btn { margin-left: auto; }

@@ -27,6 +27,10 @@ type Mem struct {
 	catalog        []payload.Entry
 	catalogSources []payload.SourceInfo
 	catalogBuiltAt time.Time
+
+	// Cache analisis AI per temuan + setelan aplikasi non-rahasia (AIStore).
+	aiAnalyses map[string]AIAnalysis
+	settings   map[string]string
 }
 
 // NewMem membuat store in-memory kosong.

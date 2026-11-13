@@ -36,6 +36,11 @@
 <ul class="list">{{range .References}}<li class="mono truncate">{{.}}</li>{{end}}</ul>
 {{end}}
 
+<h4>Analisis AI <span class="muted small">(what-if · rencana validasi manual di Burp)</span></h4>
+<div id="ai-card-{{.ID}}" hx-get="/ai/finding/{{.ID}}" hx-trigger="load" hx-swap="innerHTML">
+  <div class="ai-card muted small">memuat analisis AI…</div>
+</div>
+
 <h4>Lengkapi draft <span class="muted small">(untuk report; repro &amp; dampak)</span></h4>
 <form class="edit" hx-post="/findings/{{.ID}}/edit" hx-target="#detail" hx-swap="innerHTML">
   <label class="fld">Deskripsi
