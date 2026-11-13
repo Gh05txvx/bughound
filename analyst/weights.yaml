@@ -1,0 +1,190 @@
+# Bobot & mapping SPK (SAW). Σ weights wajib = 1.0 (divalidasi saat load).
+# Semua di sini TUNABLE tanpa ubah kode — inti dari "explainable decision support".
+
+weights:
+  exploitability: 0.26   # C1 benefit — conf × keaktifan engine
+  signal:         0.22   # C2 benefit — sinyal payout per kelas (anti header-noise)
+  bounty:         0.16   # C3 benefit — potensi bounty (scope max_severity bila ada)
+  severity:       0.12   # C4 benefit — severity scanner (sengaja rendah: sering menggelembung utk passive)
+  fp_likelihood:  0.12   # C5 cost
+  effort:         0.06   # C6 cost
+  owasp:          0.04   # C7 benefit
+  freshness:      0.02   # C8 benefit
+
+# Tipe kriteria: benefit (makin besar makin baik) / cost (makin kecil makin baik).
+types:
+  exploitability: benefit
+  signal:         benefit
+  bounty:         benefit
+  severity:       benefit
+  fp_likelihood:  cost
+  effort:         cost
+  owasp:          benefit
+  freshness:      benefit
+
+# Faktor keaktifan engine untuk C1 exploitability.
+engine_factor:
+  nuclei-dast: 1.0
+  dalfox:      1.0
+  nuclei:      0.8
+  zap:         0.8
+  ffuf:        0.7
+  retire:      0.5
+  zap-passive: 0.5
+  sast:        0.5
+  _default:    0.6
+
+# Sinyal payout (C2) per kelas kerentanan — substring match (lowercase) atas
+# type+title+tags. high→1.0 (eksploitatif/berbayar), noise→0.1 (hygiene/header,
+# nyaris won't-pay di bug bounty), selain itu 0.5. Lever utama anti header-noise.
+signal_patterns:
+  high:
+    - sqli
+    - sql-injection
+    - nosql
+    - xss
+    - cross-site-scripting
+    - rce
+    - remote-code
+    - command-injection
+    - os-command
+    - ssrf
+    - server-side-request
+    - xxe
+    - xml-external
+    - idor
+    - bola
+    - broken-access
+    - authorization-bypass
+    - auth-bypass
+    - authentication-bypass
+    - login-bypass
+    - path-traversal
+    - directory-traversal
+    - lfi
+    - local-file
+    - rfi
+    - remote-file
+    - deserial
+    - ssti
+    - template-injection
+    - prototype-pollution
+    - exposed-panel
+    - exposed-admin
+    - admin-panel
+    - exposed-config
+    - config-exposure
+    - backup-file
+    - .git
+    - git-config
+    - .env
+    - env-file
+    - secret
+    - api-key
+    - apikey
+    - access-key
+    - private-key
+    - credential
+    - token-leak
+    - hardcoded
+    - takeover
+    - subdomain-takeover
+    - unrestricted-upload
+    - file-upload
+    # path-juicy (dicocokkan juga atas URL path lewat signal `extra`):
+    - backup
+    - .sql
+    - .bak
+    - .svn
+    - wp-admin
+    - phpmyadmin
+    - actuator
+  noise:
+    - content-security-policy
+    - csp
+    - sub-resource-integrity
+    - subresource-integrity
+    - clickjacking
+    - anti-clickjacking
+    - x-frame
+    - frame-options
+    - strict-transport
+    - hsts
+    - samesite
+    - cookie-with
+    - cookie-without
+    - httponly
+    - secure-flag
+    - referrer-policy
+    - permissions-policy
+    - feature-policy
+    - x-content-type
+    - content-type-options
+    - nosniff
+    - x-xss-protection
+    - x-powered-by
+    - server-version
+    - banner
+    - version-disclosure
+    - timestamp-disclosure
+    - cache-control
+    - mixed-content
+    - autocomplete
+    - cross-domain-javascript
+    - cross-domain-script
+    - tls-version
+    - deprecated-tls
+    - weak-cipher
+    - ssl-certificate
+    - self-signed
+    - private-ip-disclosure
+    - internal-ip
+    - viewstate
+  # path "membosankan": file standar (bukan kerentanan) — menurunkan exposed-path
+  # NETRAL ke noise agar endpoint nyata (/search, /signup) naik di atas file statis.
+  boring:
+    - robots.txt
+    - sitemap
+    - favicon
+    - .well-known
+    - security.txt
+    - humans.txt
+    - healthz
+    - health
+    - manifest.json
+    - service-worker
+    - crossdomain.xml
+    - ads.txt
+
+# Prioritas kategori OWASP 2021 (C7), skala 1..5.
+owasp_priority:
+  A01: 5   # Broken Access Control
+  A02: 4   # Cryptographic Failures
+  A03: 5   # Injection
+  A04: 3   # Insecure Design
+  A05: 3   # Security Misconfiguration
+  A06: 3   # Vulnerable & Outdated Components
+  A07: 4   # Identification & Authentication Failures
+  A08: 3   # Software & Data Integrity Failures
+  A09: 2   # Security Logging & Monitoring Failures
+  A10: 4   # SSRF
+  _default: 2
+
+# Estimasi effort verifikasi (C6) per tipe — substring match, lowercase.
+effort_by_type:
+  reflected:    1
+  xss:          1
+  sqli:         2
+  injection:    2
+  idor:         2
+  access:       2
+  blind:        3
+  second-order: 3
+  ssrf:         3
+  _default:     2
+
+# Prior heuristik (tunable). Flood ffuf = banyak exposed-path pada satu host →
+# kemungkinan soft-404/wildcard (server balas 200 utk hampir semua path) → fp dinaikkan.
+heuristics:
+  ffuf_flood_threshold: 8   # >=N exposed-path ffuf per host memicu prior
+  ffuf_flood_fp: 0.6        # fp_likelihood minimal yang dipaksakan saat flood
