@@ -21,7 +21,8 @@ try:
 except ImportError:
     pass
 
-from bughound_analyst import analyst, config, saw, whatif
+from bughound_analyst import analyst, config, saw
+from bughound_analyst import whatif as whatif_mod  # alias: tool `whatif` di bawah menaungi nama modul
 from bughound_analyst.client import BughoundClient
 
 # mcp 2.x me-rename FastMCP → MCPServer (API tool/run kompatibel). Dukung keduanya:
@@ -73,7 +74,7 @@ def _rank_payload(program: str, top: int) -> List[Dict]:
 def _whatif_payload(program: str, finding_id: str) -> Dict:
     for r in _pipeline(program):
         if r["finding"].id == finding_id:
-            return whatif.build_whatif(r)
+            return whatif_mod.build_whatif(r)
     return {"error": f"temuan {finding_id!r} tak ada di hasil ter-ranking program {program!r}"}
 
 
