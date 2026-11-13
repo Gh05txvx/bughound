@@ -46,7 +46,7 @@
         <tr>
           <td class="prog mono">{{.Program}}</td>
           <td>
-            {{if .Total}}<span class="sevbar sevmini" title="distribusi severity">{{range .Severities}}<span class="seg {{sevClass .Severity}}" style="flex-grow:{{.Count}}"></span>{{end}}</span>
+            {{if .Total}}<span class="sevbar sevmini" role="img" aria-label="distribusi severity">{{range .Severities}}<span class="seg {{sevClass .Severity}}" style="flex-grow:{{.Count}}" title="{{.Severity}}: {{.Count}}"></span>{{end}}</span>
             {{else}}<span class="muted">—</span>{{end}}
           </td>
           <td class="mono">{{.Total}}</td>
