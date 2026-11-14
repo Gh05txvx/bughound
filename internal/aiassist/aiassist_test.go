@@ -48,8 +48,12 @@ func TestSeedHintsFor(t *testing.T) {
 	if got := SeedHintsFor("", "Reflected XSS di q"); len(got) == 0 {
 		t.Fatal("fallback ke title gagal (xss)")
 	}
-	// Kelas yang benar-benar tak dikenal → nil (clickjacking tak cocok key apa pun).
-	if got := SeedHintsFor("clickjacking", "X-Frame-Options hilang"); got != nil {
+	// clickjacking kini dikenal (key "clickjack"; title "X-Frame-Options" cocok "x-frame").
+	if got := SeedHintsFor("clickjacking", "X-Frame-Options hilang"); len(got) == 0 {
+		t.Fatal("clickjacking harus punya seed hints")
+	}
+	// Kelas yang benar-benar tak dikenal → nil.
+	if got := SeedHintsFor("business-logic-flaw", ""); got != nil {
 		t.Fatalf("kelas tak dikenal harus nil, dapat %v", got)
 	}
 }
@@ -71,6 +75,11 @@ func TestSeedHintsForRouting(t *testing.T) {
 		{"jwt-alg-none", "", "alg:none", ""},
 		{"ssti-detect", "", "{{7*7}}", ""},
 		{"cors-misconfig", "", "ACAO", ""},
+		{"local-file-inclusion-lfi", "", "%2e%2e%2f", ""},                   // lfi → hintLFI
+		{"path-traversal", "", "%2e%2e%2f", ""},                            // traversal → hintLFI
+		{"host-header-injection", "", "X-Forwarded-Host", "Boolean true"},  // host-header menang atas "injection" generik (ordering)
+		{"clickjacking", "", "frame-ancestors", ""},                        // clickjack
+		{"x-frame-options-missing", "", "frame-ancestors", ""},             // x-frame → hintClickjack
 		{"", "Reflected XSS", "svg", ""}, // fallback ke title
 	}
 	for _, c := range cases {

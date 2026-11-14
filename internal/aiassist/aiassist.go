@@ -200,6 +200,19 @@ var (
 		"Konfirmasi versi komponen dari banner/aset (baca-saja).",
 		"Cocokkan ke advisory; nilai apakah pra-syarat PoC publik terpenuhi SEBELUM menguji.",
 	}
+	hintLFI = []string{
+		"Bypass filter path (baca-saja): `%2e%2e%2f`, `....//`, `..%2f`, akhiran `%00`/`%2500` → amati apakah normalisasi dilewati.",
+		"Konfirmasi dgn berkas benign yang pasti ada (mis. `/etc/hostname` bila RoE izinkan) lalu banding vs path normal; JANGAN tarik berkas kredensial atau enumerasi masif.",
+		"Nilai potensi LFI→RCE (wrapper/log) hanya sebagai CATATAN hipotesis; jangan picu teknik yang menulis/meracuni berkas.",
+	}
+	hintHostHeader = []string{
+		"Set `Host:` atau `X-Forwarded-Host: evil.test` → amati apakah dipantulkan di link absolut/redirect/respons (baca-saja).",
+		"Catat potensi keracunan reset-password/cache via Host sebagai HIPOTESIS; jangan picu email massal atau tulis ke cache bersama.",
+	}
+	hintClickjack = []string{
+		"Cek `X-Frame-Options` / CSP `frame-ancestors` — bila absen/longgar, konfirmasi framing dgn halaman PoC HTML LOKAL milikmu (tak dikirim ke target).",
+		"Nilai apakah ada aksi sensitif satu-klik yang layak di-UI-redress; dampak nyata butuh interaksi korban.",
+	}
 )
 
 var seedHints = []struct {
@@ -213,15 +226,21 @@ var seedHints = []struct {
 	{"sql", []string{"Boolean: `' OR 1=1--` vs `' AND 1=2--` → banding ukuran/isi.", "Time-based ringan: `'||SLEEP(5)` / `';WAITFOR DELAY '0:0:5'--` (non-destruktif).", "Error-based: satu `'` → cari galat SQL."}},
 	{"ssti", []string{"Probe polyglot: `${7*7}` / `{{7*7}}` / `#{7*7}` → cari `49`.", "Tentukan engine dari sintaks yang ter-evaluasi; jangan sentuh objek berbahaya."}},
 	{"xxe", []string{"Deklarasikan entity internal benign → cek ekspansi di respons.", "Uji apakah DOCTYPE/DTD diterima; JANGAN tarik berkas sistem/OOB tanpa RoE."}},
+	{"lfi", hintLFI},
+	{"traversal", hintLFI},
 	{"ssrf", []string{"Arahkan ke callback TERKENDALI milikmu (OAST) — hormati RoE.", "Metadata cloud `169.254.169.254` HANYA bila eksplisit in-scope.", "Banding respons host internal vs eksternal (baca-saja)."}},
 	{"xss", []string{"Context-break reflektif: `\"><svg onload=…>`.", "Tentukan konteks (HTML/atribut/JS) lalu sesuaikan pemutus escape.", "Cek apakah output ter-encode di satu konteks tapi lolos di lain."}},
-	{"idor", []string{"Naik/turunkan id objek (baca-saja).", "Tukar ke id milik akun lain → amati apakah data bocor.", "Ubah method/representasi (GET vs POST) untuk endpoint sama."}},
-	{"redirect", []string{"Set tujuan ke host eksternal terkendali → cek Location/redirect diikuti.", "Coba varian: `//evil.test`, `/\\evil.test`, `https:evil.test`."}},
+	{"idor", []string{"Naik/turunkan id objek (baca-saja).", "Tukar ke id milik akun lain → amati apakah data bocor.", "Ubah method/representasi (GET vs POST) untuk endpoint sama.", "CHAIN (catatan): bila bocor PII/token/reset, nilai jalur ke account takeover — hanya di akun UJI milikmu."}},
+	{"redirect", []string{"Set tujuan ke host eksternal terkendali → cek Location/redirect diikuti.", "Coba varian: `//evil.test`, `/\\evil.test`, `https:evil.test`.", "Bila ada allowlist: sisipkan host allowlisted sbg substring/param (`https://evil.test/?x=allowed.host`, `https://allowed.host@evil.test`) → cek apakah filter dilewati (baca-saja).", "CHAIN (catatan): open-redirect sering menguatkan SSRF atau pencurian token OAuth `redirect_uri` — telusuri hanya bila in-scope & RoE izinkan."}},
+	{"host-header", hintHostHeader},
 	{"jwt", []string{"Uji `alg:none` (hapus signature) → cek apakah diterima.", "Coba RS256→HS256 pakai public key sebagai secret (bila bocor).", "Ubah klaim non-kritis → cek apakah signature diverifikasi."}},
-	{"cors", []string{"`Origin: https://evil.test` → cek ACAO memantulkannya + ACAC:true.", "Uji origin `null` & subdomain acak."}},
+	{"cors", []string{"`Origin: https://evil.test` → cek ACAO memantulkannya + ACAC:true.", "Uji origin `null` & subdomain acak.", "CHAIN (catatan): ACAO yang memantulkan origin + ACAC:true → origin penyerang bisa baca respons ber-kredensial (jalur ke ATO); konfirmasi baca-saja."}},
 	{"csrf", []string{"Ulang aksi state-changing tanpa token/Origin di akun UJI milikmu → cek diterima.", "Periksa atribut SameSite cookie sesi."}},
 	{"graphql", hintGraphql},
 	{"introspect", hintGraphql},
+	{"clickjack", hintClickjack},
+	{"x-frame", hintClickjack},
+	{"secret", hintExposure},
 	{"expos", hintExposure},
 	{"disclosure", hintExposure},
 	{"upload", []string{"Unggah berkas BENIGN (teks/gambar kecil) → cek validasi tipe/ekstensi/nama.", "Cek apakah path hasil upload dapat dieksekusi — JANGAN unggah webshell."}},
