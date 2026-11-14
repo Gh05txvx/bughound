@@ -210,7 +210,13 @@ func (k *Katana) bin() string {
 }
 
 func (k *Katana) args() []string {
-	a := []string{"-silent"}
+	// -jc: crawl JS — ekstrak endpoint dari bundel JS (route/endpoint API SPA yang
+	// tak terlihat di HTML statis). Statis, TANPA headless/browser. -d 3: depth
+	// eksplisit (deterministik lintas-versi, konservatif). Permukaan hasil recon ini
+	// memberi makan SEMUA engine non-crawling (nuclei/ffuf/zap/dalfox) lewat
+	// orchestrator, jadi crawl yang dangkal mengecilkan recall seluruh roster.
+	// Tetap unauth + lewat proxy egress/scope guard/rate limiter (lihat Crawl).
+	a := []string{"-silent", "-jc", "-d", "3"}
 	if k.proxyAddr != "" {
 		a = append(a, "-proxy", "http://"+k.proxyAddr)
 	}

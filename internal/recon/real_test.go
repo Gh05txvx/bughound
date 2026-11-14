@@ -32,6 +32,18 @@ func TestKatanaProxyArg(t *testing.T) {
 	}
 }
 
+// TestKatanaCrawlArgs mengunci crawl recon yang cukup dalam utk SPA: -jc (crawl JS,
+// endpoint di bundel) + depth eksplisit. Tanpa ini recon dangkal → recall seluruh
+// roster (nuclei/ffuf/zap/dalfox) mengecil karena permukaan serang sedikit.
+func TestKatanaCrawlArgs(t *testing.T) {
+	got := strings.Join((&Katana{}).args(), " ")
+	for _, want := range []string{"-silent", "-jc", "-d 3"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("katana args harus memuat %q (crawl SPA/JS); dapat: %s", want, got)
+		}
+	}
+}
+
 // UseProxy harus mengarahkan HANYA tahap aktif (httpx, katana), bukan subfinder.
 func TestRealPipelineUseProxyActiveOnly(t *testing.T) {
 	p := NewRealPipelineRate(0)
