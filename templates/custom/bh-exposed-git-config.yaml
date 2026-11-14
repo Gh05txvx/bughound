@@ -1,0 +1,33 @@
+id: bh-exposed-git-config
+
+info:
+  name: Exposed .git/config (VCS metadata disclosure)
+  author: bughound
+  severity: medium
+  description: |
+    Direktori .git terekspos di webroot. File .git/config bisa diambil tanpa
+    autentikasi, membocorkan URL remote, nama branch, dan kadang kredensial
+    tertanam. Seluruh source code sering dapat direkonstruksi dari direktori .git.
+    Deteksi READ-ONLY: hanya satu GET, tanpa menulis/mengubah keadaan target.
+  reference:
+    - https://owasp.org/www-community/attacks/Code_Review_of_Git_Repositories
+    - https://cwe.mitre.org/data/definitions/538.html
+  classification:
+    cwe-id: CWE-538
+  tags: exposure,git,config,misconfig,bughound
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/config"
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "[core]"
+          - "repositoryformatversion"
+        condition: and
+      - type: status
+        status:
+          - 200

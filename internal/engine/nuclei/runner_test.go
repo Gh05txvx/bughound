@@ -56,3 +56,37 @@ func TestRunnerBuildArgsNonDestructive(t *testing.T) {
 		}
 	}
 }
+
+// Runner custom Bank Payload: TemplatesDir → `-t <dir>` (HANYA template custom).
+func TestRunnerBuildArgsTemplatesDir(t *testing.T) {
+	r := &Runner{TemplatesDir: "./templates/custom"}
+	got := strings.Join(r.buildArgs("https://demo.test"), " ")
+	if !strings.Contains(got, "-t ./templates/custom") {
+		t.Errorf("runner custom harus memuat -t <dir>; dapat: %s", got)
+	}
+	// Non-destruktif tetap dipaksa walau runner custom.
+	if !strings.Contains(got, "-exclude-tags dos,smuggling") {
+		t.Errorf("runner custom tetap wajib non-destruktif; dapat: %s", got)
+	}
+}
+
+// Tanpa TemplatesDir (runner nuclei resmi) → TIDAK ada flag -t (pakai set penuh).
+func TestRunnerBuildArgsNoTemplatesDir(t *testing.T) {
+	got := strings.Join((&Runner{}).buildArgs("https://demo.test"), " ")
+	if strings.Contains(got, " -t ") {
+		t.Errorf("runner nuclei resmi tak boleh membatasi -t; dapat: %s", got)
+	}
+}
+
+// Name() membedakan runner custom dari runner nuclei resmi untuk roster/log.
+func TestRunnerName(t *testing.T) {
+	if n := (&Runner{}).Name(); n != "nuclei" {
+		t.Errorf("tanpa TemplatesDir Name()=%q, mau \"nuclei\"", n)
+	}
+	if n := (&Runner{TemplatesDir: "  "}).Name(); n != "nuclei" {
+		t.Errorf("TemplatesDir hanya spasi harus dianggap kosong, Name()=%q", n)
+	}
+	if n := (&Runner{TemplatesDir: "./templates/custom"}).Name(); n != "nuclei-custom" {
+		t.Errorf("dengan TemplatesDir Name()=%q, mau \"nuclei-custom\"", n)
+	}
+}

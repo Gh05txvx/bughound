@@ -1,0 +1,37 @@
+id: bh-exposed-env-file
+
+info:
+  name: Exposed .env file (environment secrets disclosure)
+  author: bughound
+  severity: high
+  description: |
+    File .env aplikasi terekspos di webroot dan dapat diambil tanpa autentikasi.
+    File ini umumnya berisi kredensial basis data, kunci API, dan rahasia aplikasi
+    lain. Deteksi READ-ONLY: hanya satu GET; cocokkan pola kunci di awal baris,
+    bukan nilainya, agar rahasia tak diseret ke evidence lebih dari perlu.
+  reference:
+    - https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
+    - https://cwe.mitre.org/data/definitions/200.html
+  classification:
+    cwe-id: CWE-200
+  tags: exposure,env,secret,misconfig,bughound
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+    matchers-condition: and
+    matchers:
+      - type: regex
+        part: body
+        regex:
+          - "(?m)^\\s*(APP_KEY|APP_ENV|DB_(HOST|PORT|USERNAME|PASSWORD|DATABASE)|AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)|SECRET_KEY|API_?KEY|JWT_SECRET)\\s*="
+      - type: status
+        status:
+          - 200
+      # Hindari false-positive SPA/catch-all yang mengembalikan HTML untuk semua path.
+      - type: word
+        part: header
+        words:
+          - "text/html"
+        negative: true

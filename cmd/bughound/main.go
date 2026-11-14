@@ -183,6 +183,13 @@ func main() {
 	var rec recon.Engine
 	var engineFactory func(rps float64, sel web.Selection) ([]engine.Engine, recon.Engine)
 	names, useMock := parseEngineMode(*engineMode)
+	// Dir template deteksi custom Bank Payload (flag → env BUGHOUND_CUSTOM_TEMPLATES).
+	// Dipakai bersama oleh runner "nuclei-custom" (roster) & DefaultSources (katalog)
+	// agar keduanya menunjuk direktori yang sama. Kosong = tak ada runner custom.
+	customDir := strings.TrimSpace(*customTemplates)
+	if customDir == "" {
+		customDir = strings.TrimSpace(os.Getenv("BUGHOUND_CUSTOM_TEMPLATES"))
+	}
 	if useMock {
 		engines = []engine.Engine{nuclei.Mock{}, ffuf.Mock{}, zap.Mock{}}
 		rec = recon.MockPipeline{}
@@ -222,6 +229,18 @@ func main() {
 					// volume dibatasi worker+delay; tanpa proxy = tak ada koneksi
 					// (fail-safe). Non-destruktif; temuan = kandidat (draft→verify).
 					es = append(es, &dalfox.Runner{RateLimit: rate, Stealth: sel.Stealth})
+				case "nuclei-custom":
+					// Runner nuclei KHUSUS template deteksi custom Bank Payload
+					// (BH-SPEC-PAYLOAD): `-t <customDir>` → HANYA menjalankan template
+					// read-only milik sendiri, TERPISAH dari runner "nuclei" resmi yang
+					// menjalankan set bawaan penuh. Non-destruktif tetap dipaksa di
+					// buildArgs. Tanpa customDir (flag/env kosong) = dilewati diam-diam.
+					// Sengaja TIDAK memakai sel.Tags/Severity: dir custom sudah kecil &
+					// terkurasi — biar semua template custom jalan, tak terpangkas
+					// seleksi scan utama (mis. user memilih tag "sqli" untuk nuclei).
+					if customDir != "" {
+						es = append(es, &nuclei.Runner{RateLimit: rate, TemplatesDir: customDir})
+					}
 				}
 			}
 			if sel.Stealth {
@@ -231,7 +250,7 @@ func main() {
 		}
 		engines, rec = engineFactory(0, web.Selection{}) // instance representatif (laju default, semua template) utk validasi & fallback
 		if len(engines) == 0 {
-			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap,retire,nuclei-dast,dalfox)", *engineMode)
+			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap,retire,nuclei-dast,dalfox,nuclei-custom)", *engineMode)
 		}
 		// Rantai recon dari Name() pipeline agar log tak basi saat tahapnya berubah.
 		log.Printf("engine: NYATA (%s) + %s — egress HTTP lewat proxy scope guard; naabu (TCP langsung) hanya ke host in-scope · throttle per-engine aktif (laju dari rps scan, default %d/dtk)", strings.Join(names, ", "), rec.Name(), engineRate(0))
@@ -239,6 +258,13 @@ func main() {
 		for _, n := range names {
 			if n == "ffuf" && strings.TrimSpace(*ffufWordlist) == "" {
 				log.Printf("ffuf: -ffuf-wordlist kosong, memakai wordlist bawaan")
+			}
+			if n == "nuclei-custom" {
+				if customDir == "" {
+					log.Printf("nuclei-custom: AKTIF di roster tapi dir template custom kosong (set -custom-templates / BUGHOUND_CUSTOM_TEMPLATES) — runner dilewati, tak ada yang dijalankan")
+				} else {
+					log.Printf("nuclei-custom: menjalankan HANYA template custom read-only dari %q (terpisah dari nuclei set penuh); non-destruktif dipaksa", customDir)
+				}
 			}
 			if n == "zap" {
 				m := strings.ToLower(strings.TrimSpace(*zapMode))
@@ -293,7 +319,7 @@ func main() {
 
 	// Bank Payload (BH-SPEC-PAYLOAD): sumber template yang di-scan saat refresh
 	// katalog. Hanya membaca berkas lokal (tanpa jaringan); aman di mode apa pun.
-	payloadSources := payload.DefaultSources(*nucleiTemplates, *customTemplates)
+	payloadSources := payload.DefaultSources(*nucleiTemplates, customDir)
 	if len(payloadSources) > 0 {
 		var ids []string
 		for _, ps := range payloadSources {
@@ -434,6 +460,10 @@ func parseEngineMode(mode string) (names []string, mock bool) {
 			add("nuclei-dast")
 		case "dalfox":
 			add("dalfox")
+		case "nuclei-custom":
+			// Runner nuclei read-only khusus template deteksi custom (Bank Payload).
+			// Hanya aktif bila dir custom dikonfigurasi (flag/env); lihat roster.
+			add("nuclei-custom")
 		}
 	}
 	return names, false

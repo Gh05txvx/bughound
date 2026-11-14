@@ -1,0 +1,40 @@
+id: bh-graphql-introspection
+
+info:
+  name: GraphQL Introspection Enabled
+  author: bughound
+  severity: info
+  description: |
+    Endpoint GraphQL mengizinkan query introspection (__schema). Introspection
+    membocorkan seluruh tipe, field, serta query/mutation yang tersedia sehingga
+    memudahkan pemetaan permukaan serang. Umumnya dinonaktifkan di produksi.
+    Deteksi READ-ONLY: introspection adalah query baca (bukan mutation) — tak
+    mengubah keadaan target.
+  reference:
+    - https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/12-API_Testing/01-Testing_GraphQL
+    - https://cwe.mitre.org/data/definitions/200.html
+  classification:
+    cwe-id: CWE-200
+  tags: graphql,introspection,exposure,api,bughound
+
+http:
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+      - "{{BaseURL}}/api/graphql"
+      - "{{BaseURL}}/v1/graphql"
+    headers:
+      Content-Type: application/json
+    body: '{"query":"query{__schema{queryType{name}}}"}'
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "__schema"
+          - "queryType"
+        condition: and
+      - type: status
+        status:
+          - 200

@@ -30,11 +30,22 @@ type Runner struct {
 	// keduanya), memangkas 14k template ke subset terarah → scan jauh lebih cepat.
 	Tags      []string // -tags t1,t2
 	Severity  []string // -severity critical,high
-	proxyAddr string
+	// TemplatesDir (opsional) membatasi nuclei HANYA ke direktori template ini
+	// via `-t` — dipakai runner "custom" khusus Bank Payload (BH-SPEC-PAYLOAD):
+	// menjalankan template deteksi read-only milik sendiri, TERPISAH dari runner
+	// utama yang menjalankan set resmi penuh. Kosong = set template bawaan nuclei.
+	TemplatesDir string
+	proxyAddr    string
 }
 
-// Name memenuhi engine.Engine.
-func (r *Runner) Name() string { return "nuclei" }
+// Name memenuhi engine.Engine. Runner ber-TemplatesDir dilabeli "nuclei-custom"
+// agar roster/log membedakannya dari runner nuclei resmi.
+func (r *Runner) Name() string {
+	if strings.TrimSpace(r.TemplatesDir) != "" {
+		return "nuclei-custom"
+	}
+	return "nuclei"
+}
 
 // UseProxy memenuhi engine.ProxyAware: mengarahkan nuclei ke proxy egress.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
@@ -60,6 +71,11 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 
 func (r *Runner) buildArgs(target string) []string {
 	args := []string{"-jsonl", "-silent", "-disable-update-check", "-target", target}
+	if dir := strings.TrimSpace(r.TemplatesDir); dir != "" {
+		// Batasi HANYA ke template custom (runner khusus Bank Payload). nuclei
+		// tetap menerapkan -tags/-severity & argumen non-destruktif di bawah.
+		args = append(args, "-t", dir)
+	}
 	if r.proxyAddr != "" {
 		args = append(args, "-proxy", "http://"+r.proxyAddr)
 	}
