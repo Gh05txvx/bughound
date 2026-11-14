@@ -257,6 +257,87 @@ func TestAnalyzeSurfacesAPIMessage(t *testing.T) {
 	}
 }
 
+// ---- Jalur ke-2: Groq (API kompatibel-OpenAI) ----
+
+func TestEndpointPerProvider(t *testing.T) {
+	if got := (&Client{}).endpoint(); got != defaultEndpoint {
+		t.Errorf("default (anthropic) endpoint = %q", got)
+	}
+	if got := (&Client{Provider: ProviderGroq}).endpoint(); got != groqEndpoint {
+		t.Errorf("groq endpoint = %q", got)
+	}
+	// Override (khusus test) tetap dihormati.
+	if got := (&Client{Provider: ProviderGroq, Endpoint: "http://x"}).endpoint(); got != "http://x" {
+		t.Errorf("override endpoint tak dihormati: %q", got)
+	}
+}
+
+// Bentuk request Groq: auth Bearer (BUKAN x-api-key), system sbg pesan role
+// "system", body terscrub, parsing choices[].message.content — tanpa jaringan.
+func TestAnalyzeGroqAgainstStub(t *testing.T) {
+	var gotAuth, gotXKey, gotVer, gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("authorization")
+		gotXKey = r.Header.Get("x-api-key")
+		gotVer = r.Header.Get("anthropic-version")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.Header().Set("content-type", "application/json")
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"why\":\"x\",\"decision\":\"verify_now\",\"hypotheses\":[]}"},"finish_reason":"stop"}]}`)
+	}))
+	defer srv.Close()
+
+	c := NewClientFor(ProviderGroq, "openai/gpt-oss-20b")
+	c.Endpoint, c.HTTP = srv.URL, srv.Client()
+
+	in := Input{Type: "sqli", URL: "https://demo.test/x", Request: "GET /x\r\nAuthorization: Bearer LEAKME\r\n"}
+	an, err := c.Analyze(context.Background(), "gsk-test-key", in)
+	if err != nil {
+		t.Fatalf("Analyze(groq) error: %v", err)
+	}
+	if gotAuth != "Bearer gsk-test-key" {
+		t.Fatalf("header auth Groq salah: %q", gotAuth)
+	}
+	if gotXKey != "" || gotVer != "" {
+		t.Fatalf("header khusus Anthropic bocor ke Groq: x-api-key=%q ver=%q", gotXKey, gotVer)
+	}
+	if strings.Contains(gotBody, "LEAKME") {
+		t.Fatalf("body Groq membocorkan secret:\n%s", gotBody)
+	}
+	if an.Decision != "verify_now" || an.Model != "openai/gpt-oss-20b" {
+		t.Fatalf("hasil parse Groq salah: %+v", an)
+	}
+	var gr groqReq
+	if json.Unmarshal([]byte(gotBody), &gr) != nil || gr.Model != "openai/gpt-oss-20b" ||
+		len(gr.Messages) != 2 || gr.Messages[0].Role != "system" || gr.Messages[1].Role != "user" {
+		t.Fatalf("body bukan groqReq yang benar: %s", gotBody)
+	}
+}
+
+// Galat Groq: pesan API tampil berlabel "Groq", key tak bocor.
+func TestAnalyzeGroqError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		io.WriteString(w, `{"error":{"message":"Invalid API Key","type":"invalid_request_error","code":"invalid_api_key"}}`)
+	}))
+	defer srv.Close()
+	c := NewClientFor(ProviderGroq, "openai/gpt-oss-20b")
+	c.Endpoint, c.HTTP = srv.URL, srv.Client()
+	_, err := c.Analyze(context.Background(), "gsk-SECRET-123", Input{URL: "https://demo.test/"})
+	if err == nil {
+		t.Fatal("status 401 Groq harus error")
+	}
+	if !strings.Contains(err.Error(), "Groq API menolak") {
+		t.Fatalf("label provider Groq hilang: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Invalid API Key") {
+		t.Fatalf("pesan API Groq tak tampil: %v", err)
+	}
+	if strings.Contains(err.Error(), "gsk-SECRET-123") {
+		t.Fatalf("key bocor ke pesan error: %v", err)
+	}
+}
+
 // TestSanitizeMsg: karakter kontrol dibuang, spasi diratakan, dipangkas rune-safe.
 func TestSanitizeMsg(t *testing.T) {
 	got := sanitizeMsg("baris1\n\tbaris2\x00\x07  rapat")

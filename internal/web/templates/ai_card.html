@@ -11,7 +11,7 @@
     <span class="badge {{sevClass .Severity}}">{{.Severity}}</span>
     <span class="chip">conf {{.Confidence}}</span>
     {{if .OWASP}}<span class="chip">{{.OWASP}}</span>{{end}}
-    <span class="ai-model muted small">via {{.Model}}</span>
+    <span class="ai-model muted small">via {{if .Provider}}{{.Provider}} · {{end}}{{.Model}}</span>
   </div>
   <div class="ai-target mono small muted">{{if .Target.Method}}<b>{{.Target.Method}}</b> {{end}}{{.Target.URL}}{{if .Target.Parameter}} · param <b>{{.Target.Parameter}}</b>{{if .Target.ParamLocation}} ({{.Target.ParamLocation}}){{end}}{{end}}</div>
 
@@ -48,8 +48,11 @@
   <p class="muted small">Belum ada analisis.</p>
   {{end}}
 
-  {{if and .Analysis (not .Analysis.Hypotheses)}}
-    {{if .SeedHints}}<div class="small"><span class="muted">benih uji (deterministik):</span> {{join .SeedHints "; "}}</div>{{end}}
+  {{/* Benih deterministik: tampil saat AI belum memberi hipotesis konkret —
+       termasuk saat generate GAGAL (mis. kredit habis) agar hunter tetap dapat
+       panduan. Aman saat Analysis nil (and short-circuit, Go 1.27). */}}
+  {{if and .SeedHints (not (and .Analysis .Analysis.Hypotheses))}}
+    <div class="small"><span class="muted">benih uji (deterministik):</span> {{join .SeedHints "; "}}</div>
   {{end}}
 
   <div class="ai-safety small">⚠️ {{.Safety}}</div>

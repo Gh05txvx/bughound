@@ -3,10 +3,11 @@
 //
 // Sifat penting (sejalan dengan prinsip mengikat BugHound):
 //   - EGRESS TERKENDALI. Satu-satunya tujuan jaringan paket ini adalah endpoint
-//     kontrol-plane Anthropic yang di-hardcode (api.anthropic.com). Ia TIDAK lewat
-//     scope guard/proxy egress scan — ini bukan target scan — dan tak bisa diarahkan
-//     ke host lain. Memakai net/http langsung (klien terkontrol, tanpa dependensi
-//     pihak ketiga baru di tool ofensif) alih-alih SDK.
+//     kontrol-plane LLM yang DI-HARDCODE per provider (Anthropic: api.anthropic.com;
+//     Groq: api.groq.com). Keduanya TIDAK lewat scope guard/proxy egress scan — ini
+//     bukan target scan — dan tak bisa diarahkan ke host lain lewat konfigurasi
+//     pengguna. Memakai net/http langsung (klien terkontrol, tanpa dependensi pihak
+//     ketiga baru di tool ofensif) alih-alih SDK. Groq memakai API kompatibel-OpenAI.
 //   - EVIDENCE DISCRUB DULU. Semua potongan request/response discrub (header
 //     sensitif, bearer, api-key, email, param rahasia) + dipangkas SEBELUM dikirim,
 //     meniru analyst/bughound_analyst/scrub.py (BH-DESIGN §6).
@@ -31,12 +32,26 @@ import (
 	"time"
 )
 
-// defaultEndpoint adalah endpoint Messages API Anthropic (di-hardcode; egress
-// kontrol-plane, bukan target scan).
-const defaultEndpoint = "https://api.anthropic.com/v1/messages"
+// Endpoint kontrol-plane per provider (DI-HARDCODE; egress kontrol-plane, BUKAN
+// target scan, TIDAK lewat scope guard/proxy, dan tak bisa diarahkan ke host lain
+// lewat konfigurasi pengguna). Groq memakai API yang kompatibel-OpenAI.
+const (
+	defaultEndpoint = "https://api.anthropic.com/v1/messages"           // Anthropic Messages API
+	groqEndpoint    = "https://api.groq.com/openai/v1/chat/completions" // Groq (OpenAI-compatible)
+)
 
-// anthropicVersion adalah header versi API stabil.
+// anthropicVersion adalah header versi API stabil (khusus Anthropic).
 const anthropicVersion = "2023-06-01"
+
+// Provider memilih penyedia LLM. Kontrak what-if (system prompt, konteks terscrub,
+// parser JSON, seed hints) IDENTIK antar provider; hanya AMPLOP request/response &
+// autentikasi yang berbeda. Kosong diperlakukan sebagai anthropic (default).
+type Provider string
+
+const (
+	ProviderAnthropic Provider = "anthropic"
+	ProviderGroq      Provider = "groq"
+)
 
 // Hypothesis adalah satu uji konkret siap-Repeater yang disarankan LLM.
 type Hypothesis struct {
@@ -74,20 +89,51 @@ type Input struct {
 	SeedHints     []string
 }
 
-// Client memanggil Claude API. HTTP boleh di-override untuk test (tanpa jaringan).
+// Client memanggil LLM API satu provider. HTTP boleh di-override untuk test
+// (tanpa jaringan).
 type Client struct {
 	HTTP     *http.Client
 	Model    string
-	Endpoint string
+	Endpoint string   // override tujuan (khusus test); kosong = endpoint HARDCODE per provider
+	Provider Provider // kosong = anthropic (default, backward-compatible)
 }
 
-// NewClient membuat klien dengan timeout wajar untuk satu panggilan analisis.
-func NewClient(model string) *Client {
+// NewClient membuat klien Anthropic (default) — dipertahankan untuk kompatibilitas.
+func NewClient(model string) *Client { return NewClientFor(ProviderAnthropic, model) }
+
+// NewClientFor membuat klien untuk provider tertentu. Endpoint sengaja dibiarkan
+// kosong agar endpoint() memilih tujuan HARDCODE per provider.
+func NewClientFor(provider Provider, model string) *Client {
 	return &Client{
 		HTTP:     &http.Client{Timeout: 60 * time.Second},
 		Model:    model,
-		Endpoint: defaultEndpoint,
+		Provider: provider,
 	}
+}
+
+func (c *Client) prov() Provider {
+	if c.Provider == ProviderGroq {
+		return ProviderGroq
+	}
+	return ProviderAnthropic
+}
+
+func (c *Client) endpoint() string {
+	if c.Endpoint != "" {
+		return c.Endpoint
+	}
+	if c.prov() == ProviderGroq {
+		return groqEndpoint
+	}
+	return defaultEndpoint
+}
+
+// providerLabel = nama provider yang tampil di pesan galat ke operator.
+func (c *Client) providerLabel() string {
+	if c.prov() == ProviderGroq {
+		return "Groq"
+	}
+	return "Claude"
 }
 
 // ---- Scrub (port setia scrub.py) ----
@@ -287,68 +333,138 @@ type apiResp struct {
 	} `json:"error"`
 }
 
+// ---- Groq (API kompatibel-OpenAI: Chat Completions) ----
+
+type groqReq struct {
+	Model     string   `json:"model"`
+	MaxTokens int      `json:"max_tokens"`
+	Messages  []apiMsg `json:"messages"` // system = pesan ber-role "system"
+}
+
+type groqResp struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Error *struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+		Code    string `json:"code"`
+	} `json:"error"`
+}
+
+// apiError menyeragamkan galat API lintas-provider untuk pesan ke operator.
+type apiError struct{ Type, Message string }
+
+// marshalReq membangun body request sesuai amplop provider.
+func (c *Client) marshalReq(userMsg string) ([]byte, error) {
+	if c.prov() == ProviderGroq {
+		return json.Marshal(groqReq{
+			Model: c.Model, MaxTokens: 3000,
+			Messages: []apiMsg{{Role: "system", Content: systemPrompt}, {Role: "user", Content: userMsg}},
+		})
+	}
+	return json.Marshal(apiReq{
+		Model: c.Model, MaxTokens: 3000, System: systemPrompt,
+		Messages: []apiMsg{{Role: "user", Content: userMsg}},
+	})
+}
+
+// setHeaders memasang autentikasi per provider (key hanya di header, tak di-log).
+func (c *Client) setHeaders(r *http.Request, apiKey string) {
+	r.Header.Set("content-type", "application/json")
+	if c.prov() == ProviderGroq {
+		r.Header.Set("authorization", "Bearer "+apiKey)
+		return
+	}
+	r.Header.Set("x-api-key", apiKey)
+	r.Header.Set("anthropic-version", anthropicVersion)
+}
+
+// decode mengekstrak teks jawaban, galat API, dan penolakan (safety) dari body
+// mentah sesuai amplop provider.
+func (c *Client) decode(raw []byte) (text string, apiErr *apiError, refused bool) {
+	if c.prov() == ProviderGroq {
+		var gr groqResp
+		_ = json.Unmarshal(raw, &gr)
+		if gr.Error != nil && (gr.Error.Message != "" || gr.Error.Type != "" || gr.Error.Code != "") {
+			apiErr = &apiError{Type: firstNonEmpty(gr.Error.Type, gr.Error.Code), Message: gr.Error.Message}
+		}
+		var b strings.Builder
+		for _, ch := range gr.Choices {
+			b.WriteString(ch.Message.Content)
+			if ch.FinishReason == "content_filter" {
+				refused = true
+			}
+		}
+		return b.String(), apiErr, refused
+	}
+	var ar apiResp
+	_ = json.Unmarshal(raw, &ar)
+	if ar.Error != nil && (ar.Error.Message != "" || ar.Error.Type != "") {
+		apiErr = &apiError{Type: ar.Error.Type, Message: ar.Error.Message}
+	}
+	var b strings.Builder
+	for _, blk := range ar.Content {
+		if blk.Type == "text" {
+			b.WriteString(blk.Text)
+		}
+	}
+	return b.String(), apiErr, ar.StopReason == "refusal"
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
 // Analyze memanggil Claude dengan konteks temuan terscrub dan mengembalikan
 // analisis terstruktur. apiKey dipasok per-panggilan dan TIDAK disimpan/di-log.
 func (c *Client) Analyze(ctx context.Context, apiKey string, in Input) (Analysis, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return Analysis{}, fmt.Errorf("aiassist: API key kosong")
 	}
-	reqBody, err := json.Marshal(apiReq{
-		Model:     c.Model,
-		MaxTokens: 3000,
-		System:    systemPrompt,
-		Messages:  []apiMsg{{Role: "user", Content: RenderContext(in)}},
-	})
+	reqBody, err := c.marshalReq(RenderContext(in))
 	if err != nil {
 		return Analysis{}, fmt.Errorf("aiassist: encode: %w", err)
 	}
-	endpoint := c.Endpoint
-	if endpoint == "" {
-		endpoint = defaultEndpoint
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(reqBody))
 	if err != nil {
 		return Analysis{}, fmt.Errorf("aiassist: request: %w", err)
 	}
-	httpReq.Header.Set("content-type", "application/json")
-	httpReq.Header.Set("x-api-key", apiKey)
-	httpReq.Header.Set("anthropic-version", anthropicVersion)
+	c.setHeaders(httpReq, apiKey)
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
-		return Analysis{}, fmt.Errorf("aiassist: koneksi Claude API gagal")
+		return Analysis{}, fmt.Errorf("aiassist: koneksi %s API gagal", c.providerLabel())
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 
-	var ar apiResp
-	_ = json.Unmarshal(raw, &ar)
+	text, apiErr, refused := c.decode(raw)
 
 	if resp.StatusCode != http.StatusOK {
 		// Tampilkan tipe + pesan API agar operator tahu akar masalah (mis.
-		// "credit balance too low", model tak tersedia, versi). Pesan ini
-		// umpan balik Anthropic atas request/akun — BUKAN secret kita: API tak
-		// pernah memantulkan x-api-key atau body kita. Di-sanitasi (buang
-		// karakter kontrol) + dipangkas agar aman ke UI; tak masuk audit.
-		if ar.Error != nil && ar.Error.Type != "" {
-			if msg := sanitizeMsg(ar.Error.Message); msg != "" {
-				return Analysis{}, fmt.Errorf("aiassist: Claude API menolak (%s): %s", sanitize(ar.Error.Type), msg)
+		// "credit balance too low", model tak tersedia, versi). Pesan ini umpan
+		// balik provider atas request/akun — BUKAN secret kita: API tak pernah
+		// memantulkan key/body kita. Di-sanitasi (buang karakter kontrol) +
+		// dipangkas agar aman ke UI; tak masuk audit.
+		if apiErr != nil && (apiErr.Type != "" || apiErr.Message != "") {
+			if msg := sanitizeMsg(apiErr.Message); msg != "" {
+				return Analysis{}, fmt.Errorf("aiassist: %s API menolak (%s): %s", c.providerLabel(), sanitize(apiErr.Type), msg)
 			}
-			return Analysis{}, fmt.Errorf("aiassist: Claude API menolak (%s)", sanitize(ar.Error.Type))
+			return Analysis{}, fmt.Errorf("aiassist: %s API menolak (%s)", c.providerLabel(), sanitize(apiErr.Type))
 		}
-		return Analysis{}, fmt.Errorf("aiassist: Claude API status %d", resp.StatusCode)
+		return Analysis{}, fmt.Errorf("aiassist: %s API status %d", c.providerLabel(), resp.StatusCode)
 	}
-	if ar.StopReason == "refusal" {
-		return Analysis{}, fmt.Errorf("aiassist: Claude menolak menganalisis (safety)")
+	if refused {
+		return Analysis{}, fmt.Errorf("aiassist: %s menolak menganalisis (safety)", c.providerLabel())
 	}
-
-	var text strings.Builder
-	for _, blk := range ar.Content {
-		if blk.Type == "text" {
-			text.WriteString(blk.Text)
-		}
-	}
-	an, err := parseAnalysis(text.String())
+	an, err := parseAnalysis(text)
 	if err != nil {
 		return Analysis{}, err
 	}
