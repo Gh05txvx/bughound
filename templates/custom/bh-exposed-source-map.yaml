@@ -1,0 +1,53 @@
+id: bh-exposed-source-map
+
+info:
+  name: Exposed JavaScript source map (.js.map)
+  author: bughound
+  severity: low
+  description: |
+    Berkas source map JavaScript (.js.map) dapat diakses tanpa autentikasi.
+    Source map memetakan bundel produksi kembali ke kode sumber asli (TypeScript/
+    ES asli, nama variabel, kadang path internal & komentar), sehingga mempermudah
+    analisis kode dan penemuan kerentanan. Umumnya tidak boleh ter-deploy ke
+    produksi. Deteksi READ-ONLY: GET; cocokkan struktur JSON Source Map v3
+    (penanda struktural), bukan menyedot nilai sensitif ke evidence.
+  reference:
+    - https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/01-Information_Gathering/
+    - https://cwe.mitre.org/data/definitions/540.html
+  classification:
+    cwe-id: CWE-540
+  tags: exposure,sourcemap,disclosure,js,bughound
+
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/main.js.map"
+      - "{{BaseURL}}/polyfills.js.map"
+      - "{{BaseURL}}/runtime.js.map"
+      - "{{BaseURL}}/vendor.js.map"
+      - "{{BaseURL}}/bundle.js.map"
+      - "{{BaseURL}}/app.js.map"
+      - "{{BaseURL}}/scripts.js.map"
+    stop-at-first-match: true
+    matchers-condition: and
+    matchers:
+      # Struktur JSON Source Map v3: "version":3 + "mappings" + "sources".
+      - type: regex
+        part: body
+        regex:
+          - "\"version\"\\s*:\\s*3"
+      - type: word
+        part: body
+        words:
+          - "\"mappings\""
+          - "\"sources\""
+        condition: and
+      - type: status
+        status:
+          - 200
+      # Hindari false-positive SPA/catch-all yang mengembalikan HTML untuk semua path.
+      - type: word
+        part: header
+        words:
+          - "text/html"
+        negative: true

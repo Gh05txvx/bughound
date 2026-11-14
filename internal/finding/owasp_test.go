@@ -11,6 +11,7 @@ func TestClassifyOWASP_FromCWE(t *testing.T) {
 		"CWE-79":  A03, // XSS
 		"CWE-918": A10, // SSRF
 		"CWE-200": A01, // exposure of sensitive info
+		"CWE-540": A01, // source code / source map exposure
 		"CWE-22":  A01, // path traversal
 		"CWE-611": A05, // XXE
 		"CWE-614": A05, // sensitive cookie tanpa Secure
