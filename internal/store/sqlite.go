@@ -114,6 +114,19 @@ func (s *SQLite) init() error {
 			k TEXT PRIMARY KEY,
 			v TEXT NOT NULL
 		);`,
+		// Riwayat run scan (jobs.Run) agar panel Proses & detail run selamat dari
+		// restart/redeploy. Run utuh di doc JSON; kolom terindeks untuk list terurut.
+		`CREATE TABLE IF NOT EXISTS runs (
+			id          TEXT PRIMARY KEY,
+			program     TEXT NOT NULL,
+			status      TEXT NOT NULL,
+			label       TEXT,
+			enqueued_at TEXT NOT NULL,
+			started_at  TEXT,
+			finished_at TEXT,
+			doc         TEXT NOT NULL
+		);`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_program ON runs(program);`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {

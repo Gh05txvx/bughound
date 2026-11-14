@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 )
@@ -64,11 +65,39 @@ type job struct {
 	task Task
 }
 
+// Store mempersistenkan riwayat run agar selamat dari restart/redeploy proses.
+// Opsional: bila Queue dibuat tanpa store, ia tetap murni in-memory (perilaku
+// lama). Implementasi (store.SQLite / store.Mem) menyerialkan Run; paket jobs
+// tetap tak tahu detail penyimpanan (port, bukan dependensi ke store).
+type Store interface {
+	// LoadRuns mengembalikan semua run tersimpan, TERLAMA dulu (urutan enqueue).
+	LoadRuns(ctx context.Context) ([]*Run, error)
+	// SaveRun menyimpan/menimpa satu run (write-through tiap transisi status).
+	SaveRun(ctx context.Context, r *Run) error
+	// DeleteRun menghapus satu run dari penyimpanan.
+	DeleteRun(ctx context.Context, id string) error
+}
+
+// Option mengonfigurasi Queue saat New.
+type Option func(*Queue)
+
+// WithStore membuat Queue mempersistenkan riwayat run: write-through tiap
+// transisi status + memuat ulang saat start (run yatim difinalkan Failed).
+// store nil = no-op (tetap in-memory).
+func WithStore(s Store) Option {
+	return func(q *Queue) {
+		if s != nil {
+			q.store = s
+		}
+	}
+}
+
 // Queue adalah worker pool in-process dengan pelacakan status.
 type Queue struct {
-	ch   chan job
-	base context.Context
-	now  func() time.Time
+	ch    chan job
+	base  context.Context
+	now   func() time.Time
+	store Store // opsional: persistensi riwayat run (nil = in-memory saja)
 
 	mu      sync.RWMutex
 	runs    map[string]*Run
@@ -80,7 +109,8 @@ type Queue struct {
 }
 
 // New membuat Queue dengan n worker (minimal 1) dan langsung menjalankannya.
-func New(workers int) *Queue {
+// Dengan WithStore, riwayat run dipersist & dimuat ulang saat start.
+func New(workers int, opts ...Option) *Queue {
 	if workers < 1 {
 		workers = 1
 	}
@@ -91,11 +121,76 @@ func New(workers int) *Queue {
 		runs:    map[string]*Run{},
 		cancels: map[string]context.CancelFunc{},
 	}
+	for _, opt := range opts {
+		opt(q)
+	}
+	if q.store != nil {
+		q.loadAndReconcile() // sebelum worker jalan: aman tanpa lock
+	}
 	q.wg.Add(workers)
 	for i := 0; i < workers; i++ {
 		go q.worker()
 	}
 	return q
+}
+
+// loadAndReconcile memuat riwayat run tersimpan ke pelacakan in-memory saat start.
+// Run yang tersimpan sebagai Queued/Running adalah YATIM — proses yang
+// menjalankannya sudah mati (restart/redeploy), worker & subprocess engine-nya
+// hilang — jadi difinalkan Failed dengan catatan jelas dan koreksinya dipersist.
+// Dipanggil dari New sebelum worker start (tanpa pesaing → tak perlu lock).
+func (q *Queue) loadAndReconcile() {
+	ctx, cancel := context.WithTimeout(q.base, 10*time.Second)
+	defer cancel()
+	runs, err := q.store.LoadRuns(ctx)
+	if err != nil {
+		log.Printf("jobs: muat riwayat run gagal (lanjut tanpa riwayat): %v", err)
+		return
+	}
+	for _, r := range runs {
+		if r.Status == Queued || r.Status == Running {
+			r.Status = Failed
+			r.Stopping = false
+			if r.Err == "" {
+				r.Err = "terputus saat proses berhenti (restart/redeploy)"
+			}
+			if r.FinishedAt.IsZero() {
+				r.FinishedAt = q.now().UTC()
+			}
+			if err := q.store.SaveRun(ctx, r); err != nil {
+				log.Printf("jobs: koreksi run yatim %s gagal dipersist: %v", r.ID, err)
+			}
+		}
+		q.runs[r.ID] = r
+		q.order = append(q.order, r.ID)
+	}
+}
+
+// persist menyimpan salinan run ke store (best-effort, DIPANGGIL DI LUAR lock
+// queue). Galat hanya di-log: kegagalan durabilitas tak boleh menggagalkan scan,
+// dan transisi berikutnya menyimpan ulang run utuh. Penulis per-run selalu
+// terurut (Enqueue→begin→finish dalam goroutine worker yang sama; Enqueue persist
+// sebelum kirim ke channel) sehingga tulisan tak saling mendahului.
+func (q *Queue) persist(r *Run) {
+	if q.store == nil || r == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(q.base, 5*time.Second)
+	defer cancel()
+	if err := q.store.SaveRun(ctx, r); err != nil {
+		log.Printf("jobs: simpan run %s gagal: %v", r.ID, err)
+	}
+}
+
+func (q *Queue) deleteFromStore(id string) {
+	if q.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(q.base, 5*time.Second)
+	defer cancel()
+	if err := q.store.DeleteRun(ctx, id); err != nil {
+		log.Printf("jobs: hapus run %s gagal: %v", id, err)
+	}
 }
 
 func (q *Queue) worker() {
@@ -114,14 +209,17 @@ func (q *Queue) worker() {
 // dihentikan selagi antre, jadi tak dijalankan.
 func (q *Queue) begin(id string, cancel context.CancelFunc) bool {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	r, ok := q.runs[id]
 	if !ok || r.Status != Queued {
+		q.mu.Unlock()
 		return false
 	}
 	r.Status = Running
 	r.StartedAt = q.now().UTC()
 	q.cancels[id] = cancel
+	c := *r
+	q.mu.Unlock()
+	q.persist(&c)
 	return true
 }
 
@@ -129,10 +227,10 @@ func (q *Queue) begin(id string, cancel context.CancelFunc) bool {
 // task yang tetap tuntas walau Stop diminta tetap Done.
 func (q *Queue) finish(id string, sum Summary, err error) {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	delete(q.cancels, id)
 	r, ok := q.runs[id]
 	if !ok {
+		q.mu.Unlock()
 		return
 	}
 	r.FinishedAt = q.now().UTC()
@@ -148,6 +246,9 @@ func (q *Queue) finish(id string, sum Summary, err error) {
 		r.Err = err.Error()
 	}
 	r.Stopping = false
+	c := *r
+	q.mu.Unlock()
+	q.persist(&c)
 }
 
 // Cancel menghentikan run. Run antre langsung Cancelled (tak pernah jalan); run
@@ -157,23 +258,30 @@ func (q *Queue) finish(id string, sum Summary, err error) {
 // sedang dihentikan (idempoten).
 func (q *Queue) Cancel(id string) bool {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	r, ok := q.runs[id]
 	if !ok {
+		q.mu.Unlock()
 		return false
 	}
 	switch {
 	case r.Status == Queued:
 		r.Status = Cancelled
 		r.FinishedAt = q.now().UTC()
+		c := *r
+		q.mu.Unlock()
+		q.persist(&c) // terminal; worker melewati begin() → finish() tak jalan, ini satu-satunya penulis
 		return true
 	case r.Status == Running && !r.Stopping:
 		r.Stopping = true
 		if cancel := q.cancels[id]; cancel != nil {
 			cancel()
 		}
+		q.mu.Unlock()
+		// Transisi "stopping" transient TIDAK dipersist: finish() yang menyimpan
+		// status terminal (Cancelled). Menghindari balapan tulis dgn persist finish().
 		return true
 	}
+	q.mu.Unlock()
 	return false
 }
 
@@ -184,9 +292,9 @@ func (q *Queue) Cancel(id string) bool {
 // Tak menyentuh store/temuan/audit; murni housekeeping daftar pemantauan.
 func (q *Queue) Remove(id string) bool {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	r, ok := q.runs[id]
 	if !ok || r.Status == Queued || r.Status == Running {
+		q.mu.Unlock()
 		return false
 	}
 	delete(q.runs, id)
@@ -196,7 +304,40 @@ func (q *Queue) Remove(id string) bool {
 			break
 		}
 	}
+	q.mu.Unlock()
+	q.deleteFromStore(id)
 	return true
+}
+
+// RemoveByProgram membuang semua run BERAKHIR (done/failed/cancelled) milik sebuah
+// program dari riwayat (in-memory + store). Run antre/berjalan dilewati (invarian
+// sama dgn Remove: jangan yatimkan worker/subprocess). Dipakai saat temuan program
+// dibersihkan agar riwayat run tak jadi yatim. Mengembalikan jumlah yang dibuang.
+func (q *Queue) RemoveByProgram(program string) int {
+	q.mu.Lock()
+	gone := map[string]bool{}
+	for id, r := range q.runs {
+		if r.Program == program && r.Status != Queued && r.Status != Running {
+			gone[id] = true
+		}
+	}
+	if len(gone) > 0 {
+		for id := range gone {
+			delete(q.runs, id)
+		}
+		kept := make([]string, 0, len(q.order))
+		for _, id := range q.order {
+			if !gone[id] {
+				kept = append(kept, id)
+			}
+		}
+		q.order = kept
+	}
+	q.mu.Unlock()
+	for id := range gone {
+		q.deleteFromStore(id)
+	}
+	return len(gone)
 }
 
 // runTask menjalankan task dan memulihkan panik menjadi error.
@@ -217,7 +358,9 @@ func (q *Queue) Enqueue(program, label string, task Task) string {
 	q.mu.Lock()
 	q.runs[id] = run
 	q.order = append(q.order, id)
+	c := *run
 	q.mu.Unlock()
+	q.persist(&c) // persist SEBELUM kirim ke channel → state queued durable sebelum worker bisa memulai
 	q.ch <- job{id: id, task: task}
 	return id
 }

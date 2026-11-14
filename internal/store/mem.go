@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"bughound/internal/finding"
+	"bughound/internal/jobs"
 	"bughound/internal/payload"
 )
 
@@ -31,6 +32,9 @@ type Mem struct {
 	// Cache analisis AI per temuan + setelan aplikasi non-rahasia (AIStore).
 	aiAnalyses map[string]AIAnalysis
 	settings   map[string]string
+
+	// Riwayat run scan (jobs.Store) — persistensi queue saat memakai Mem (E2E/test).
+	runs map[string]*jobs.Run
 }
 
 // NewMem membuat store in-memory kosong.

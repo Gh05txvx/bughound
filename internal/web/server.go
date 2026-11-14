@@ -165,6 +165,14 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Riwayat run persisten: bila store mendukung jobs.Store, queue menyimpan tiap
+	// transisi & memuat ulang saat start (run yatim difinalkan Failed) → panel
+	// Proses selamat dari restart/redeploy. Degradasi mulus: store tanpa dukungan
+	// → queue tetap in-memory (perilaku lama).
+	var queueOpts []jobs.Option
+	if rs, ok := cfg.Store.(jobs.Store); ok {
+		queueOpts = append(queueOpts, jobs.WithStore(rs))
+	}
 	s := &Server{
 		mux:            http.NewServeMux(),
 		store:          cfg.Store,
@@ -176,7 +184,7 @@ func NewServer(cfg Config) (*Server, error) {
 		vault:          cfg.Vault,
 		audit:          cfg.Audit,
 		authDisabled:   cfg.AuthDisabled,
-		queue:          jobs.New(4),
+		queue:          jobs.New(4, queueOpts...),
 		version:        version,
 		sastRoot:       strings.TrimSpace(cfg.SASTRoot),
 		captures:       map[string]*captureSession{},
@@ -2081,8 +2089,11 @@ func (s *Server) handleDashboardDeleteFindings(w http.ResponseWriter, r *http.Re
 	if s.aistore != nil {
 		aiPurged, _ = s.aistore.DeleteAIAnalysisByProgram(r.Context(), program)
 	}
+	// Buang juga riwayat run BERAKHIR milik program (in-memory + store) agar tak
+	// jadi yatim setelah temuannya hilang. Run aktif dilewati (hentikan dulu).
+	runsPurged := s.queue.RemoveByProgram(program)
 	s.auditAppend(r.Context(), audit.Event{Kind: "findings.delete", Program: program, Allowed: true,
-		Message: fmt.Sprintf("%s menghapus %d temuan program + %d cache AI (definisi scope tetap)", me, n, aiPurged)})
+		Message: fmt.Sprintf("%s menghapus %d temuan program + %d cache AI + %d riwayat run (definisi scope tetap)", me, n, aiPurged, runsPurged)})
 	http.Redirect(w, r, fmt.Sprintf("/dashboard?ok=findings-deleted&program=%s&n=%d", url.QueryEscape(program), n), http.StatusSeeOther)
 }
 
