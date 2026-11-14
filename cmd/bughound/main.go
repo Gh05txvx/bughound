@@ -44,6 +44,12 @@ func main() {
 		runTemplates(os.Args[2:])
 		return
 	}
+	// `bughound eval` menilai keluaran scan terhadap baseline ground-truth
+	// (recall kelas DAST-detectable). Murni offline, tak menjalankan server.
+	if len(os.Args) > 1 && os.Args[1] == "eval" {
+		runEval(os.Args[2:])
+		return
+	}
 
 	addr := flag.String("addr", "127.0.0.1:8787", "alamat bind (default localhost saja)")
 	showVersion := flag.Bool("version", false, "cetak versi lalu keluar")

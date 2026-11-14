@@ -1,0 +1,90 @@
+{
+  "name": "juice-shop",
+  "target": "OWASP Juice Shop (DAST unauth)",
+  "note": "Acuan ground-truth kelas temuan DAST-detectable tanpa auth. Set A di-skor (recall); set B adalah batas inheren DAST unauth (miss = normal, bukan kegagalan). Item 'opsional' butuh engine tertentu di roster atau sebagian true-negative tervalidasi.",
+  "detectable": [
+    {
+      "id": "ftp-exposed",
+      "name": "Direktori /ftp terekspos + path traversal",
+      "category": "exposure",
+      "any_keyword": ["/ftp", "directory-listing", "directory listing", "dir-listing"],
+      "note": "butuh discovery (ffuf/robots enrichment) menjangkau /ftp"
+    },
+    {
+      "id": "metrics",
+      "name": "Endpoint /metrics Prometheus terekspos",
+      "category": "exposure",
+      "any_keyword": ["/metrics", "prometheus"]
+    },
+    {
+      "id": "robots",
+      "name": "robots.txt ada (menunjuk /ftp)",
+      "category": "info",
+      "any_keyword": ["robots.txt", "robots-txt"]
+    },
+    {
+      "id": "weak-headers",
+      "name": "Security header lemah/absen (CSP, HSTS, X-Frame, X-Recruiting)",
+      "category": "misconfig",
+      "any_keyword": ["content-security-policy", "strict-transport", "x-frame-options", "x-content-type", "x-recruiting", "missing-security-header", "security headers", "hsts"]
+    },
+    {
+      "id": "cors",
+      "name": "CORS permisif (cross-domain/cross-origin)",
+      "category": "misconfig",
+      "any_keyword": ["cors", "cross-domain", "cross-origin"]
+    },
+    {
+      "id": "fingerprint",
+      "name": "Fingerprint teknologi (Express/Node.js)",
+      "category": "info",
+      "any_keyword": ["fingerprint", "tech-detect", "express", "node.js", "nodejs", "banner", "x-powered-by"]
+    },
+    {
+      "id": "api-surface",
+      "name": "Permukaan API /rest/*, /api/* ter-discovery",
+      "category": "info",
+      "any_keyword": ["/rest", "/api/", "swagger", "openapi", "api-docs"]
+    },
+    {
+      "id": "source-exposed",
+      "name": "Sumber SPA terekspos (main.js / source map)",
+      "category": "info",
+      "optional": true,
+      "any_keyword": ["source-map", "sourcemap", ".js.map", "source code", "source leak"],
+      "note": "source map juice-shop sering true-negative (SPA fallback text/html)"
+    },
+    {
+      "id": "cookie-flags",
+      "name": "Cookie tanpa Secure/HttpOnly",
+      "category": "misconfig",
+      "optional": true,
+      "any_keyword": ["cookie", "httponly", "http-only", "secure flag", "samesite", "set-cookie"],
+      "note": "sebagian true-negative tervalidasi di juice-shop"
+    },
+    {
+      "id": "outdated-js-deps",
+      "name": "Dependensi JS usang (lib rentan)",
+      "category": "deps",
+      "optional": true,
+      "any_keyword": ["retire", "outdated", "vulnerable-dependency", "jquery", "known-vuln", "unpatched"],
+      "any_cwe": ["CWE-1104", "CWE-937", "CWE-1035"],
+      "note": "butuh engine retire.js di roster (tak default)"
+    },
+    {
+      "id": "injection-error",
+      "name": "Injeksi/stack-trace pada input malformed (mis. SQLi error-based)",
+      "category": "injection",
+      "optional": true,
+      "any_keyword": ["sqli", "sql-injection", "sql injection", "error-based", "stack trace", "stacktrace", "injection"],
+      "note": "butuh engine nuclei-dast; confidence sedang"
+    }
+  ],
+  "blind_spots": [
+    "SQLi login bypass (' OR 1=1--) — form interaktif",
+    "Broken access control (admin panel, basket user lain), JWT forgery/weak JWT",
+    "Business logic (kupon/basket/qty negatif)",
+    "Stored XSS (feedback/komentar), CSRF, DOM-XSS search /#/search?q=",
+    "Data sensitif via API ber-auth, 2FA/OAuth, mayoritas challenge gamified"
+  ]
+}
