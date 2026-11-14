@@ -126,18 +126,65 @@ func ScrubText(s string, limit int) string {
 	return s
 }
 
-// ---- Seed hints (port _SEED_HINTS/whatif.py) ----
+// ---- Seed hints (benih per-kelas; diperluas dari _SEED_HINTS/whatif.py) ----
+//
+// Benih langkah verifikasi MANUAL per kelas bug, diambil HANYA dari bagian
+// Detection (non-destruktif) metodologi ofensif — bukan langkah eksploitasi.
+// Mengalir ke kartu what-if (bagian deterministik) DAN ke konteks LLM sebagai
+// titik awal. SEMUA langkah wajib read-only/reversible (baca, boolean, marker
+// benign, delay ringan); hunter menjalankannya sendiri di Burp, hormati RoE.
+
+// Hint berbagi untuk kelas serumpun (hindari duplikasi).
+var (
+	hintExposure = []string{
+		"Ambil artefak (baca-saja) → konfirmasi isinya nyata & sensitif, bukan placeholder/umpan.",
+		"Cek path terkait: `.git/HEAD`, `.env.bak`, backup, directory listing.",
+		"Nilai dampak: rahasia masih hidup? kredensial valid? (konfirmasi TANPA memakainya).",
+	}
+	hintGraphql = []string{
+		"Tarik skema penuh via introspection (baca-saja) → petakan query & mutation.",
+		"Uji otorisasi tingkat-field: baca field sensitif tanpa sesi / dengan peran rendah.",
+		"Catat mutation berisiko TANPA menjalankannya.",
+	}
+	hintAccess = []string{
+		"Akses endpoint tanpa sesi / dengan sesi peran lebih rendah (baca-saja).",
+		"Bandingkan respons antar-peran untuk resource yang sama.",
+	}
+	hintDep = []string{
+		"Konfirmasi versi komponen dari banner/aset (baca-saja).",
+		"Cocokkan ke advisory; nilai apakah pra-syarat PoC publik terpenuhi SEBELUM menguji.",
+	}
+)
 
 var seedHints = []struct {
 	key   string
 	hints []string
 }{
-	{"sqli", []string{"boolean: `' OR 1=1--`", "time-based: `1;WAITFOR DELAY '0:0:5'--` (ringan, non-destruktif)"}},
-	{"injection", []string{"boolean/true-vs-false", "time-based delay ringan"}},
-	{"xss", []string{"context-break reflektif: `\"><svg onload=…>`", "cek konteks atribut vs HTML vs JS"}},
-	{"idor", []string{"naik/turunkan id objek", "tukar ke objek milik akun lain (baca-saja)"}},
-	{"ssrf", []string{"arahkan host ke callback terkendali (OAST) — HATI-HATI RoE", "cek 169.254.169.254 hanya bila eksplisit diizinkan"}},
-	{"access", []string{"akses endpoint tanpa sesi / sesi peran lebih rendah (baca-saja)"}},
+	// Paling spesifik DULU (substring pertama yang cocok menang).
+	{"command", []string{"Marker benign: `;echo bh$((7*7))` → cari `bh49` di respons (tak merusak).", "Time-based ringan `| sleep 5` → banding latensi; hormati RoE/rate-limit."}},
+	{"rce", []string{"Marker aritmatika/echo benign → cari hasil terhitung di respons.", "Time-based ringan + banding latensi; JANGAN jalankan perintah yang mengubah sistem."}},
+	{"nosql", []string{"Operator: `param[$ne]=` atau `param[$regex]=^a` → banding true vs false.", "Field auth `{\"$gt\":\"\"}` (baca-saja)."}},
+	{"sql", []string{"Boolean: `' OR 1=1--` vs `' AND 1=2--` → banding ukuran/isi.", "Time-based ringan: `'||SLEEP(5)` / `';WAITFOR DELAY '0:0:5'--` (non-destruktif).", "Error-based: satu `'` → cari galat SQL."}},
+	{"ssti", []string{"Probe polyglot: `${7*7}` / `{{7*7}}` / `#{7*7}` → cari `49`.", "Tentukan engine dari sintaks yang ter-evaluasi; jangan sentuh objek berbahaya."}},
+	{"xxe", []string{"Deklarasikan entity internal benign → cek ekspansi di respons.", "Uji apakah DOCTYPE/DTD diterima; JANGAN tarik berkas sistem/OOB tanpa RoE."}},
+	{"ssrf", []string{"Arahkan ke callback TERKENDALI milikmu (OAST) — hormati RoE.", "Metadata cloud `169.254.169.254` HANYA bila eksplisit in-scope.", "Banding respons host internal vs eksternal (baca-saja)."}},
+	{"xss", []string{"Context-break reflektif: `\"><svg onload=…>`.", "Tentukan konteks (HTML/atribut/JS) lalu sesuaikan pemutus escape.", "Cek apakah output ter-encode di satu konteks tapi lolos di lain."}},
+	{"idor", []string{"Naik/turunkan id objek (baca-saja).", "Tukar ke id milik akun lain → amati apakah data bocor.", "Ubah method/representasi (GET vs POST) untuk endpoint sama."}},
+	{"redirect", []string{"Set tujuan ke host eksternal terkendali → cek Location/redirect diikuti.", "Coba varian: `//evil.test`, `/\\evil.test`, `https:evil.test`."}},
+	{"jwt", []string{"Uji `alg:none` (hapus signature) → cek apakah diterima.", "Coba RS256→HS256 pakai public key sebagai secret (bila bocor).", "Ubah klaim non-kritis → cek apakah signature diverifikasi."}},
+	{"cors", []string{"`Origin: https://evil.test` → cek ACAO memantulkannya + ACAC:true.", "Uji origin `null` & subdomain acak."}},
+	{"csrf", []string{"Ulang aksi state-changing tanpa token/Origin di akun UJI milikmu → cek diterima.", "Periksa atribut SameSite cookie sesi."}},
+	{"graphql", hintGraphql},
+	{"introspect", hintGraphql},
+	{"expos", hintExposure},
+	{"disclosure", hintExposure},
+	{"upload", []string{"Unggah berkas BENIGN (teks/gambar kecil) → cek validasi tipe/ekstensi/nama.", "Cek apakah path hasil upload dapat dieksekusi — JANGAN unggah webshell."}},
+	{"deserial", []string{"Amati apakah objek terserialisasi diterima di parameter.", "Ubah field benign → cek galat tipe; jangan kirim gadget chain."}},
+	{"cve", hintDep},
+	{"outdated", hintDep},
+	{"access", hintAccess},
+	{"authoriz", hintAccess},
+	{"injection", []string{"Boolean true-vs-false (banding respons).", "Marker/delay ringan sesuai interpreter; mulai dari yang paling tak-merusak."}},
 }
 
 // SeedHintsFor mengembalikan benih hint deterministik untuk kelas bug temuan.

@@ -48,8 +48,55 @@ func TestSeedHintsFor(t *testing.T) {
 	if got := SeedHintsFor("", "Reflected XSS di q"); len(got) == 0 {
 		t.Fatal("fallback ke title gagal (xss)")
 	}
-	if got := SeedHintsFor("exposed-path", "robots.txt"); got != nil {
+	// Kelas yang benar-benar tak dikenal → nil (clickjacking tak cocok key apa pun).
+	if got := SeedHintsFor("clickjacking", "X-Frame-Options hilang"); got != nil {
 		t.Fatalf("kelas tak dikenal harus nil, dapat %v", got)
+	}
+}
+
+// Routing per-kelas: paling spesifik menang (ordering), termasuk kelas baru yg
+// dihasilkan detektor custom (expos/graphql) & engine lain.
+func TestSeedHintsForRouting(t *testing.T) {
+	cases := []struct {
+		typ, title string
+		wantSub    string // minimal satu hint harus memuat substring ini
+		notSub     string // tak boleh ada hint memuat ini (jaga ordering)
+	}{
+		{"os-command-injection", "", "echo", "OR 1=1"},      // command, BUKAN sql/injection generik
+		{"nosql-injection", "", "$ne", "OR 1=1"},            // nosql, BUKAN sql
+		{"sql-injection", "", "OR 1=1", "echo"},             // sql
+		{"bh-exposed-git-config", "", "artefak", ""},        // detektor custom → exposure
+		{"bh-exposed-env-file", "", "artefak", ""},          // detektor custom → exposure
+		{"bh-graphql-introspection", "", "introspection", ""}, // detektor custom → graphql
+		{"jwt-alg-none", "", "alg:none", ""},
+		{"ssti-detect", "", "{{7*7}}", ""},
+		{"cors-misconfig", "", "ACAO", ""},
+		{"", "Reflected XSS", "svg", ""}, // fallback ke title
+	}
+	for _, c := range cases {
+		got := strings.Join(SeedHintsFor(c.typ, c.title), " || ")
+		if c.wantSub != "" && !strings.Contains(got, c.wantSub) {
+			t.Errorf("SeedHintsFor(%q,%q) tak memuat %q:\n%s", c.typ, c.title, c.wantSub, got)
+		}
+		if c.notSub != "" && strings.Contains(got, c.notSub) {
+			t.Errorf("SeedHintsFor(%q,%q) salah-rute, memuat %q (ordering?):\n%s", c.typ, c.title, c.notSub, got)
+		}
+	}
+}
+
+// Prinsip mengikat: TIAP seed hint wajib non-destruktif. Jaga agar tak ada kata
+// kerja merusak yang menyusup saat map diperluas.
+func TestSeedHintsAllNonDestructive(t *testing.T) {
+	banned := []string{"drop table", "delete from", "truncate", "shutdown", "rm -rf", "destroy", "xp_cmdshell", "into outfile", "webshell "}
+	for _, sh := range seedHints {
+		for _, h := range sh.hints {
+			low := strings.ToLower(h)
+			for _, b := range banned {
+				if strings.Contains(low, b) {
+					t.Errorf("seed hint kelas %q memuat istilah destruktif %q: %s", sh.key, b, h)
+				}
+			}
+		}
 	}
 }
 
