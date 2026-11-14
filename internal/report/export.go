@@ -207,7 +207,10 @@ func exportBugcrowd(f *finding.Finding) string {
 	b.WriteString("**Metadata (isi ke form Bugcrowd):**\n\n")
 	fmt.Fprintf(&b, "- **Target:** %s\n", assetOf(f))
 	fmt.Fprintf(&b, "- **Priority:** %s\n", bugcrowdPriority(f.Severity))
-	fmt.Fprintf(&b, "- **Bug type (petakan ke VRT):** %s\n", f.Type)
+	fmt.Fprintf(&b, "- **Bug type:** %s\n", f.Type)
+	if vrt := bugcrowdVRT(f); vrt != "" {
+		fmt.Fprintf(&b, "- **VRT (kandidat — verifikasi ke taksonomi program):** `%s`\n", vrt)
+	}
 	if f.OWASP != "" {
 		fmt.Fprintf(&b, "- **OWASP (2021):** %s\n", f.OWASP.Label())
 	}
