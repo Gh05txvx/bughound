@@ -183,6 +183,12 @@ func exportHackerOne(f *finding.Finding) string {
 		b.WriteString("_Jelaskan dampak konkret (data terekspos, aksi yang bisa dilakukan penyerang) sebelum submit._\n\n")
 	}
 
+	b.WriteString("## Remediation\n\n")
+	for _, r := range remediationFor(f) {
+		fmt.Fprintf(&b, "- %s\n", r)
+	}
+	b.WriteString("\n")
+
 	if len(f.References) > 0 {
 		b.WriteString("## Supporting Material / References\n\n")
 		for _, ref := range f.References {
@@ -237,13 +243,17 @@ func exportBugcrowd(f *finding.Finding) string {
 	}
 
 	b.WriteString("**Remediation**\n\n")
+	for _, r := range remediationFor(f) {
+		fmt.Fprintf(&b, "- %s\n", r)
+	}
+	b.WriteString("\n")
+
 	if len(f.References) > 0 {
+		b.WriteString("**References**\n\n")
 		for _, ref := range f.References {
 			fmt.Fprintf(&b, "- %s\n", ref)
 		}
-	} else {
-		b.WriteString("_Tambahkan rekomendasi perbaikan._\n")
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 	return b.String()
 }
