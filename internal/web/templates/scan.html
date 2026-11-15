@@ -45,6 +45,15 @@
     <label>Upstream proxy / rantai <span class="muted small">(opsional · satu hop per baris, urut; egress diteruskan SETELAH lolos scope guard)</span></label>
     <textarea name="upstream_proxy" rows="2" spellcheck="false" placeholder="http://127.0.0.1:8080&#10;socks5://127.0.0.1:9050">{{.UpstreamProxy}}</textarea>
 
+    <label>Sesi terautentikasi <span class="muted small">(opsional · scan di balik login · satu header "Nama: nilai" per baris)</span></label>
+    <textarea name="auth_headers" rows="2" spellcheck="false" autocomplete="off" placeholder="Cookie: session=...&#10;Authorization: Bearer ..."></textarea>
+    {{if .HasSavedAuth}}
+    <label class="check"><input type="checkbox" name="use_saved_auth" value="1" {{if .UseSavedAuth}}checked{{end}}><span>Pakai sesi tersimpan program ini <span class="muted small">(terenkripsi di vault · kosongkan kotak di atas)</span></span></label>
+    {{end}}
+    <label class="check"><input type="checkbox" name="save_auth" value="1" {{if .SaveAuth}}checked{{end}}><span>Simpan sesi yang ditempel (terenkripsi) untuk program ini</span></label>
+    <label class="check"><input type="checkbox" name="auth_roe" value="1" {{if .AuthRoE}}checked{{end}}><span><strong>RoE:</strong> saya berwenang melakukan authenticated scan pada program ini</span></label>
+    <p class="muted small">Header disuntik ke tiap request engine (<code>-H</code>) agar scan menjangkau konten di balik login. <strong>Nilai header tak pernah di-echo ke form, di-log, atau masuk report</strong> — diredaksi dari evidence sebelum disimpan. Header hanya menumpang request yang lolos scope guard; redirect ke luar-scope tetap ditolak egress. Centang RoE wajib saat sesi dipakai.</p>
+
     <div class="actions">
       <button type="submit" class="btn primary">Jalankan scan</button>
       <span class="muted small">tanpa auto-submit · report selalu draft</span>

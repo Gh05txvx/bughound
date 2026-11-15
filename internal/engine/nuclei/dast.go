@@ -50,6 +50,8 @@ type DASTRunner struct {
 	Safety     Safety // profil keamanan: non-destruktif (selalu) + stealth (opsional)
 	proxyAddr  string
 
+	authHeaders []string // Lever 1: header auth disuntik via -H ke crawl & fuzz
+
 	specBytes []byte // spec OpenAPI/Swagger (opsional) utk fuzz body — lihat UseOpenAPISpec
 	specDone  bool   // penanda: pass OpenAPI sudah dijalankan sekali utk run ini
 }
@@ -65,6 +67,10 @@ func (r *DASTRunner) Name() string { return "nuclei-dast" }
 
 // UseProxy memenuhi engine.ProxyAware: crawl + fuzz diarahkan ke proxy egress.
 func (r *DASTRunner) UseProxy(addr string) { r.proxyAddr = addr }
+
+// UseAuthHeaders memenuhi engine.AuthAware: menyuntik header auth (-H) ke crawl
+// (katana) & fuzz (nuclei -dast) agar menjangkau endpoint di balik login (Lever 1).
+func (r *DASTRunner) UseAuthHeaders(h []string) { r.authHeaders = h }
 
 const maxDASTURLs = 150 // batas URL yang difuzz per target (volume request terkendali)
 
@@ -200,6 +206,7 @@ func (r *DASTRunner) katanaArgs(target string) []string {
 	// -jc: crawl JS (penting utk SPA yang mendaftarkan endpoint API di bundel JS).
 	// -d 2: batasi kedalaman agar crawl terbatas.
 	a := []string{"-silent", "-u", target, "-d", "2", "-jc", "-proxy", "http://" + r.proxyAddr}
+	a = append(a, headerArgs(r.authHeaders)...) // Lever 1: crawl di balik login
 	a = append(a, r.Safety.katanaExtraArgs()...)
 	if rl := r.Safety.rate(r.RateLimit); rl > 0 {
 		a = append(a, "-rate-limit", strconv.Itoa(rl))
@@ -235,6 +242,7 @@ func (r *DASTRunner) nucleiArgsMode(inputFile, inputMode string) []string {
 			a = append(a, "-required-only")
 		}
 	}
+	a = append(a, headerArgs(r.authHeaders)...) // Lever 1: fuzz request di balik login
 	// Argumen keamanan: non-destruktif (selalu) + stealth (bila aktif).
 	a = append(a, r.Safety.nucleiExtraArgs()...)
 	if rl := r.Safety.rate(r.RateLimit); rl > 0 {

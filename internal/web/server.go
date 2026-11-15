@@ -798,8 +798,14 @@ type scanPage struct {
 	Stealth       bool     // profil low-and-slow (DAST + laju scan)
 	APIRoutes     bool     // ikutkan wordlist route API ter-bundle (ffuf)
 	SavePreset    bool     // simpan seleksi ini sebagai preset program
-	Errors        []string
-	Result        *scanView
+	// Sesi terautentikasi (Lever 1). NILAI header TAK pernah di-echo ke form
+	// (secret); hanya status & toggle yang dibawa.
+	HasSavedAuth bool // vault punya sesi tersimpan utk program ini
+	UseSavedAuth bool // centang: pakai sesi tersimpan
+	SaveAuth     bool // centang: simpan sesi yang ditempel ke vault
+	AuthRoE      bool // centang: pernyataan RoE (berwenang authenticated-scan)
+	Errors       []string
+	Result       *scanView
 }
 
 type scanView struct {
@@ -833,6 +839,7 @@ func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 			page.Severity = p.Preset.Severity
 			page.Stealth = p.Preset.Stealth
 			page.APIRoutes = p.Preset.APIRoutes
+			page.HasSavedAuth = s.hasSavedAuth(r.Context(), p.Name) // sesi terautentikasi tersimpan?
 		}
 	}
 	// Query eksplisit mengalahkan preset — dipakai tautan "Scan pakai filter ini"
@@ -854,6 +861,54 @@ func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "scan", "base", page)
 }
 
+// authSessionScope adalah scope vault untuk sesi terautentikasi per-program
+// (Lever 1): satu entri bernama = nama program, berisi baris header "Nama: nilai"
+// terenkripsi. Terpisah dari secret lain; akses tercatat via reveal-hook audit.
+const authSessionScope = "authsession"
+
+// hasSavedAuth melaporkan apakah vault menyimpan sesi untuk program — hanya
+// List metadata, TANPA me-reveal nilainya (tak memicu audit reveal).
+func (s *Server) hasSavedAuth(ctx context.Context, program string) bool {
+	if s.vault == nil || strings.TrimSpace(program) == "" {
+		return false
+	}
+	metas, err := s.vault.List(ctx, authSessionScope)
+	if err != nil {
+		return false
+	}
+	for _, m := range metas {
+		if m.Name == program {
+			return true
+		}
+	}
+	return false
+}
+
+// validAuthHeaderLine memastikan baris berbentuk "Nama: nilai" dengan nama token
+// tanpa spasi (menolak teks acak yang salah tempel). Nilai bebas (cookie/token),
+// diteruskan apa adanya ke argv engine (tanpa shell).
+func validAuthHeaderLine(line string) bool {
+	name, val, ok := strings.Cut(line, ":")
+	if !ok {
+		return false
+	}
+	return strings.TrimSpace(name) != "" && strings.TrimSpace(val) != "" && !strings.ContainsAny(name, " \t")
+}
+
+// clampHeaderForErr memberi label aman untuk pesan galat: hanya nama header
+// (sebelum ':'), atau potongan pendek bila tak ada ':'. TAK pernah menampilkan
+// nilai header (secret) di respons.
+func clampHeaderForErr(line string) string {
+	if name, _, ok := strings.Cut(line, ":"); ok {
+		return strings.TrimSpace(name)
+	}
+	line = strings.TrimSpace(line)
+	if len(line) > 16 {
+		return line[:16] + "…"
+	}
+	return line
+}
+
 func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "form tidak valid", http.StatusBadRequest)
@@ -866,6 +921,12 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	targets := splitLines(r.FormValue("targets"))
 	rps := parseRPS(r.FormValue("rps"))
 	proxyChain := splitLines(r.FormValue("upstream_proxy")) // satu hop per baris
+	// Sesi terautentikasi (Lever 1): header yang ditempel, toggle pakai-tersimpan,
+	// simpan, dan pernyataan RoE. Nilai header TAK pernah di-echo kembali ke form.
+	pastedAuth := splitLines(r.FormValue("auth_headers"))
+	useSavedAuth := r.FormValue("use_saved_auth") != ""
+	saveAuth := r.FormValue("save_auth") != ""
+	authRoE := r.FormValue("auth_roe") != ""
 	sel := Selection{Tags: splitList(r.FormValue("tags")), Severity: filterSeverities(r.Form["severity"]), Stealth: r.FormValue("stealth") != "", APIRoutes: r.FormValue("api_routes") != ""}
 	// Stealth = low-and-slow: jepit laju scan keseluruhan ke mode senyap (≤
 	// stealthScanRPS). Ini MENAMBAH pembatasan (arah aman), rate limiter tetap
@@ -888,6 +949,10 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		Stealth:       sel.Stealth,
 		APIRoutes:     sel.APIRoutes,
 		SavePreset:    r.FormValue("save_preset") != "",
+		HasSavedAuth:  s.hasSavedAuth(r.Context(), program),
+		UseSavedAuth:  useSavedAuth,
+		SaveAuth:      saveAuth,
+		AuthRoE:       authRoE,
 	}
 
 	// Scan ter-arah spec: perluas OpenAPI/Swagger jadi endpoint → target. Tiap
@@ -906,6 +971,26 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		} else {
 			targets = append(targets, eps...)
 		}
+	}
+
+	// Resolusi sesi terautentikasi (Lever 1). Precedence: header yang ditempel >
+	// sesi tersimpan di vault. Wajib RoE saat dipakai; nilainya diredaksi dari
+	// evidence di hilir (orchestrator) dan tak pernah di-echo ke form.
+	authHeaders := pastedAuth
+	if len(authHeaders) == 0 && useSavedAuth && program != "" && s.vault != nil {
+		if raw, err := s.vault.Reveal(r.Context(), authSessionScope, program); err == nil {
+			authHeaders = splitLines(string(raw))
+		} else {
+			page.Errors = append(page.Errors, "Sesi tersimpan tak bisa dibaca untuk program ini.")
+		}
+	}
+	for _, h := range authHeaders {
+		if !validAuthHeaderLine(h) {
+			page.Errors = append(page.Errors, "Header sesi tak sah (format 'Nama: nilai'): "+clampHeaderForErr(h))
+		}
+	}
+	if len(authHeaders) > 0 && !authRoE {
+		page.Errors = append(page.Errors, "Authenticated scan: centang pernyataan RoE (berwenang) sebelum menjalankan.")
 	}
 
 	if program == "" {
@@ -937,9 +1022,17 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SaveProgram(r.Context(), prog)
 
+	// Simpan sesi terautentikasi (Lever 1) ke vault bila diminta — HANYA header
+	// yang ditempel (bukan yang sudah tersimpan). Terenkripsi; non-fatal bila gagal
+	// (scan tetap jalan memakai header untuk run ini).
+	if saveAuth && len(pastedAuth) > 0 && s.vault != nil {
+		_ = s.vault.Put(r.Context(), authSessionScope, program, []byte(r.FormValue("auth_headers")))
+	}
+
 	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
 	runID := s.enqueueScan(program, guard, scanSpec{
 		seeds: seeds, targets: targets, rps: rps, proxyChain: proxyChain, sel: sel, openapiSpec: openapiSpec,
+		authHeaders: authHeaders,
 	})
 
 	if run, ok := s.queue.Get(runID); ok {
@@ -957,6 +1050,7 @@ type scanSpec struct {
 	proxyChain     []string // bisa memuat kredensial user:pass: jangan dirender/di-log
 	sel            Selection
 	openapiSpec    []byte
+	authHeaders    []string // sesi auth (Lever 1): secret, jangan dirender/di-log (String meredaksi seluruh spec)
 }
 
 // String/GoString meredaksi isi spec (rantai proxy bisa memuat kredensial) agar
@@ -1042,7 +1136,7 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, sp scanSpec) st
 		if len(seeds) > 0 && rec != nil {
 			o.UseRecon(rec)
 		}
-		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: sp.proxyChain, OpenAPISpec: sp.openapiSpec})
+		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: sp.proxyChain, OpenAPISpec: sp.openapiSpec, AuthHeaders: sp.authHeaders})
 		sum := runSummary(res)
 		if err != nil {
 			msg := "gagal: " + err.Error()

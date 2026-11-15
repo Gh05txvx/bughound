@@ -21,11 +21,12 @@ import (
 // sehingga tiap request diperiksa scope guard SEBELUM koneksi dibuat. Bukan
 // default; aktifkan secara sadar untuk target yang sah.
 type Runner struct {
-	Binary    string // default "ffuf"
-	Wordlist  string // -w; kosong = wordlist bawaan
-	RateLimit int    // -rate (req/dtk); 0 = default ffuf
-	APIRoutes bool   // true = tambahkan wordlist route API ter-bundle (Assetnote apiroutes)
-	proxyAddr string
+	Binary      string // default "ffuf"
+	Wordlist    string // -w; kosong = wordlist bawaan
+	RateLimit   int    // -rate (req/dtk); 0 = default ffuf
+	APIRoutes   bool   // true = tambahkan wordlist route API ter-bundle (Assetnote apiroutes)
+	proxyAddr   string
+	authHeaders []string // Lever 1: header auth disuntik via -H (lihat UseAuthHeaders)
 }
 
 // Name memenuhi engine.Engine.
@@ -33,6 +34,10 @@ func (r *Runner) Name() string { return "ffuf" }
 
 // UseProxy memenuhi engine.ProxyAware: mengarahkan ffuf ke proxy egress.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
+
+// UseAuthHeaders memenuhi engine.AuthAware: menyuntik header auth (-H) ke tiap
+// request ffuf agar fuzzing konten di balik login (Lever 1).
+func (r *Runner) UseAuthHeaders(h []string) { r.authHeaders = h }
 
 // Scan memenuhi engine.Engine.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
@@ -102,6 +107,11 @@ func (r *Runner) buildArgs(target, out, wordlist string) []string {
 	}
 	if r.RateLimit > 0 {
 		args = append(args, "-rate", strconv.Itoa(r.RateLimit))
+	}
+	for _, h := range r.authHeaders { // Lever 1: header auth (bila ada)
+		if strings.TrimSpace(h) != "" {
+			args = append(args, "-H", h)
+		}
 	}
 	return args
 }

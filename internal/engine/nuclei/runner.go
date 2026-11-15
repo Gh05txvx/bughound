@@ -28,14 +28,15 @@ type Runner struct {
 	// bank payload, BH-SPEC-PAYLOAD §Seleksi). Kosong = jalankan semua template
 	// terpasang. -tags dan -severity dikombinasikan (template harus cocok
 	// keduanya), memangkas 14k template ke subset terarah → scan jauh lebih cepat.
-	Tags      []string // -tags t1,t2
-	Severity  []string // -severity critical,high
+	Tags     []string // -tags t1,t2
+	Severity []string // -severity critical,high
 	// TemplatesDir (opsional) membatasi nuclei HANYA ke direktori template ini
 	// via `-t` — dipakai runner "custom" khusus Bank Payload (BH-SPEC-PAYLOAD):
 	// menjalankan template deteksi read-only milik sendiri, TERPISAH dari runner
 	// utama yang menjalankan set resmi penuh. Kosong = set template bawaan nuclei.
 	TemplatesDir string
 	proxyAddr    string
+	authHeaders  []string // Lever 1: header auth disuntik via -H (lihat UseAuthHeaders)
 }
 
 // Name memenuhi engine.Engine. Runner ber-TemplatesDir dilabeli "nuclei-custom"
@@ -49,6 +50,23 @@ func (r *Runner) Name() string {
 
 // UseProxy memenuhi engine.ProxyAware: mengarahkan nuclei ke proxy egress.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
+
+// UseAuthHeaders memenuhi engine.AuthAware: menyuntik header auth (-H) ke tiap
+// request nuclei agar scan menjangkau konten di balik login (Lever 1).
+func (r *Runner) UseAuthHeaders(h []string) { r.authHeaders = h }
+
+// headerArgs merender header auth menjadi argumen `-H "Nama: nilai"` (dipakai
+// runner nuclei biasa & -dast). Nilai diteruskan apa adanya ke argv (tanpa
+// shell), jadi spasi/`;` di cookie aman.
+func headerArgs(headers []string) []string {
+	a := make([]string, 0, 2*len(headers))
+	for _, h := range headers {
+		if strings.TrimSpace(h) != "" {
+			a = append(a, "-H", h)
+		}
+	}
+	return a
+}
 
 // Scan memenuhi engine.Engine.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
@@ -88,6 +106,7 @@ func (r *Runner) buildArgs(target string) []string {
 	if sev := joinNonEmpty(r.Severity); sev != "" {
 		args = append(args, "-severity", sev)
 	}
+	args = append(args, headerArgs(r.authHeaders)...) // Lever 1: header auth (bila ada)
 	// Non-destruktif struktural: berlaku juga di plain runner, bukan hanya -dast.
 	// Tanpa ini, template unsafe destruktif (smuggling, unggah webshell) ikut jalan.
 	args = append(args, nonDestructiveArgs()...)

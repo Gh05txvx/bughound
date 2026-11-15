@@ -27,10 +27,11 @@ import (
 
 // Runner adalah adapter dalfox nyata (OPT-IN; butuh binary dalfox di PATH).
 type Runner struct {
-	Binary    string // default "dalfox"
-	RateLimit int    // perkiraan laju → dipetakan ke --delay (ms) bila > 0
-	Stealth   bool   // low-and-slow: worker lebih sedikit + delay
-	proxyAddr string
+	Binary      string // default "dalfox"
+	RateLimit   int    // perkiraan laju → dipetakan ke --delay (ms) bila > 0
+	Stealth     bool   // low-and-slow: worker lebih sedikit + delay
+	proxyAddr   string
+	authHeaders []string // Lever 1: header auth disuntik via -H (lihat UseAuthHeaders)
 }
 
 // Name memenuhi engine.Engine.
@@ -38,6 +39,10 @@ func (r *Runner) Name() string { return "dalfox" }
 
 // UseProxy memenuhi engine.ProxyAware: seluruh request dalfox lewat proxy egress.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
+
+// UseAuthHeaders memenuhi engine.AuthAware: menyuntik header auth (-H) ke tiap
+// request dalfox agar uji XSS di balik login (Lever 1).
+func (r *Runner) UseAuthHeaders(h []string) { r.authHeaders = h }
 
 // Scan memenuhi engine.Engine: jalankan dalfox atas target lalu normalkan PoC.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
@@ -101,6 +106,11 @@ func (r *Runner) args(target, outPath string) []string {
 	}
 	if d := r.delayMS(); d > 0 {
 		a = append(a, "--delay", strconv.Itoa(d))
+	}
+	for _, h := range r.authHeaders { // Lever 1: header auth (bila ada)
+		if strings.TrimSpace(h) != "" {
+			a = append(a, "-H", h)
+		}
 	}
 	return a
 }

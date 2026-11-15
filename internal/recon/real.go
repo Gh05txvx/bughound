@@ -56,6 +56,14 @@ func (p *RealPipeline) UseProxy(addr string) {
 	p.Katana.proxyAddr = addr
 }
 
+// UseAuthHeaders memenuhi engine.AuthAware: tahap aktif (httpx probe, katana
+// crawl) menyertakan header auth (-H) agar recon menjangkau konten di balik
+// login (Lever 1). subfinder/naabu (pasif/TCP) tak relevan.
+func (p *RealPipeline) UseAuthHeaders(h []string) {
+	p.Httpx.authHeaders = h
+	p.Katana.authHeaders = h
+}
+
 // Discover menjalankan pipeline untuk seluruh seed. Urutan menjaga prinsip
 // "tak menyentuh out-of-scope": tahap aktif-HTTP (httpx, katana) lewat proxy
 // egress, dan naabu (TCP mentah, tak bisa diproxy) hanya dijalankan pada host
@@ -158,9 +166,10 @@ func (s Subfinder) Enumerate(ctx context.Context, domain string) ([]string, erro
 
 // Httpx: probe host hidup (aktif → lewat proxy egress).
 type Httpx struct {
-	Binary    string
-	rate      int // -rate-limit (req/dtk); 0 = default httpx
-	proxyAddr string
+	Binary      string
+	rate        int // -rate-limit (req/dtk); 0 = default httpx
+	proxyAddr   string
+	authHeaders []string // Lever 1: header auth disuntik via -H
 }
 
 func (h *Httpx) bin() string {
@@ -177,6 +186,11 @@ func (h *Httpx) args() []string {
 	}
 	if h.rate > 0 {
 		a = append(a, "-rate-limit", strconv.Itoa(h.rate))
+	}
+	for _, hd := range h.authHeaders { // Lever 1: probe di balik login
+		if strings.TrimSpace(hd) != "" {
+			a = append(a, "-H", hd)
+		}
 	}
 	return a
 }
@@ -197,9 +211,10 @@ func (h *Httpx) proxyEnvOrNil() []string {
 
 // Katana: crawling (aktif → lewat proxy egress).
 type Katana struct {
-	Binary    string
-	rate      int // -rate-limit (req/dtk); 0 = default katana
-	proxyAddr string
+	Binary      string
+	rate        int // -rate-limit (req/dtk); 0 = default katana
+	proxyAddr   string
+	authHeaders []string // Lever 1: header auth disuntik via -H
 }
 
 func (k *Katana) bin() string {
@@ -222,6 +237,11 @@ func (k *Katana) args() []string {
 	}
 	if k.rate > 0 {
 		a = append(a, "-rate-limit", strconv.Itoa(k.rate))
+	}
+	for _, hd := range k.authHeaders { // Lever 1: crawl di balik login (bila ada)
+		if strings.TrimSpace(hd) != "" {
+			a = append(a, "-H", hd)
+		}
 	}
 	return a
 }

@@ -12,6 +12,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,6 +92,55 @@ func (pc ProxyChain) String() string {
 	return s + "]"
 }
 
+// AuthHeaders adalah daftar header autentikasi (mis. "Cookie: session=...",
+// "Authorization: Bearer ...") yang disuntikkan ke SETIAP request engine agar
+// scan menjangkau konten di balik login (Lever 1: authenticated scanning).
+// Tiap elemen berbentuk "Nama: nilai".
+//
+// NILAI header adalah secret. String() meredaksi nilainya (nama tetap) sehingga
+// kredensial tak pernah tercetak bila ter-log atau diformat (safe-by-construction;
+// Prinsip #5). Orchestrator juga meredaksi nilai ini dari evidence temuan sebelum
+// disimpan. Header hanya menumpang request yang lolos scope guard; redirect ke
+// luar-scope tetap ditolak egress sehingga kredensial tak bocor keluar scope.
+type AuthHeaders []string
+
+func (ah AuthHeaders) String() string {
+	s := "["
+	for i, raw := range ah {
+		if i > 0 {
+			s += " "
+		}
+		s += redactHeader(raw)
+	}
+	return s + "]"
+}
+
+// Names mengembalikan NAMA tiap header (bagian sebelum ':'), untuk dipakai
+// meredaksi evidence. Nilai tak pernah ikut.
+func (ah AuthHeaders) Names() []string {
+	if len(ah) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(ah))
+	for _, h := range ah {
+		if name, _, ok := strings.Cut(h, ":"); ok {
+			if n := strings.TrimSpace(name); n != "" {
+				names = append(names, n)
+			}
+		}
+	}
+	return names
+}
+
+// redactHeader menyisakan nama header, memask nilainya.
+func redactHeader(h string) string {
+	name, _, ok := strings.Cut(h, ":")
+	if !ok || strings.TrimSpace(name) == "" {
+		return "***"
+	}
+	return strings.TrimSpace(name) + ": ***"
+}
+
 // ScanRequest meminta scan satu program.
 type ScanRequest struct {
 	Program string
@@ -105,6 +155,12 @@ type ScanRequest struct {
 	// ke engine OpenAPIAware agar request (termasuk body) dibangkitkan dari spec
 	// dan difuzz. Tiap koneksi tetap lewat proxy egress (scope guard menegakkan).
 	OpenAPISpec []byte
+	// AuthHeaders (opsional): header autentikasi (Cookie/Authorization/dll) yang
+	// disuntikkan ke setiap request engine AuthAware agar scan menjangkau konten
+	// di balik login (Lever 1). Nilai = secret: diredaksi saat diformat/log dan
+	// dibuang dari evidence sebelum simpan; tak pernah masuk temuan/report. Hanya
+	// menumpang request yang lolos scope guard.
+	AuthHeaders AuthHeaders
 }
 
 // ScanResult meringkas hasil satu run.
@@ -186,6 +242,23 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		}
 	}
 
+	// Header autentikasi (bila ada) diberikan ke engine & recon yang mendukung
+	// agar scan + crawl menjangkau konten di balik login (Lever 1). KEAMANAN:
+	// header hanya menumpang request yang lolos scope guard; redirect ke luar-scope
+	// tetap ditolak egress (kredensial tak bocor keluar scope). Nilai diredaksi
+	// dari evidence sebelum simpan (authNames) & tak pernah dicetak.
+	authNames := req.AuthHeaders.Names()
+	if len(req.AuthHeaders) > 0 {
+		for _, eng := range o.engines {
+			if aa, ok := eng.(engine.AuthAware); ok {
+				aa.UseAuthHeaders([]string(req.AuthHeaders))
+			}
+		}
+		if aa, ok := o.recon.(engine.AuthAware); ok {
+			aa.UseAuthHeaders([]string(req.AuthHeaders))
+		}
+	}
+
 	candidates := append([]string{}, req.Targets...)
 
 	// Tahap recon (opsional). Pemanggilannya pun dibatasi rate limiter.
@@ -247,6 +320,11 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 					o.audit(eev)
 					res.Denied = append(res.Denied, eev)
 					continue
+				}
+				// Lever 1: buang nilai header auth dari evidence sebelum simpan —
+				// kredensial sesi tak boleh tersimpan di temuan/report (Prinsip #5).
+				if len(authNames) > 0 && f.Evidence != nil {
+					f.Evidence.RedactHeaders(authNames)
 				}
 				sr, err := o.store.Save(ctx, f)
 				if err != nil {

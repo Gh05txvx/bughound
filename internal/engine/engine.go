@@ -36,3 +36,18 @@ type ProxyAware interface {
 type OpenAPIAware interface {
 	UseOpenAPISpec(spec []byte)
 }
+
+// AuthAware ditandai oleh engine yang bisa menyertakan header autentikasi
+// (mis. Cookie / Authorization) pada setiap request-nya, agar scan menjangkau
+// konten di balik login (Lever 1: authenticated scanning). Orchestrator memanggil
+// UseAuthHeaders sebelum Scan bila request membawa kredensial sesi. Tiap elemen
+// berbentuk "Nama: nilai" (siap diteruskan sebagai `-H` ke tool).
+//
+// KEAMANAN: header hanya menumpang request yang SUDAH lolos scope guard. Bila
+// engine mengikuti redirect ke host luar-scope, egress menolak dial sebelum
+// koneksi sehingga kredensial tak pernah keluar scope. Nilai header adalah
+// secret: jangan pernah dicetak ke log/temuan/report — orchestrator meredaksi
+// nilainya dari evidence sebelum simpan (lihat Evidence.RedactHeaders).
+type AuthAware interface {
+	UseAuthHeaders(headers []string)
+}
