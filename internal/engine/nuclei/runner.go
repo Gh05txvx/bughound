@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"bughound/internal/egress"
+	"bughound/internal/engine"
 	"bughound/internal/finding"
+	"bughound/internal/payload"
 )
 
 // Runner adalah engine nuclei NYATA: mengeksekusi binary nuclei sebagai
@@ -68,6 +73,34 @@ func headerArgs(headers []string) []string {
 	return a
 }
 
+// requestPathRE menangkap path request template: `{{BaseURL}}/x` / `{{RootURL}}/x`
+// atau baris request mentah `GET /x HTTP/1.1`.
+var requestPathRE = regexp.MustCompile(`(?im)\{\{(?:BaseURL|RootURL)\}\}([^"'\s]*)|^\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)`)
+
+// logoutTemplates mengembalikan template di dir yang me-request route logout
+// (engine.IsLogoutPath; live 2026-11-16: 32 dari ~14k template resmi). Best-effort:
+// dir/berkas tak terbaca dilewati (nuclei pun tak bisa memuatnya).
+func logoutTemplates(dir string) []string {
+	var out []string
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".yaml") {
+			return nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil
+		}
+		for _, m := range requestPathRE.FindAllSubmatch(b, -1) {
+			if engine.IsLogoutPath(string(m[1]) + string(m[2])) {
+				out = append(out, p)
+				break
+			}
+		}
+		return nil
+	})
+	return out
+}
+
 // Scan memenuhi engine.Engine.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
 	bin := r.Binary
@@ -106,7 +139,16 @@ func (r *Runner) buildArgs(target string) []string {
 	if sev := joinNonEmpty(r.Severity); sev != "" {
 		args = append(args, "-severity", sev)
 	}
-	args = append(args, headerArgs(r.authHeaders)...) // Lever 1: header auth (bila ada)
+	if h := headerArgs(r.authHeaders); len(h) > 0 { // Lever 1: header auth (bila ada)
+		args = append(args, h...)
+		// Template yang me-request route logout mematikan sesi login — dan nuclei
+		// jalan PERTAMA di roster, jadi semua engine sesudahnya ikut tanpa login.
+		// shortcut: ditelusuri ulang tiap target (~2 dtk utk 14k template, terukur
+		// 2026-11-16); cache per Runner bila scan berlogin rutin ratusan target.
+		if ex := logoutTemplates(payload.ResolveNucleiDir(r.TemplatesDir)); len(ex) > 0 {
+			args = append(args, "-exclude-templates", strings.Join(ex, ","))
+		}
+	}
 	// Non-destruktif struktural: berlaku juga di plain runner, bukan hanya -dast.
 	// Tanpa ini, template unsafe destruktif (smuggling, unggah webshell) ikut jalan.
 	args = append(args, nonDestructiveArgs()...)

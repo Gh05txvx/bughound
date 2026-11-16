@@ -1,6 +1,10 @@
 package recon
 
-import "testing"
+import (
+	"testing"
+
+	"bughound/internal/engine"
+)
 
 func hasHeaderArg(args []string, hdr string) bool {
 	for i := 0; i+1 < len(args); i++ {
@@ -24,5 +28,26 @@ func TestRealPipelineAuthHeadersFanout(t *testing.T) {
 	}
 	if !hasHeaderArg(p.Katana.args(), hdr) {
 		t.Error("katana args harus memuat -H auth")
+	}
+}
+
+// Crawl berlogin tak boleh mengikuti link logout (sesi mati); crawl tanpa login
+// tak dibatasi.
+func TestKatanaSkipsLogoutWhenAuth(t *testing.T) {
+	cos := func(args []string) bool {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-cos" && args[i+1] == engine.LogoutPattern {
+				return true
+			}
+		}
+		return false
+	}
+	k := &Katana{}
+	if cos(k.args()) {
+		t.Error("tanpa auth, katana tak boleh dibatasi -cos logout")
+	}
+	k.authHeaders = []string{"Cookie: s=1"}
+	if !cos(k.args()) {
+		t.Errorf("dengan auth, katana wajib -cos %q; dapat %v", engine.LogoutPattern, k.args())
 	}
 }

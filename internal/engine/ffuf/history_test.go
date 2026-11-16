@@ -19,19 +19,61 @@ func TestMain(m *testing.M) {
 }
 
 // fakeFFUF meniru ffuf v2: menulis opsi run (termasuk header -H) ke
-// $XDG_CONFIG_HOME/ffuf/history, mencatat dir itu, lalu hasil kosong ke -o.
+// $XDG_CONFIG_HOME/ffuf/history, mencatat dir itu (+ salinan wordlist -w bila
+// BH_FAKE_FFUF_WL diset), lalu hasil kosong ke -o.
 func fakeFFUF() {
 	cfg := os.Getenv("XDG_CONFIG_HOME")
 	hist := filepath.Join(cfg, "ffuf", "history", "x")
 	_ = os.MkdirAll(hist, 0o750)
 	_ = os.WriteFile(filepath.Join(hist, "options"), []byte(strings.Join(os.Args, " ")), 0o640)
 	_ = os.WriteFile(os.Getenv("BH_FAKE_FFUF_LOG"), []byte(cfg), 0o600)
-	for i, a := range os.Args {
-		if a == "-o" && i+1 < len(os.Args) {
+	for i := 0; i+1 < len(os.Args); i++ {
+		switch os.Args[i] {
+		case "-o":
 			_ = os.WriteFile(os.Args[i+1], []byte(`{"results":[]}`), 0o600)
+		case "-w":
+			if wl := os.Getenv("BH_FAKE_FFUF_WL"); wl != "" {
+				b, _ := os.ReadFile(os.Args[i+1])
+				_ = os.WriteFile(wl, b, 0o600)
+			}
 		}
 	}
 	os.Exit(0)
+}
+
+// Scan berlogin: entri route logout dibuang dari wordlist (bawaan memuat
+// "logout") — satu GET mematikan sesi. Tanpa login wordlist utuh.
+func TestScanDropsLogoutWordsWhenAuth(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wl := filepath.Join(t.TempDir(), "wl.txt")
+	t.Setenv("BH_FAKE_FFUF", "1")
+	t.Setenv("BH_FAKE_FFUF_WL", wl)
+	for _, auth := range []bool{false, true} {
+		r := &Runner{Binary: exe}
+		if auth {
+			r.UseAuthHeaders([]string{"Cookie: s=1"})
+		}
+		if _, err := r.Scan(context.Background(), "http://127.0.0.1:1", "p", "r"); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(wl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		words := map[string]bool{}
+		for _, w := range strings.Fields(string(b)) {
+			words[w] = true
+		}
+		if words["logout"] == auth {
+			t.Errorf("auth=%v: entri logout ada=%v", auth, words["logout"])
+		}
+		if !words["login"] || !words["admin"] {
+			t.Errorf("auth=%v: entri non-logout harus tetap ada", auth)
+		}
+	}
 }
 
 // Regresi kebocoran secret (live 2026-11-16): history ffuf memuat nilai header

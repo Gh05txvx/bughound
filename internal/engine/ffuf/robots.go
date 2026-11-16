@@ -152,15 +152,5 @@ func mergeWordlist(basePath string, extra []string) (string, func(), error) {
 		buf.WriteString(p)
 		buf.WriteByte('\n')
 	}
-	tmp, err := os.CreateTemp("", "ffuf-wl-robots-*.txt")
-	if err != nil {
-		return "", nil, err
-	}
-	if _, err := tmp.Write(buf.Bytes()); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return "", nil, err
-	}
-	tmp.Close()
-	return tmp.Name(), func() { os.Remove(tmp.Name()) }, nil
+	return tempWordlist("ffuf-wl-robots-*.txt", buf.Bytes())
 }

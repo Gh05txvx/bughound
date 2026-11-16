@@ -11,7 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"bughound/internal/egress"
+	"bughound/internal/engine"
 	"bughound/internal/finding"
 )
 
@@ -125,13 +128,22 @@ func (r *DASTRunner) Scan(ctx context.Context, target, program, runID string) ([
 // untuk difuzz, melengkapi fuzz berbasis URL yang hanya menyentuh query. Semua
 // request tetap lewat proxy egress scope-enforced. Best-effort: gagal = nil.
 func (r *DASTRunner) fuzzOpenAPI(ctx context.Context, program, runID string) []*finding.Finding {
+	spec, mode := r.specBytes, detectSpecMode(r.specBytes) // mode dari spec ASLI
+	if len(headerArgs(r.authHeaders)) > 0 {
+		// Scan berlogin: operasi route logout di spec (mis. Petstore GET /user/logout)
+		// mematikan sesi → dibuang. Spec tak terurai = pass dilewati (fail-closed).
+		var err error
+		if spec, err = withoutLogoutPaths(spec); err != nil {
+			return nil
+		}
+	}
 	f, err := os.CreateTemp("", "nuclei-openapi-*.yaml")
 	if err != nil {
 		return nil
 	}
 	name := f.Name()
 	defer os.Remove(name)
-	if _, err := f.Write(r.specBytes); err != nil {
+	if _, err := f.Write(spec); err != nil {
 		_ = f.Close()
 		return nil
 	}
@@ -143,7 +155,7 @@ func (r *DASTRunner) fuzzOpenAPI(ctx context.Context, program, runID string) []*
 	if bin == "" {
 		bin = "nuclei"
 	}
-	cmd := exec.CommandContext(ctx, bin, r.nucleiArgsMode(name, detectSpecMode(r.specBytes))...)
+	cmd := exec.CommandContext(ctx, bin, r.nucleiArgsMode(name, mode)...)
 	cmd.Env = egress.ProxyEnv(os.Environ(), "http://"+r.proxyAddr)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -153,6 +165,32 @@ func (r *DASTRunner) fuzzOpenAPI(ctx context.Context, program, runID string) []*
 	}
 	findings, _ := Parse(&stdout, program, runID)
 	return findings
+}
+
+// withoutLogoutPaths mengembalikan spec tanpa entri `paths` route logout
+// (engine.IsLogoutPath). Lewat yaml.Node (JSON ⊂ YAML) agar urutan & nilai lain
+// utuh; hasil berformat YAML.
+func withoutLogoutPaths(spec []byte) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(spec, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("spec bukan mapping")
+	}
+	root := doc.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if paths := root.Content[i+1]; root.Content[i].Value == "paths" && paths.Kind == yaml.MappingNode {
+			kept := paths.Content[:0]
+			for j := 0; j+1 < len(paths.Content); j += 2 {
+				if !engine.IsLogoutPath(paths.Content[j].Value) {
+					kept = append(kept, paths.Content[j], paths.Content[j+1])
+				}
+			}
+			paths.Content = kept
+		}
+	}
+	return yaml.Marshal(&doc)
 }
 
 // detectSpecMode menebak input-mode nuclei dari isi spec: "swagger" untuk
@@ -206,7 +244,10 @@ func (r *DASTRunner) katanaArgs(target string) []string {
 	// -jc: crawl JS (penting utk SPA yang mendaftarkan endpoint API di bundel JS).
 	// -d 2: batasi kedalaman agar crawl terbatas.
 	a := []string{"-silent", "-u", target, "-d", "2", "-jc", "-proxy", "http://" + r.proxyAddr}
-	a = append(a, headerArgs(r.authHeaders)...) // Lever 1: crawl di balik login
+	if h := headerArgs(r.authHeaders); len(h) > 0 { // Lever 1: crawl di balik login,
+		a = append(a, h...) // tanpa mengikuti link logout (sesi mati; live 2026-11-16)
+		a = append(a, "-cos", engine.LogoutPattern)
+	}
 	a = append(a, r.Safety.katanaExtraArgs()...)
 	if rl := r.Safety.rate(r.RateLimit); rl > 0 {
 		a = append(a, "-rate-limit", strconv.Itoa(rl))

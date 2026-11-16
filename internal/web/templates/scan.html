@@ -52,7 +52,7 @@
     {{end}}
     <label class="check"><input type="checkbox" name="save_auth" value="1" {{if .SaveAuth}}checked{{end}}><span>Simpan sesi yang ditempel (terenkripsi) untuk program ini</span></label>
     <label class="check"><input type="checkbox" name="auth_roe" value="1" {{if .AuthRoE}}checked{{end}}><span><strong>RoE:</strong> saya berwenang melakukan authenticated scan pada program ini</span></label>
-    <p class="muted small">Header disuntik ke tiap request engine (<code>-H</code>; ZAP lewat aturan Replacer) agar scan menjangkau konten di balik login. <strong>Nilai header tak pernah di-echo ke form, di-log, atau masuk report</strong> — diredaksi dari evidence sebelum disimpan. Header hanya menumpang request yang lolos scope guard; redirect ke luar-scope tetap ditolak egress. Centang RoE wajib saat sesi dipakai.</p>
+    <p class="muted small">Header disuntik ke tiap request engine (<code>-H</code>; ZAP lewat aturan Replacer) agar scan menjangkau konten di balik login. <strong>Nilai header tak pernah di-echo ke form, di-log, atau masuk report</strong> — diredaksi dari evidence sebelum disimpan. Header hanya menumpang request yang lolos scope guard; redirect ke luar-scope tetap ditolak egress. Route logout (logout, sign-out, logoff, …) <strong>dilewati</strong> semua engine &amp; crawler agar sesi tak mati di tengah scan — uji route itu lewat scan tanpa sesi. Centang RoE wajib saat sesi dipakai.</p>
 
     <div class="actions">
       <button type="submit" class="btn primary">Jalankan scan</button>

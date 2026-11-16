@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"bughound/internal/engine"
 	"bughound/internal/finding"
 )
 
@@ -174,17 +175,24 @@ const (
 //
 // Spider & activeScan dibatasi durasinya (lihat konstanta) agar tuntas di host
 // kecil dan tak membanjiri target. Bila ada header auth, job replacer (lihat
-// replacerJob) dipasang paling depan.
+// replacerJob) dipasang paling depan dan route logout dikeluarkan dari context.
 func planYAML(target, reportDir, reportFile string, active bool, authHeaders []string) string {
+	replacer, excl := replacerJob(authHeaders), ""
+	if replacer != "" {
+		// Spider ZAP mengikuti link logout (live 2026-11-16) → sesi mati & sisa scan
+		// diam-diam tanpa login. URL di luar context tak di-spider/scan.
+		excl = "      excludePaths:\n        - " + strconv.Quote(engine.LogoutPattern) + "\n"
+	}
 	plan := "" +
 		"env:\n" +
 		"  contexts:\n" +
 		"    - name: bughound\n" +
 		"      urls: [\"" + target + "\"]\n" +
+		excl +
 		"  parameters:\n" +
 		"    failOnError: false\n" +
 		"jobs:\n" +
-		replacerJob(authHeaders) +
+		replacer +
 		"  - type: spider\n" +
 		"    parameters:\n" +
 		"      context: bughound\n" +

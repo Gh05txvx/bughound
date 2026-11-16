@@ -302,6 +302,12 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 			continue
 		}
 		seen[target] = true
+		// Lever 1: route logout (hasil recon, endpoint spec OpenAPI, atau target) tak
+		// dipindai saat scan berlogin — satu GET mematikan sesi & sisa scan diam-diam
+		// jalan tanpa login.
+		if len(authNames) > 0 && engine.IsLogoutURL(target) {
+			continue
+		}
 
 		// Lapis 1 — penegakan saat input/perencanaan.
 		d := o.guard.Evaluate(target)

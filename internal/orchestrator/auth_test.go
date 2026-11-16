@@ -165,6 +165,49 @@ func TestAuthHeadersScrubLongestFirst(t *testing.T) {
 	}
 }
 
+// reconWith memberi aset tetap — meniru katana/gau yang menemukan URL logout.
+type reconWith struct{ assets []string }
+
+func (*reconWith) Name() string { return "reconwith" }
+func (r *reconWith) Discover(context.Context, []string) ([]recon.Asset, error) {
+	out := make([]recon.Asset, 0, len(r.assets))
+	for _, v := range r.assets {
+		out = append(out, recon.Asset{Value: v, Source: "katana"})
+	}
+	return out, nil
+}
+
+// Scan berlogin: route logout TAK dipindai — baik hasil recon maupun target
+// (mis. endpoint hasil ekspansi spec OpenAPI) — satu GET mematikan sesi. Tanpa
+// auth, dipindai seperti biasa.
+func TestAuthScanSkipsLogoutTargets(t *testing.T) {
+	for _, tc := range []struct {
+		auth       AuthHeaders
+		wantLogout bool
+	}{{nil, true}, {AuthHeaders{"Cookie: s=1"}, false}} {
+		o := New(newGuard(t, []string{"demo.test"}, nil), &authEngine{}, store.NewMem(), testLimiter(), nil)
+		o.UseRecon(&reconWith{assets: []string{"https://demo.test/logout", "https://demo.test/account"}})
+		res, err := o.RunScan(context.Background(), ScanRequest{
+			Program: "demo", RunID: "r", Seeds: []string{"demo.test"}, AuthHeaders: tc.auth,
+			Targets: []string{"https://demo.test/user/sign-out", "https://demo.test/user/1"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := strings.Join(res.Scanned, " ")
+		for _, lo := range []string{"/logout", "/user/sign-out"} {
+			if strings.Contains(got, lo) != tc.wantLogout {
+				t.Errorf("auth=%v: %s dipindai=%v, mau %v (scanned: %s)", tc.auth.Names(), lo, !tc.wantLogout, tc.wantLogout, got)
+			}
+		}
+		for _, keep := range []string{"/account", "/user/1"} {
+			if !strings.Contains(got, keep) {
+				t.Errorf("auth=%v: %s (non-logout) tetap harus dipindai (scanned: %s)", tc.auth.Names(), keep, got)
+			}
+		}
+	}
+}
+
 func TestAuthHeadersNames(t *testing.T) {
 	got := AuthHeaders{"Cookie: a", "Authorization: b", "  X-Api-Key : c", "garbage"}.Names()
 	want := []string{"Cookie", "Authorization", "X-Api-Key"}

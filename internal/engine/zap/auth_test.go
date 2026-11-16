@@ -69,3 +69,29 @@ func TestPlanYAMLAuthValueRoundTrip(t *testing.T) {
 		t.Errorf("nilai tak kembali utuh: %+v", rule)
 	}
 }
+
+// Scan berlogin: context ZAP mengecualikan route logout (spider mengikuti link
+// logout → sesi mati, live 2026-11-16); tanpa login context tak dibatasi.
+func TestPlanYAMLExcludesLogoutWhenAuth(t *testing.T) {
+	excl := func(p string) []string {
+		t.Helper()
+		var plan struct {
+			Env struct {
+				Contexts []struct {
+					ExcludePaths []string `yaml:"excludePaths"`
+				} `yaml:"contexts"`
+			} `yaml:"env"`
+		}
+		if err := yaml.Unmarshal([]byte(p), &plan); err != nil || len(plan.Env.Contexts) != 1 {
+			t.Fatalf("plan rusak (err=%v):\n%s", err, p)
+		}
+		return plan.Env.Contexts[0].ExcludePaths
+	}
+	if ex := excl(planYAML("https://demo.test", "/out", "report.json", false, nil)); len(ex) != 0 {
+		t.Errorf("tanpa auth context tak boleh dibatasi: %v", ex)
+	}
+	ex := excl(planYAML("https://demo.test", "/out", "report.json", true, []string{"Cookie: s=1"}))
+	if len(ex) != 1 || ex[0] != engine.LogoutPattern {
+		t.Errorf("dengan auth, excludePaths harus [%q]; dapat %v", engine.LogoutPattern, ex)
+	}
+}

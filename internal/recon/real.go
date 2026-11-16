@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"bughound/internal/egress"
+	"bughound/internal/engine"
 )
 
 // RealPipeline menjalankan recon NYATA via subprocess: subfinder (pasif, OSINT)
@@ -238,10 +239,15 @@ func (k *Katana) args() []string {
 	if k.rate > 0 {
 		a = append(a, "-rate-limit", strconv.Itoa(k.rate))
 	}
+	auth := false
 	for _, hd := range k.authHeaders { // Lever 1: crawl di balik login (bila ada)
 		if strings.TrimSpace(hd) != "" {
 			a = append(a, "-H", hd)
+			auth = true
 		}
+	}
+	if auth { // jangan ikuti link logout: satu GET mematikan sesi login (live 2026-11-16)
+		a = append(a, "-cos", engine.LogoutPattern)
 	}
 	return a
 }

@@ -66,6 +66,16 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 			wordlist, cleanupWL = merged, cleanupMerged
 		}
 	}
+	if len(r.authHeaders) > 0 {
+		// Scan berlogin: buang entri route logout (sesi mati; live 2026-11-16).
+		// Fail-closed: gagal menyaring = jangan fuzz dengan sesi sama sekali.
+		filtered, cleanupF, fErr := withoutLogout(wordlist)
+		if fErr != nil {
+			return nil, fmt.Errorf("ffuf: saring wordlist logout: %w", fErr)
+		}
+		cleanupWL()
+		wordlist, cleanupWL = filtered, cleanupF
+	}
 
 	tmp, err := os.CreateTemp("", "ffuf-*.json")
 	if err != nil {
