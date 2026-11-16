@@ -3,6 +3,7 @@ package zap
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -92,10 +93,19 @@ func (r *Runner) scanPlan(ctx context.Context, bin, target, program, runID strin
 	if err != nil {
 		return nil, fmt.Errorf("zap: port proxy: %w", err)
 	}
+	reportPath := filepath.Join(dir, reportFile)
 	if err := r.run(ctx, bin, append(r.buildPlanArgs(planPath, dir), "-port", port)); err != nil {
+		// Exit 2 = plan Automation Framework tuntas DENGAN peringatan (mis. target
+		// membalas 401 di semua halaman): laporannya sah. Exit lain / tanpa laporan = gagal.
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 2 {
+			if fs, rerr := readReport(reportPath, program, runID); rerr == nil {
+				return fs, nil
+			}
+		}
 		return nil, err
 	}
-	return readReport(filepath.Join(dir, reportFile), program, runID)
+	return readReport(reportPath, program, runID)
 }
 
 // freePort meminta port lokal bebas ke OS untuk proxy utama ZAP: mode -cmd tetap

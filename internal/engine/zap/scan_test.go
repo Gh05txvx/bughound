@@ -83,3 +83,29 @@ func TestScanConcurrentZAPRuns(t *testing.T) {
 		}
 	}
 }
+
+// Exit 2 Automation Framework = plan selesai DENGAN peringatan (mis. target
+// membalas 401 di semua halaman); laporannya tetap dipakai. Exit 1, atau exit 2
+// tanpa laporan, tetap galat.
+func TestScanZAPExitCodes(t *testing.T) {
+	r := fakeZAPRunner(t)
+	for _, tc := range []struct {
+		exit, noReport string
+		wantErr        bool
+	}{
+		{"0", "", false},
+		{"2", "", false},
+		{"1", "", true},
+		{"2", "1", true},
+	} {
+		t.Setenv("BH_FAKE_ZAP_EXIT", tc.exit)
+		t.Setenv("BH_FAKE_ZAP_NOREPORT", tc.noReport)
+		fs, err := r.Scan(context.Background(), "http://t.test", "p", "r")
+		if (err != nil) != tc.wantErr {
+			t.Errorf("exit %s (tanpa laporan=%q): galat=%v, mau galat=%v", tc.exit, tc.noReport, err, tc.wantErr)
+		}
+		if !tc.wantErr && len(fs) != 2 {
+			t.Errorf("exit %s: mau 2 temuan dari laporan, dapat %d", tc.exit, len(fs))
+		}
+	}
+}
