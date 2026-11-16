@@ -41,7 +41,19 @@ func (r *Runner) robotsPaths(ctx context.Context, target string) []string {
 	if err != nil {
 		return nil
 	}
-	return robotsPathsFrom(ctx, client, base)
+	return robotsPathsFrom(ctx, client, base, r.authHeaders...)
+}
+
+// setHeaders memasang header auth "Nama: nilai" (Lever 1) di request enrichment,
+// sama dengan -H probe ffuf: robots.txt/spec di balik login hanya terbaca dengan
+// sesi. Dipasang di request (bukan transport) agar Go tetap membuang
+// Cookie/Authorization saat redirect lintas domain.
+func setHeaders(req *http.Request, hdrs []string) {
+	for _, h := range hdrs {
+		if name, val, ok := strings.Cut(h, ":"); ok && strings.TrimSpace(name) != "" {
+			req.Header.Set(strings.TrimSpace(name), strings.TrimSpace(val))
+		}
+	}
 }
 
 // proxiedClient membuat http.Client yang menyalurkan SEMUA request lewat proxy
@@ -61,11 +73,12 @@ func proxiedClient(proxyAddr string, timeout time.Duration) (*http.Client, error
 
 // robotsPathsFrom melakukan GET base/robots.txt dengan client apa adanya lalu
 // mem-parse hasilnya. Dipisah agar bisa diuji tanpa proxy (client langsung).
-func robotsPathsFrom(ctx context.Context, client *http.Client, base string) []string {
+func robotsPathsFrom(ctx context.Context, client *http.Client, base string, hdrs ...string) []string {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/robots.txt", nil)
 	if err != nil {
 		return nil
 	}
+	setHeaders(req, hdrs)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil // robots.txt absen/diblok scope -> tanpa enrichment

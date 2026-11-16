@@ -132,3 +132,43 @@ func TestProxiedClientWorksThroughOpenedTunnel(t *testing.T) {
 		t.Errorf("robotsPathsFrom = %v, ingin [rahasia]", got)
 	}
 }
+
+// Lever 1: robots.txt & spec di balik login hanya terbaca dengan sesi, jadi
+// enrichment wajib membawa header auth yang sama dengan probe ffuf (-H). Dulu
+// tanpa header → di target berlogin hasilnya selalu kosong.
+func TestEnrichmentCarriesAuthHeaders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Cookie") != "s=rahasia" {
+			http.Error(w, "login dulu", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/robots.txt":
+			fmt.Fprint(w, "Disallow: /internal\n")
+		case "/openapi.json":
+			fmt.Fprint(w, `{"openapi":"3.0.0","servers":[{"url":"/"}],"paths":{"/api/admin":{"get":{}}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	g, errs := scope.New([]string{"127.0.0.1"}, nil)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	addr, stop, err := egress.New(g, nil).Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+
+	r := &Runner{}
+	r.UseProxy(addr)
+	r.UseAuthHeaders([]string{"Cookie: s=rahasia"})
+	if got := r.robotsPaths(context.Background(), srv.URL); strings.Join(got, ",") != "internal" {
+		t.Errorf("robots.txt berlogin: dapat %v, mau [internal]", got)
+	}
+	if got := r.specPaths(context.Background(), srv.URL); strings.Join(got, ",") != "api/admin" {
+		t.Errorf("spec berlogin: dapat %v, mau [api/admin]", got)
+	}
+}

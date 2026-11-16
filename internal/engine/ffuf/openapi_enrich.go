@@ -46,16 +46,16 @@ func (r *Runner) specPaths(ctx context.Context, target string) []string {
 	if err != nil {
 		return nil
 	}
-	return specPathsFrom(ctx, client, base)
+	return specPathsFrom(ctx, client, base, r.authHeaders...)
 }
 
 // specPathsFrom mencoba tiap lokasi well-known dengan client apa adanya dan
 // mengembalikan path dari spec pertama yang valid. Dipisah agar bisa diuji tanpa
 // proxy (client langsung ke server uji).
-func specPathsFrom(ctx context.Context, client *http.Client, base string) []string {
+func specPathsFrom(ctx context.Context, client *http.Client, base string, hdrs ...string) []string {
 	base = strings.TrimRight(base, "/")
 	for _, loc := range specLocations {
-		body := fetchBody(ctx, client, base+loc)
+		body := fetchBody(ctx, client, base+loc, hdrs)
 		if len(body) == 0 {
 			continue
 		}
@@ -77,11 +77,12 @@ func specPathsFrom(ctx context.Context, client *http.Client, base string) []stri
 }
 
 // fetchBody GET sebuah URL dan mengembalikan body (dibatasi) hanya bila 200.
-func fetchBody(ctx context.Context, client *http.Client, u string) []byte {
+func fetchBody(ctx context.Context, client *http.Client, u string, hdrs []string) []byte {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil
 	}
+	setHeaders(req, hdrs)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil
