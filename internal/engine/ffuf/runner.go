@@ -75,10 +75,21 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	tmp.Close()
 	defer os.Remove(out)
 
-	cmd := exec.CommandContext(ctx, bin, r.buildArgs(target, out, wordlist)...)
-	if r.proxyAddr != "" {
-		cmd.Env = egress.ProxyEnv(os.Environ(), "http://"+r.proxyAddr) // belt-and-suspenders
+	// ffuf v2 menyimpan opsi tiap run — TERMASUK nilai header -H (sesi auth) —
+	// plaintext ke $XDG_CONFIG_HOME/ffuf/history. Config home bersama = secret
+	// menumpuk lintas program di kontainer (terbukti live 2026-11-16) → dir per run.
+	cfgDir, err := os.MkdirTemp("", "ffuf-cfg-*")
+	if err != nil {
+		return nil, fmt.Errorf("ffuf: dir konfigurasi sementara: %w", err)
 	}
+	defer os.RemoveAll(cfgDir)
+
+	cmd := exec.CommandContext(ctx, bin, r.buildArgs(target, out, wordlist)...)
+	env := os.Environ()
+	if r.proxyAddr != "" {
+		env = egress.ProxyEnv(env, "http://"+r.proxyAddr) // belt-and-suspenders
+	}
+	cmd.Env = append(env, "XDG_CONFIG_HOME="+cfgDir) // entri env terakhir menang
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
