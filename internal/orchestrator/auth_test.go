@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -104,6 +105,63 @@ func TestAuthHeadersStringRedacts(t *testing.T) {
 		if !strings.Contains(s, name) {
 			t.Errorf("String() harus pertahankan nama %q: %s", name, s)
 		}
+	}
+}
+
+// echoEngine & echoRecon (AuthAware) gagal dengan galat yang meng-echo header
+// auth — meniru tool yang mencetak argv/konfig ke stderr.
+type echoEngine struct{ got []string }
+
+func (*echoEngine) Name() string                { return "echofail" }
+func (e *echoEngine) UseAuthHeaders(h []string) { e.got = h }
+func (e *echoEngine) Scan(context.Context, string, string, string) ([]*finding.Finding, error) {
+	return nil, fmt.Errorf("exit 1 (bad -H %s)", strings.Join(e.got, " | "))
+}
+
+type echoRecon struct{ got []string }
+
+func (*echoRecon) Name() string                { return "echorecon" }
+func (r *echoRecon) UseAuthHeaders(h []string) { r.got = h }
+func (r *echoRecon) Discover(context.Context, []string) ([]recon.Asset, error) {
+	return nil, fmt.Errorf("katana: bad header %s", strings.Join(r.got, " | "))
+}
+
+// Galat engine & recon (masuk audit append-only + ringkasan run) tak boleh
+// memuat nilai header auth.
+func TestAuthHeadersScrubbedFromErrors(t *testing.T) {
+	hdrs := AuthHeaders{"Cookie: session=SUPERSECRET", "Authorization: Bearer TOKEN123"}
+	g := newGuard(t, []string{"demo.test"}, nil)
+	noLeak := func(where, s string) {
+		t.Helper()
+		if strings.Contains(s, "SUPERSECRET") || strings.Contains(s, "TOKEN123") {
+			t.Errorf("%s membocorkan nilai header: %s", where, s)
+		}
+		if !strings.Contains(s, "Cookie: [REDACTED]") {
+			t.Errorf("%s harus tetap memuat nama header + [REDACTED]: %s", where, s)
+		}
+	}
+
+	o := New(g, &echoEngine{}, store.NewMem(), testLimiter(), nil)
+	res, err := o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r1", Targets: []string{"demo.test"}, AuthHeaders: hdrs})
+	if err != nil || len(res.EngineErrors) != 1 {
+		t.Fatalf("mau 1 EngineError tanpa galat run: err=%v errs=%v", err, res.EngineErrors)
+	}
+	noLeak("EngineError", res.EngineErrors[0].Err)
+
+	o = New(g, &echoEngine{}, store.NewMem(), testLimiter(), nil)
+	o.UseRecon(&echoRecon{})
+	if _, err = o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r2", Seeds: []string{"demo.test"}, AuthHeaders: hdrs}); err == nil {
+		t.Fatal("recon gagal harus menggagalkan run")
+	}
+	noLeak("galat recon", err.Error())
+}
+
+func TestAuthHeadersScrubLongestFirst(t *testing.T) {
+	if got := (AuthHeaders{"A: abc", "B: abcdef"}).Scrub("x abcdef y abc"); got != "x [REDACTED] y [REDACTED]" {
+		t.Errorf("nilai yang memuat nilai lain tak boleh tersisa sebagian: %q", got)
+	}
+	if got := (AuthHeaders(nil)).Scrub("utuh"); got != "utuh" {
+		t.Errorf("tanpa header teks harus utuh: %q", got)
 	}
 }
 

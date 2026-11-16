@@ -12,6 +12,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -130,6 +131,24 @@ func (ah AuthHeaders) Names() []string {
 		}
 	}
 	return names
+}
+
+// Scrub mengganti tiap NILAI header di s dengan [REDACTED] (terpanjang dulu, agar
+// nilai yang memuat nilai lain tak tersisa sebagian). Dipakai pada teks galat
+// engine/recon sebelum masuk audit (append-only) & ringkasan run: tool pihak
+// ketiga bisa meng-echo argv/konfig berisi nilai header ke stderr-nya.
+func (ah AuthHeaders) Scrub(s string) string {
+	vals := make([]string, 0, len(ah))
+	for _, h := range ah {
+		if _, v, ok := strings.Cut(h, ":"); ok && strings.TrimSpace(v) != "" {
+			vals = append(vals, strings.TrimSpace(v))
+		}
+	}
+	sort.Slice(vals, func(i, j int) bool { return len(vals[i]) > len(vals[j]) })
+	for _, v := range vals {
+		s = strings.ReplaceAll(s, v, "[REDACTED]")
+	}
+	return s
 }
 
 // redactHeader menyisakan nama header, memask nilainya.
@@ -268,7 +287,7 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		}
 		assets, err := o.recon.Discover(ctx, req.Seeds)
 		if err != nil {
-			return res, fmt.Errorf("orchestrator: recon %s gagal: %w", o.recon.Name(), err)
+			return res, fmt.Errorf("orchestrator: recon %s gagal: %s", o.recon.Name(), req.AuthHeaders.Scrub(err.Error()))
 		}
 		for _, a := range assets {
 			res.Discovered++
@@ -308,7 +327,7 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 				if ctx.Err() != nil {
 					return res, fmt.Errorf("orchestrator: dibatalkan: %w", ctx.Err())
 				}
-				res.EngineErrors = append(res.EngineErrors, EngineError{Engine: eng.Name(), Target: target, Err: err.Error()})
+				res.EngineErrors = append(res.EngineErrors, EngineError{Engine: eng.Name(), Target: target, Err: req.AuthHeaders.Scrub(err.Error())})
 				continue
 			}
 			for _, f := range findings {
