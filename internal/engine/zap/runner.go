@@ -28,10 +28,11 @@ import (
 // per koneksi). Invokasi ZAP berat (JVM); args/plan & Parse diuji, eksekusi nyata
 // dipakai sadar untuk target sah.
 type Runner struct {
-	Binary    string // default "zap.sh"
-	Mode      string // "quick" (default) | "baseline" | "full"
-	RateLimit int    // throttle active scan: 0 = default ZAP; >0 = 1 thread/host + jeda ~1000/rate ms
-	proxyAddr string
+	Binary      string // default "zap.sh"
+	Mode        string // "quick" (default) | "baseline" | "full"
+	RateLimit   int    // throttle active scan: 0 = default ZAP; >0 = 1 thread/host + jeda ~1000/rate ms
+	proxyAddr   string
+	authHeaders []string // Lever 1: header auth → aturan Replacer di plan (lihat UseAuthHeaders)
 }
 
 // Name memenuhi engine.Engine.
@@ -39,6 +40,13 @@ func (r *Runner) Name() string { return "zap" }
 
 // UseProxy memenuhi engine.ProxyAware.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
+
+// UseAuthHeaders memenuhi engine.AuthAware: tiap header "Nama: nilai" menjadi
+// aturan Replacer di plan, sehingga SETIAP request ZAP (spider, passive, active)
+// membawa sesi login (Lever 1). Nilai = secret: hanya tertulis ke plan (0600) &
+// home ZAP per run (config.xml, zap.log) — keduanya di dir sementara 0700 yang
+// dihapus selepas run (lihat buildPlanArgs).
+func (r *Runner) UseAuthHeaders(h []string) { r.authHeaders = h }
 
 func (r *Runner) mode() string {
 	switch strings.ToLower(strings.TrimSpace(r.Mode)) {
@@ -76,10 +84,10 @@ func (r *Runner) scanPlan(ctx context.Context, bin, target, program, runID strin
 
 	const reportFile = "report.json"
 	planPath := filepath.Join(dir, "plan.yaml")
-	if err := os.WriteFile(planPath, []byte(planYAML(target, dir, reportFile, active)), 0o600); err != nil {
+	if err := os.WriteFile(planPath, []byte(planYAML(target, dir, reportFile, active, r.authHeaders)), 0o600); err != nil {
 		return nil, fmt.Errorf("zap: tulis plan: %w", err)
 	}
-	if err := r.run(ctx, bin, r.buildPlanArgs(planPath)); err != nil {
+	if err := r.run(ctx, bin, r.buildPlanArgs(planPath, dir)); err != nil {
 		return nil, err
 	}
 	return readReport(filepath.Join(dir, reportFile), program, runID)
@@ -103,8 +111,13 @@ func readReport(path, program, runID string) ([]*finding.Finding, error) {
 	return Parse(bytes.NewReader(data), program, runID)
 }
 
-func (r *Runner) buildPlanArgs(planPath string) []string {
-	args := append([]string{"-cmd", "-autorun", planPath}, r.proxyConfigArgs()...)
+// buildPlanArgs: -dir menjadikan homeDir (dir sementara per run, dihapus selepas
+// run) sebagai home ZAP. ZAP menyimpan opsi run ke home-nya — termasuk aturan
+// Replacer berisi NILAI header auth (config.xml, zap.log, sesi). Home bersama
+// (~/.ZAP) membuat sesi satu program ikut terkirim ke scan berikutnya (program
+// lain) & tertinggal di disk — terbukti live 2026-11-16.
+func (r *Runner) buildPlanArgs(planPath, homeDir string) []string {
+	args := append([]string{"-cmd", "-dir", homeDir, "-autorun", planPath}, r.proxyConfigArgs()...)
 	return append(args, r.throttleArgs()...)
 }
 
@@ -160,8 +173,9 @@ const (
 //   - active=true (full): activeScan — kirim payload (SQLi/XSS/dst.).
 //
 // Spider & activeScan dibatasi durasinya (lihat konstanta) agar tuntas di host
-// kecil dan tak membanjiri target.
-func planYAML(target, reportDir, reportFile string, active bool) string {
+// kecil dan tak membanjiri target. Bila ada header auth, job replacer (lihat
+// replacerJob) dipasang paling depan.
+func planYAML(target, reportDir, reportFile string, active bool, authHeaders []string) string {
 	plan := "" +
 		"env:\n" +
 		"  contexts:\n" +
@@ -170,6 +184,7 @@ func planYAML(target, reportDir, reportFile string, active bool) string {
 		"  parameters:\n" +
 		"    failOnError: false\n" +
 		"jobs:\n" +
+		replacerJob(authHeaders) +
 		"  - type: spider\n" +
 		"    parameters:\n" +
 		"      context: bughound\n" +
@@ -194,4 +209,33 @@ func planYAML(target, reportDir, reportFile string, active bool) string {
 		"      template: traditional-json\n" +
 		"      reportDir: \"" + reportDir + "\"\n" +
 		"      reportFile: \"" + reportFile + "\"\n"
+}
+
+// replacerJob merender header auth (Lever 1) menjadi job Replacer ZAP. Dipasang
+// SEBELUM spider agar semua job sesudahnya membawa header. matchType req_header:
+// header ditambah bila absen, ditimpa bila ada. url & initiators kosong = semua
+// request ZAP; batasnya tetap scope guard di egress, sama seperti `-H` engine lain.
+// Nama & nilai di-quote strconv.Quote (escape Go ⊂ escape double-quoted YAML), jadi
+// cookie berisi `"`/`#`/`:` tak bisa merusak atau menyusupi plan. Tanpa header sah
+// → "" (plan tak berubah).
+func replacerJob(headers []string) string {
+	var rules strings.Builder
+	n := 0
+	for _, h := range headers {
+		name, val, ok := strings.Cut(h, ":")
+		name, val = strings.TrimSpace(name), strings.TrimSpace(val)
+		if !ok || name == "" || val == "" {
+			continue // baris rusak dilewati; nilai kosong malah MENGHAPUS header di Replacer
+		}
+		n++
+		fmt.Fprintf(&rules, "      - description: \"bughound-auth-%d\"\n"+
+			"        matchType: req_header\n"+
+			"        matchString: %s\n"+
+			"        matchRegex: false\n"+
+			"        replacementString: %s\n", n, strconv.Quote(name), strconv.Quote(val))
+	}
+	if n == 0 {
+		return ""
+	}
+	return "  - type: replacer\n    rules:\n" + rules.String()
 }

@@ -60,8 +60,10 @@ func TestParseSample(t *testing.T) {
 
 func TestRunnerArgs(t *testing.T) {
 	r := &Runner{}
-	plain := strings.Join(r.buildPlanArgs("/tmp/plan.yaml"), " ")
-	for _, want := range []string{"-cmd", "-autorun /tmp/plan.yaml"} {
+	plain := strings.Join(r.buildPlanArgs("/tmp/plan.yaml", "/tmp/zaprun"), " ")
+	// -dir: home ZAP per run (bukan ~/.ZAP bersama) — regresi kebocoran sesi auth
+	// lintas run/program via config.xml (live 2026-11-16).
+	for _, want := range []string{"-cmd", "-dir /tmp/zaprun", "-autorun /tmp/plan.yaml"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("args harus memuat %q; dapat %q", want, plain)
 		}
@@ -71,7 +73,7 @@ func TestRunnerArgs(t *testing.T) {
 	}
 
 	r.UseProxy("127.0.0.1:9000")
-	withProxy := strings.Join(r.buildPlanArgs("/tmp/plan.yaml"), " ")
+	withProxy := strings.Join(r.buildPlanArgs("/tmp/plan.yaml", "/tmp/zaprun"), " ")
 	for _, want := range []string{
 		"network.connection.httpProxy.host=127.0.0.1",
 		"network.connection.httpProxy.port=9000",
@@ -86,10 +88,10 @@ func TestRunnerArgs(t *testing.T) {
 // throttleArgs: tanpa RateLimit tak ada jeda; dengan RateLimit=20 → 1 thread per
 // host + jeda 1000/20=50ms (berpengaruh pada active scan mode full).
 func TestRunnerThrottle(t *testing.T) {
-	if plain := strings.Join((&Runner{}).buildPlanArgs("/tmp/plan.yaml"), " "); strings.Contains(plain, "scanner.delayInMs") {
+	if plain := strings.Join((&Runner{}).buildPlanArgs("/tmp/plan.yaml", "/tmp/zaprun"), " "); strings.Contains(plain, "scanner.delayInMs") {
 		t.Errorf("tanpa RateLimit tak boleh ada throttle; dapat %q", plain)
 	}
-	got := strings.Join((&Runner{RateLimit: 20}).buildPlanArgs("/tmp/plan.yaml"), " ")
+	got := strings.Join((&Runner{RateLimit: 20}).buildPlanArgs("/tmp/plan.yaml", "/tmp/zaprun"), " ")
 	for _, want := range []string{"scanner.threadPerHost=1", "scanner.delayInMs=50"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("throttle harus memuat %q; dapat %q", want, got)
@@ -109,7 +111,7 @@ func TestRunnerModes(t *testing.T) {
 		t.Error("Mode=full harus terbaca & aktif")
 	}
 	full.UseProxy("127.0.0.1:9000")
-	args := strings.Join(full.buildPlanArgs("/tmp/plan.yaml"), " ")
+	args := strings.Join(full.buildPlanArgs("/tmp/plan.yaml", "/tmp/zaprun"), " ")
 	for _, want := range []string{"-autorun /tmp/plan.yaml", "network.connection.httpProxy.host=127.0.0.1"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("args harus memuat %q; dapat %q", want, args)
@@ -123,7 +125,7 @@ func TestRunnerModes(t *testing.T) {
 func TestPlanYAMLActiveVsPassive(t *testing.T) {
 	common := []string{"spider", "https://demo.test", "traditional-json", `reportFile: "report.json"`, "maxDuration: 3"}
 
-	passive := planYAML("https://demo.test", "/out", "report.json", false)
+	passive := planYAML("https://demo.test", "/out", "report.json", false, nil)
 	for _, want := range append([]string{"passiveScan-wait", "maxDuration: 5"}, common...) {
 		if !strings.Contains(passive, want) {
 			t.Errorf("plan pasif harus memuat %q", want)
@@ -133,7 +135,7 @@ func TestPlanYAMLActiveVsPassive(t *testing.T) {
 		t.Errorf("plan pasif TAK BOLEH memuat activeScan:\n%s", passive)
 	}
 
-	active := planYAML("https://demo.test", "/out", "report.json", true)
+	active := planYAML("https://demo.test", "/out", "report.json", true, nil)
 	for _, want := range append([]string{"activeScan", "maxScanDurationInMins: 10", "maxRuleDurationInMins: 2"}, common...) {
 		if !strings.Contains(active, want) {
 			t.Errorf("plan aktif harus memuat %q", want)
