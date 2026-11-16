@@ -88,10 +88,28 @@ func (r *Runner) scanPlan(ctx context.Context, bin, target, program, runID strin
 	if err := os.WriteFile(planPath, []byte(planYAML(target, dir, reportFile, active, r.authHeaders)), 0o600); err != nil {
 		return nil, fmt.Errorf("zap: tulis plan: %w", err)
 	}
-	if err := r.run(ctx, bin, r.buildPlanArgs(planPath, dir)); err != nil {
+	port, err := freePort()
+	if err != nil {
+		return nil, fmt.Errorf("zap: port proxy: %w", err)
+	}
+	if err := r.run(ctx, bin, append(r.buildPlanArgs(planPath, dir), "-port", port)); err != nil {
 		return nil, err
 	}
 	return readReport(filepath.Join(dir, reportFile), program, runID)
+}
+
+// freePort meminta port lokal bebas ke OS untuk proxy utama ZAP: mode -cmd tetap
+// membuka proxy itu (default 8080), jadi dua run bersamaan berebut port →
+// "BindException Address already in use" (live 2026-11-16). Skrip docker ZAP
+// sendiri memilih port dengan cara yang sama.
+// shortcut: port bisa direbut proses lain di antara Close & bind ZAP (jendela milidetik); tambah retry bila BindException muncul lagi di log.
+func freePort() (string, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	defer l.Close()
+	return strconv.Itoa(l.Addr().(*net.TCPAddr).Port), nil
 }
 
 func (r *Runner) run(ctx context.Context, bin string, args []string) error {
