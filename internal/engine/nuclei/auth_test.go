@@ -24,14 +24,14 @@ func TestRunnerBuildArgsAuthHeaders(t *testing.T) {
 	hdr := "Cookie: session=abc"
 	r := &Runner{}
 	if hasHeaderArg(r.buildArgs("http://t"), hdr) {
-		t.Error("tanpa UseAuthHeaders tak boleh ada -H")
+		t.Error("without UseAuthHeaders there must be no -H")
 	}
-	r.UseAuthHeaders([]string{hdr, "", "  "}) // elemen kosong diabaikan
+	r.UseAuthHeaders([]string{hdr, "", "  "}) // empty elements are ignored
 	a := r.buildArgs("http://t")
 	if !hasHeaderArg(a, hdr) {
-		t.Errorf("buildArgs harus memuat -H %q: %v", hdr, a)
+		t.Errorf("buildArgs must contain -H %q: %v", hdr, a)
 	}
-	// hanya satu -H (elemen kosong tak ikut)
+	// only one -H (empty elements excluded)
 	n := 0
 	for _, x := range a {
 		if x == "-H" {
@@ -39,7 +39,7 @@ func TestRunnerBuildArgsAuthHeaders(t *testing.T) {
 		}
 	}
 	if n != 1 {
-		t.Errorf("mau 1 -H, dapat %d: %v", n, a)
+		t.Errorf("want 1 -H, got %d: %v", n, a)
 	}
 }
 
@@ -48,22 +48,22 @@ func TestDASTRunnerAuthHeaders(t *testing.T) {
 	r := &DASTRunner{proxyAddr: "127.0.0.1:1"}
 	r.UseAuthHeaders([]string{hdr})
 	if !hasHeaderArg(r.katanaArgs("http://t"), hdr) {
-		t.Error("katanaArgs (crawl) harus memuat -H auth")
+		t.Error("katanaArgs (crawl) must contain the auth -H")
 	}
 	if !hasHeaderArg(r.nucleiArgsMode("f", ""), hdr) {
-		t.Error("nucleiArgsMode (fuzz) harus memuat -H auth")
+		t.Error("nucleiArgsMode (fuzz) must contain the auth -H")
 	}
 }
 
-// Scan berlogin tak boleh menjalankan template yang me-request route logout:
-// nuclei jalan pertama di roster, jadi sesi mati untuk SEMUA engine sesudahnya.
+// An authenticated scan must not run a template that requests a logout route:
+// nuclei runs first in the roster, so the session dies for ALL engines after it.
 func TestRunnerExcludesLogoutTemplates(t *testing.T) {
 	dir := t.TempDir()
 	for n, s := range map[string]string{
 		"a.yaml": "id: a\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/logout\"\n",
 		"b.yaml": "id: b\nhttp:\n  - raw:\n      - |\n        GET /api/auth/signout HTTP/1.1\n        Host: {{Hostname}}\n",
 		"c.yaml": "id: c\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/admin\"\n",
-		"d.yaml": "id: d\ninfo:\n  description: cek CSRF logout\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/login\"\n",
+		"d.yaml": "id: d\ninfo:\n  description: check CSRF logout\nhttp:\n  - method: GET\n    path:\n      - \"{{BaseURL}}/login\"\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, n), []byte(s), 0o600); err != nil {
 			t.Fatal(err)
@@ -79,24 +79,24 @@ func TestRunnerExcludesLogoutTemplates(t *testing.T) {
 	}
 	r := &Runner{TemplatesDir: dir}
 	if e := excl(r.buildArgs("http://t")); e != "" {
-		t.Errorf("tanpa auth tak boleh ada -exclude-templates: %s", e)
+		t.Errorf("without auth there must be no -exclude-templates: %s", e)
 	}
 	r.UseAuthHeaders([]string{"Cookie: s=1"})
 	e := excl(r.buildArgs("http://t"))
 	for _, n := range []string{"a.yaml", "b.yaml"} {
 		if !strings.Contains(e, filepath.Join(dir, n)) {
-			t.Errorf("template logout %s harus dikecualikan: %q", n, e)
+			t.Errorf("logout template %s must be excluded: %q", n, e)
 		}
 	}
 	for _, n := range []string{"c.yaml", "d.yaml"} {
 		if strings.Contains(e, n) {
-			t.Errorf("template %s bukan request logout, tak boleh dikecualikan: %q", n, e)
+			t.Errorf("template %s is not a logout request, must not be excluded: %q", n, e)
 		}
 	}
 }
 
-// Scan berlogin: operasi logout di spec OpenAPI dibuang sebelum di-fuzz (Petstore
-// punya GET /user/logout). YAML & JSON (indentasi tab) sama-sama terurai.
+// Authenticated scan: logout operations in the OpenAPI spec are dropped before
+// fuzzing (Petstore has GET /user/logout). YAML & JSON (tab-indented) both parse.
 func TestWithoutLogoutPaths(t *testing.T) {
 	for _, tc := range []struct {
 		spec, version string
@@ -109,32 +109,32 @@ func TestWithoutLogoutPaths(t *testing.T) {
 	} {
 		out, err := withoutLogoutPaths([]byte(tc.spec))
 		if err != nil {
-			t.Fatalf("spec sah harus terurai: %v", err)
+			t.Fatalf("a valid spec must parse: %v", err)
 		}
 		var got map[string]any
 		if err := yaml.Unmarshal(out, &got); err != nil {
-			t.Fatalf("hasil bukan YAML sah: %v\n%s", err, out)
+			t.Fatalf("result is not valid YAML: %v\n%s", err, out)
 		}
 		paths, _ := got["paths"].(map[string]any)
 		if len(paths) != len(tc.keep) || got[tc.version] == nil {
-			t.Errorf("mau paths %v + kunci %q utuh; dapat:\n%s", tc.keep, tc.version, out)
+			t.Errorf("want paths %v + key %q intact; got:\n%s", tc.keep, tc.version, out)
 		}
 		for _, k := range tc.keep {
 			if paths[k] == nil {
-				t.Errorf("path non-logout %s hilang:\n%s", k, out)
+				t.Errorf("non-logout path %s is missing:\n%s", k, out)
 			}
 		}
 	}
-	if _, err := withoutLogoutPaths([]byte("- bukan\n- mapping\n")); err == nil {
-		t.Error("spec bukan mapping harus galat (pass OpenAPI dilewati, fail-closed)")
+	if _, err := withoutLogoutPaths([]byte("- not\n- mapping\n")); err == nil {
+		t.Error("a non-mapping spec must error (the OpenAPI pass is skipped, fail-closed)")
 	}
 }
 
-// Crawl katana milik nuclei-dast: berlogin → -cos logout; tanpa login tak dibatasi.
+// nuclei-dast's katana crawl: authenticated -> -cos logout; without login it is not restricted.
 func TestDASTKatanaSkipsLogoutWhenAuth(t *testing.T) {
 	r := &DASTRunner{proxyAddr: "127.0.0.1:1"}
 	if strings.Contains(strings.Join(r.katanaArgs("http://t"), " "), "-cos") {
-		t.Error("tanpa auth, crawl tak boleh dibatasi -cos")
+		t.Error("without auth, the crawl must not be restricted by -cos")
 	}
 	r.UseAuthHeaders([]string{"Cookie: s=1"})
 	a, ok := r.katanaArgs("http://t"), false
@@ -142,6 +142,6 @@ func TestDASTKatanaSkipsLogoutWhenAuth(t *testing.T) {
 		ok = ok || (a[i] == "-cos" && a[i+1] == engine.LogoutPattern)
 	}
 	if !ok {
-		t.Errorf("dengan auth, katana nuclei-dast wajib -cos %q; dapat %v", engine.LogoutPattern, a)
+		t.Errorf("with auth, nuclei-dast's katana must have -cos %q; got %v", engine.LogoutPattern, a)
 	}
 }

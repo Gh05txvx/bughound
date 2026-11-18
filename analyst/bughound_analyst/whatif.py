@@ -1,8 +1,8 @@
-"""What-if — scaffold rencana validasi manual di Burp.
+"""What-if: a scaffold of the manual validation plan in Burp.
 
-Bagian DETERMINISTIK dibangun di sini (identitas, skor, target, evidence
-terscrub, safety). `why` + `hypotheses` DIKOSONGKAN: diisi LLM (Claude) yang
-menalar atas evidence terscrub — lihat BH-DESIGN §5. App tak pernah mengeksekusi.
+The DETERMINISTIC part is built here (identity, score, target, scrubbed
+evidence, safety). `why` + `hypotheses` are LEFT EMPTY: filled by the LLM (Claude)
+reasoning over the scrubbed evidence, see BH-DESIGN §5. The app never executes.
 """
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from typing import Dict, List
 from .model import Finding
 from .scrub import minimal_evidence
 
-# Benih hipotesis per kelas bug — HINT untuk LLM, bukan perintah eksekusi.
-# LLM wajib menyesuaikan ke konteks (param, DBMS, encoding) & boleh menolak.
+# Hypothesis seeds per bug class, a HINT for the LLM, not an execution command.
+# The LLM must adapt to context (param, DBMS, encoding) & may decline.
 _SEED_HINTS: Dict[str, List[str]] = {
     "sqli": ["boolean: `' OR 1=1--`", "time-based: `1;WAITFOR DELAY '0:0:5'--`"],
     "injection": ["boolean/true-vs-false", "time-based delay"],
-    "xss": ["context-break reflektif: `\"><svg onload=…>`", "atribut vs HTML vs JS context"],
-    "idor": ["naik/turunkan id objek", "tukar ke objek milik akun lain"],
-    "ssrf": ["ganti host ke callback terkendali (OAST) — HATI-HATI RoE", "cek 169.254.169.254 bila diizinkan"],
-    "access": ["akses endpoint tanpa sesi / sesi peran lebih rendah"],
+    "xss": ["reflective context-break: `\"><svg onload=…>`", "attribute vs HTML vs JS context"],
+    "idor": ["increment/decrement the object id", "swap to an object owned by another account"],
+    "ssrf": ["point the host at a controlled callback (OAST), MIND the RoE", "check 169.254.169.254 if allowed"],
+    "access": ["access the endpoint with no session / a lower-role session"],
 }
 
 
@@ -32,8 +32,8 @@ def _seed_for(f: Finding) -> List[str]:
 
 
 def build_whatif(ranked_item: Dict) -> Dict:
-    """ranked_item = elemen dari saw.rank_findings. Kembalikan scaffold what-if.
-    Field `why`/`hypotheses` sengaja kosong → diisi LLM."""
+    """ranked_item = an element from saw.rank_findings. Return the what-if scaffold.
+    The `why`/`hypotheses` fields are intentionally empty -> filled by the LLM."""
     f: Finding = ranked_item["finding"]
     return {
         "finding_id": f.id,
@@ -46,22 +46,22 @@ def build_whatif(ranked_item: Dict) -> Dict:
         "confidence": f.confidence,
         "owasp": f.owasp_category,
         "source_engine": f.source_engine,
-        "base_request_ref": "evidence.request (sudah dilempar ke Burp Repeater)",
+        "base_request_ref": "evidence.request (already sent to Burp Repeater)",
         "target": {
             "url": f.location.url, "method": f.location.method,
             "parameter": f.location.parameter, "param_location": f.location.param_location,
         },
         "evidence_scrubbed": minimal_evidence(f),
-        "seed_hints": _seed_for(f),          # HINT deterministik untuk LLM
-        "why": "",                            # ← diisi LLM
-        "hypotheses": [],                     # ← diisi LLM: [{mutation, expected, confirms}]
-        "decision": "needs_more_info",        # LLM boleh ubah: verify_now|likely_fp|needs_more_info
-        "safety": "non-destruktif saja (SELECT/boolean/time); hormati rate-limit & RoE program; eksekusi MANUAL",
+        "seed_hints": _seed_for(f),          # deterministic HINT for the LLM
+        "why": "",                            # <- filled by the LLM
+        "hypotheses": [],                     # <- filled by the LLM: [{mutation, expected, confirms}]
+        "decision": "needs_more_info",        # the LLM may change: verify_now|likely_fp|needs_more_info
+        "safety": "non-destructive only (SELECT/boolean/time); respect the program rate-limit & RoE; execute MANUALLY",
     }
 
 
 def render_markdown(wi: Dict) -> str:
-    """Render ringkas untuk dibaca manusia."""
+    """Render a short, human-readable summary."""
     t = wi["target"]
     lines = [
         f"**#{wi['rank']} · score {wi['score']} · {wi['title']} ({wi['decision']})**",
@@ -69,12 +69,12 @@ def render_markdown(wi: Dict) -> str:
         f"- engine: {wi['source_engine']} · severity {wi['severity']} · conf {wi['confidence']} · {wi['owasp'] or '-'}",
     ]
     if wi.get("why"):
-        lines.append(f"- kenapa: {wi['why']}")
+        lines.append(f"- why: {wi['why']}")
     if wi.get("hypotheses"):
-        lines.append("- coba di Repeater:")
+        lines.append("- try in Repeater:")
         lines += [f"    - `{h.get('mutation','')}` → {h.get('expected','')} ⇒ {h.get('confirms','')}"
                   for h in wi["hypotheses"]]
     elif wi.get("seed_hints"):
-        lines.append("- benih (LLM harus sesuaikan): " + "; ".join(wi["seed_hints"]))
+        lines.append("- seeds (the LLM must adapt): " + "; ".join(wi["seed_hints"]))
     lines.append(f"- ⚠️ {wi['safety']}")
     return "\n".join(lines)

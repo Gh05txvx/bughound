@@ -19,14 +19,14 @@ func TestRegistryHasAdapters(t *testing.T) {
 	}
 	for n, found := range want {
 		if !found {
-			t.Errorf("adapter %q harus terdaftar", n)
+			t.Errorf("adapter %q must be registered", n)
 		}
 	}
 	if _, ok := Lookup("mock"); !ok {
-		t.Error("Lookup mock gagal")
+		t.Error("Lookup of mock failed")
 	}
-	if _, ok := Lookup("tak-ada"); ok {
-		t.Error("Lookup adapter tak dikenal harus gagal")
+	if _, ok := Lookup("missing"); ok {
+		t.Error("Lookup of an unknown adapter must fail")
 	}
 }
 
@@ -37,20 +37,20 @@ func TestResolveScope(t *testing.T) {
 	}
 
 	if _, err := Resolve("", "src"); err != ErrDisabled {
-		t.Errorf("root kosong harus ErrDisabled; dapat %v", err)
+		t.Errorf("an empty root must be ErrDisabled; got %v", err)
 	}
 	got, err := Resolve(root, "src")
 	if err != nil {
-		t.Fatalf("subpath in-scope harus ok; dapat %v", err)
+		t.Fatalf("an in-scope subpath must be ok; got %v", err)
 	}
 	if filepath.Base(got) != "src" {
-		t.Errorf("path hasil salah: %s", got)
+		t.Errorf("wrong result path: %s", got)
 	}
 	if _, err := Resolve(root, filepath.Join("..", "..")); err != ErrOutOfScope {
-		t.Errorf("traversal keluar root harus ErrOutOfScope; dapat %v", err)
+		t.Errorf("traversal out of the root must be ErrOutOfScope; got %v", err)
 	}
-	if _, err := Resolve(root, "tak-ada"); err == nil {
-		t.Error("path tak ada harus error")
+	if _, err := Resolve(root, "missing"); err == nil {
+		t.Error("a missing path must be an error")
 	}
 }
 
@@ -68,46 +68,47 @@ func TestRunStoresMockFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res.Saved != 2 {
-		t.Fatalf("harus 2 temuan baru; dapat %d", res.Saved)
+		t.Fatalf("there must be 2 new findings; got %d", res.Saved)
 	}
 
 	fs, _ := st.List(ctx, store.Query{Program: "demo"})
 	if len(fs) != 2 {
-		t.Fatalf("store harus punya 2 temuan; dapat %d", len(fs))
+		t.Fatalf("the store must have 2 findings; got %d", len(fs))
 	}
 	for _, f := range fs {
 		if f.SourceEngine == "" || f.Severity == "" || f.Location.URL == "" {
-			t.Errorf("temuan SAST tak lengkap: %+v", f)
+			t.Errorf("incomplete SAST finding: %+v", f)
 		}
 		if f.RunID != "run1" || f.Target != "myrepo" {
-			t.Errorf("program/run/target tak di-set oleh Run: %+v", f)
+			t.Errorf("program/run/target not set by Run: %+v", f)
 		}
 	}
 	if ev, _ := al.List(ctx, audit.Filter{}); len(ev) < 2 {
-		t.Errorf("audit harus mencatat start+finish; dapat %d", len(ev))
+		t.Errorf("the audit must record start+finish; got %d", len(ev))
 	}
 }
 
-// TestRunEmptySubpathLabelsTargetDot: subpath kosong (= seluruh root) harus
-// tetap menyimpan temuan; field wajib `target` diberi label "." (regresi: dulu
-// kosong → store menolak semua temuan dengan "field wajib kosong: target").
+// TestRunEmptySubpathLabelsTargetDot: an empty subpath (= the whole root) must
+// still save findings; the required `target` field gets the label "."
+// (regression: it used to be empty → the store rejected every finding with
+// "required fields are empty: target").
 func TestRunEmptySubpathLabelsTargetDot(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMem()
 	res, err := Run(ctx, "/whatever", "", "demo", "run1", []Engine{Mock{}}, st, nil)
 	if err != nil {
-		t.Fatalf("Run subpath kosong: %v", err)
+		t.Fatalf("Run with an empty subpath: %v", err)
 	}
 	if res.Saved == 0 {
-		t.Fatal("subpath kosong harus tetap menyimpan temuan (bukan 0)")
+		t.Fatal("an empty subpath must still save findings (not 0)")
 	}
 	fs, _ := st.List(ctx, store.Query{Program: "demo"})
 	if len(fs) == 0 {
-		t.Fatal("store kosong setelah run subpath kosong")
+		t.Fatal("the store is empty after a run with an empty subpath")
 	}
 	for _, f := range fs {
 		if f.Target != "." {
-			t.Errorf("Target = %q, ingin \".\" untuk subpath kosong", f.Target)
+			t.Errorf("Target = %q, want \".\" for an empty subpath", f.Target)
 		}
 	}
 }

@@ -11,25 +11,26 @@ import (
 
 	"bughound/internal/finding"
 
-	_ "modernc.org/sqlite" // driver "sqlite" (pure-Go, tanpa cgo => tetap binary tunggal)
+	_ "modernc.org/sqlite" // the "sqlite" driver (pure Go, no cgo => still a single binary)
 )
 
-// SQLite adalah Store berbasis SQLite. Temuan disimpan utuh sebagai dokumen JSON
-// (skema berversi di JSON), dengan kolom terindeks untuk query triase. Dedup
-// ditegakkan sama seperti Mem: per (program, dedup_key).
+// SQLite is a Store backed by SQLite. Findings are stored whole as JSON
+// documents (the schema is versioned in the JSON), with indexed columns for
+// triage queries. Dedup is enforced the same way as in Mem: per (program,
+// dedup_key).
 type SQLite struct {
 	db  *sql.DB
 	now func() time.Time
-	mu  sync.Mutex // menjaga atomisitas keputusan dedup (cek + tulis)
+	mu  sync.Mutex // keeps the dedup decision atomic (check + write)
 }
 
-// OpenSQLite membuka/membuat database pada path (atau ":memory:").
+// OpenSQLite opens/creates the database at path (or ":memory:").
 func OpenSQLite(path string) (*SQLite, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, fmt.Errorf("store: buka sqlite: %w", err)
+		return nil, fmt.Errorf("store: open sqlite: %w", err)
 	}
-	db.SetMaxOpenConns(1) // hindari "database is locked"
+	db.SetMaxOpenConns(1) // avoids "database is locked"
 	s := &SQLite{db: db, now: time.Now}
 	if err := s.init(); err != nil {
 		db.Close()
@@ -70,8 +71,9 @@ func (s *SQLite) init() error {
 			pass_hash  TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		);`,
-		// Bank Payload (BH-SPEC-PAYLOAD): katalog metadata di atas template native.
-		// Entri utuh disimpan sebagai doc JSON; kolom terindeks untuk filter UI.
+		// Payload Bank (BH-SPEC-PAYLOAD): a metadata catalog on top of the native
+		// templates. The whole entry is stored as a JSON doc; indexed columns serve the
+		// UI filters.
 		`CREATE TABLE IF NOT EXISTS catalog (
 			template_id TEXT PRIMARY KEY,
 			source      TEXT NOT NULL,
@@ -97,9 +99,10 @@ func (s *SQLite) init() error {
 			k TEXT PRIMARY KEY,
 			v TEXT NOT NULL
 		);`,
-		// Cache analisis what-if AI per temuan (BH analyst/MCP di web). Hanya bagian
-		// yang ditalar LLM yang disimpan; dibuang/diregenerasi bila source_hash basi.
-		// Rahasia (API key) TIDAK di sini — itu di vault terenkripsi.
+		// AI what-if analysis cache per finding (BH analyst/MCP in the web UI). Only the
+		// part the LLM reasons out is stored; it is dropped/regenerated when
+		// source_hash is stale. The secret (the API key) is NOT here; it lives in the
+		// encrypted vault.
 		`CREATE TABLE IF NOT EXISTS ai_analysis (
 			finding_id  TEXT PRIMARY KEY,
 			program     TEXT NOT NULL,
@@ -109,13 +112,14 @@ func (s *SQLite) init() error {
 			created_at  TEXT NOT NULL
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_ai_program ON ai_analysis(program);`,
-		// Setelan aplikasi non-rahasia (mis. model Claude terpilih untuk analisis AI).
+		// Non-secret app settings (e.g. the Claude model chosen for AI analysis).
 		`CREATE TABLE IF NOT EXISTS app_settings (
 			k TEXT PRIMARY KEY,
 			v TEXT NOT NULL
 		);`,
-		// Riwayat run scan (jobs.Run) agar panel Proses & detail run selamat dari
-		// restart/redeploy. Run utuh di doc JSON; kolom terindeks untuk list terurut.
+		// Scan run history (jobs.Run) so the Processes panel and the run details
+		// survive a restart/redeploy. The whole run is in a JSON doc; indexed columns
+		// serve the sorted list.
 		`CREATE TABLE IF NOT EXISTS runs (
 			id          TEXT PRIMARY KEY,
 			program     TEXT NOT NULL,
@@ -130,28 +134,29 @@ func (s *SQLite) init() error {
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
-			return fmt.Errorf("store: init skema: %w", err)
+			return fmt.Errorf("store: init schema: %w", err)
 		}
 	}
-	// Migrasi additif: DB yang dibuat sebelum kolom `preset` ada tak memilikinya
-	// (CREATE TABLE IF NOT EXISTS tak mengubah tabel lama). ADD COLUMN gagal bila
-	// kolom sudah ada, jadi cek dulu lewat PRAGMA. Aman & idempoten.
+	// Additive migration: a DB created before the `preset` column existed does not
+	// have it (CREATE TABLE IF NOT EXISTS does not change an old table). ADD COLUMN
+	// fails when the column already exists, so check through PRAGMA first. Safe and
+	// idempotent.
 	if ok, err := s.hasColumn("programs", "preset"); err != nil {
 		return err
 	} else if !ok {
 		if _, err := s.db.Exec(`ALTER TABLE programs ADD COLUMN preset TEXT NOT NULL DEFAULT '{}'`); err != nil {
-			return fmt.Errorf("store: migrasi kolom preset: %w", err)
+			return fmt.Errorf("store: migrate the preset column: %w", err)
 		}
 	}
 	return nil
 }
 
-// hasColumn melaporkan apakah tabel punya kolom bernama col. table adalah
-// konstanta internal (bukan input pengguna), jadi aman di-format ke PRAGMA.
+// hasColumn reports whether table has a column named col. table is an internal
+// constant (not user input), so it is safe to format into the PRAGMA.
 func (s *SQLite) hasColumn(table, col string) (bool, error) {
 	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {
-		return false, fmt.Errorf("store: cek kolom %s.%s: %w", table, col, err)
+		return false, fmt.Errorf("store: check column %s.%s: %w", table, col, err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -170,7 +175,7 @@ func (s *SQLite) hasColumn(table, col string) (bool, error) {
 	return false, rows.Err()
 }
 
-// Save: lihat Store.Save.
+// Save: see Store.Save.
 func (s *SQLite) Save(ctx context.Context, f *finding.Finding) (SaveResult, error) {
 	if err := prepare(f, s.now()); err != nil {
 		return SaveResult{}, err
@@ -188,9 +193,9 @@ func (s *SQLite) Save(ctx context.Context, f *finding.Finding) (SaveResult, erro
 	).Scan(&primaryID)
 	switch {
 	case err == sql.ErrNoRows:
-		// tak ada primary => f menjadi primary
+		// no primary => f becomes the primary
 	case err != nil:
-		return SaveResult{}, fmt.Errorf("store: cek dedup: %w", err)
+		return SaveResult{}, fmt.Errorf("store: check dedup: %w", err)
 	default:
 		if primaryID != f.ID {
 			f.Status = finding.StatusDuplicate
@@ -202,7 +207,7 @@ func (s *SQLite) Save(ctx context.Context, f *finding.Finding) (SaveResult, erro
 
 	doc, err := json.Marshal(f)
 	if err != nil {
-		return SaveResult{}, fmt.Errorf("store: marshal temuan: %w", err)
+		return SaveResult{}, fmt.Errorf("store: marshal finding: %w", err)
 	}
 
 	_, err = s.db.ExecContext(ctx,
@@ -218,12 +223,12 @@ func (s *SQLite) Save(ctx context.Context, f *finding.Finding) (SaveResult, erro
 		f.CreatedAt.Time.UTC().Format(time.RFC3339), string(doc),
 	)
 	if err != nil {
-		return SaveResult{}, fmt.Errorf("store: simpan temuan: %w", err)
+		return SaveResult{}, fmt.Errorf("store: save finding: %w", err)
 	}
 	return res, nil
 }
 
-// Get: lihat Store.Get.
+// Get: see Store.Get.
 func (s *SQLite) Get(ctx context.Context, id string) (*finding.Finding, error) {
 	var doc string
 	err := s.db.QueryRowContext(ctx, `SELECT doc FROM findings WHERE id=?`, id).Scan(&doc)
@@ -231,12 +236,12 @@ func (s *SQLite) Get(ctx context.Context, id string) (*finding.Finding, error) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("store: ambil temuan: %w", err)
+		return nil, fmt.Errorf("store: get finding: %w", err)
 	}
 	return decodeDoc(doc)
 }
 
-// List: lihat Store.List.
+// List: see Store.List.
 func (s *SQLite) List(ctx context.Context, q Query) ([]*finding.Finding, error) {
 	var where []string
 	var args []any
@@ -283,7 +288,7 @@ func (s *SQLite) List(ctx context.Context, q Query) ([]*finding.Finding, error) 
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("store: query temuan: %w", err)
+		return nil, fmt.Errorf("store: query findings: %w", err)
 	}
 	defer rows.Close()
 
@@ -302,11 +307,11 @@ func (s *SQLite) List(ctx context.Context, q Query) ([]*finding.Finding, error) 
 	return out, rows.Err()
 }
 
-// Programs: lihat Store.Programs.
+// Programs: see Store.Programs.
 func (s *SQLite) Programs(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT program FROM findings ORDER BY program`)
 	if err != nil {
-		return nil, fmt.Errorf("store: daftar program: %w", err)
+		return nil, fmt.Errorf("store: list programs: %w", err)
 	}
 	defer rows.Close()
 	var out []string
@@ -320,10 +325,10 @@ func (s *SQLite) Programs(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// SetStatus: lihat Store.SetStatus.
+// SetStatus: see Store.SetStatus.
 func (s *SQLite) SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error {
 	if !status.Valid() {
-		return fmt.Errorf("store: status tidak sah: %q", status)
+		return fmt.Errorf("store: invalid status: %q", status)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -333,7 +338,7 @@ func (s *SQLite) SetStatus(ctx context.Context, id string, status finding.Status
 		return err
 	}
 	if status == finding.StatusDuplicate && strings.TrimSpace(f.DuplicateOf) == "" {
-		return fmt.Errorf("store: status duplicate hanya lewat jalur dedup (duplicate_of kosong)")
+		return fmt.Errorf("store: status duplicate is only set by the dedup path (duplicate_of is empty)")
 	}
 	f.Status = status
 	if verifiedBy != "" {
@@ -344,7 +349,7 @@ func (s *SQLite) SetStatus(ctx context.Context, id string, status finding.Status
 
 	doc, err := json.Marshal(f)
 	if err != nil {
-		return fmt.Errorf("store: marshal temuan: %w", err)
+		return fmt.Errorf("store: marshal finding: %w", err)
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE findings SET status=?, doc=? WHERE id=?`,
 		string(status), string(doc), id)
@@ -354,8 +359,8 @@ func (s *SQLite) SetStatus(ctx context.Context, id string, status finding.Status
 	return nil
 }
 
-// UpdateContent: lihat Store.UpdateContent. Hanya memperbarui field naratif di
-// doc JSON; kolom terindeks (status/severity/dedup) tak berubah.
+// UpdateContent: see Store.UpdateContent. It only updates the narrative fields
+// in the JSON doc; the indexed columns (status/severity/dedup) do not change.
 func (s *SQLite) UpdateContent(ctx context.Context, id, description, impact string, reproduction []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -372,18 +377,18 @@ func (s *SQLite) UpdateContent(ctx context.Context, id, description, impact stri
 
 	doc, err := json.Marshal(f)
 	if err != nil {
-		return fmt.Errorf("store: marshal temuan: %w", err)
+		return fmt.Errorf("store: marshal finding: %w", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE findings SET doc=? WHERE id=?`, string(doc), id); err != nil {
-		return fmt.Errorf("store: update konten: %w", err)
+		return fmt.Errorf("store: update content: %w", err)
 	}
 	return nil
 }
 
-// SaveProgram: lihat Store.SaveProgram.
+// SaveProgram: see Store.SaveProgram.
 func (s *SQLite) SaveProgram(ctx context.Context, p Program) error {
 	if strings.TrimSpace(p.Name) == "" {
-		return fmt.Errorf("store: nama program wajib")
+		return fmt.Errorf("store: program name is required")
 	}
 	in, _ := json.Marshal(p.InScope)
 	out, _ := json.Marshal(p.OutScope)
@@ -393,12 +398,12 @@ func (s *SQLite) SaveProgram(ctx context.Context, p Program) error {
 		 ON CONFLICT(name) DO UPDATE SET in_scope=excluded.in_scope, out_scope=excluded.out_scope, preset=excluded.preset, updated_at=excluded.updated_at`,
 		p.Name, string(in), string(out), string(preset), s.now().UTC().Format(time.RFC3339))
 	if err != nil {
-		return fmt.Errorf("store: simpan program: %w", err)
+		return fmt.Errorf("store: save program: %w", err)
 	}
 	return nil
 }
 
-// GetProgram: lihat Store.GetProgram.
+// GetProgram: see Store.GetProgram.
 func (s *SQLite) GetProgram(ctx context.Context, name string) (*Program, error) {
 	var in, out, preset, upd string
 	err := s.db.QueryRowContext(ctx, `SELECT in_scope,out_scope,preset,updated_at FROM programs WHERE name=?`, name).Scan(&in, &out, &preset, &upd)
@@ -406,16 +411,16 @@ func (s *SQLite) GetProgram(ctx context.Context, name string) (*Program, error) 
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("store: ambil program: %w", err)
+		return nil, fmt.Errorf("store: get program: %w", err)
 	}
 	return decodeProgram(name, in, out, preset, upd), nil
 }
 
-// ListPrograms: lihat Store.ListPrograms.
+// ListPrograms: see Store.ListPrograms.
 func (s *SQLite) ListPrograms(ctx context.Context) ([]*Program, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT name,in_scope,out_scope,preset,updated_at FROM programs ORDER BY name`)
 	if err != nil {
-		return nil, fmt.Errorf("store: daftar program: %w", err)
+		return nil, fmt.Errorf("store: list programs: %w", err)
 	}
 	defer rows.Close()
 	var out []*Program
@@ -429,12 +434,12 @@ func (s *SQLite) ListPrograms(ctx context.Context) ([]*Program, error) {
 	return out, rows.Err()
 }
 
-// DeleteProgram: lihat Store.DeleteProgram. Hanya baris definisi program yang
-// dihapus; tabel findings & audit tidak disentuh.
+// DeleteProgram: see Store.DeleteProgram. Only the program definition row is
+// deleted; the findings and audit tables are not touched.
 func (s *SQLite) DeleteProgram(ctx context.Context, name string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM programs WHERE name=?`, name)
 	if err != nil {
-		return fmt.Errorf("store: hapus program: %w", err)
+		return fmt.Errorf("store: delete program: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
@@ -442,16 +447,17 @@ func (s *SQLite) DeleteProgram(ctx context.Context, name string) error {
 	return nil
 }
 
-// DeleteFindingsByProgram: lihat Store.DeleteFindingsByProgram. Dedup ditegakkan
-// langsung dari baris findings (tak ada tabel bookkeeping terpisah), jadi
-// menghapus baris otomatis mereset state dedup. Lock dipegang agar tak balapan
-// dengan keputusan dedup Save. Definisi program & audit tak disentuh.
+// DeleteFindingsByProgram: see Store.DeleteFindingsByProgram. Dedup is enforced
+// directly from the findings rows (there is no separate bookkeeping table), so
+// deleting the rows resets the dedup state automatically. The lock is held so
+// it does not race with Save's dedup decision. The program definition and the
+// audit are not touched.
 func (s *SQLite) DeleteFindingsByProgram(ctx context.Context, program string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	res, err := s.db.ExecContext(ctx, `DELETE FROM findings WHERE program=?`, program)
 	if err != nil {
-		return 0, fmt.Errorf("store: hapus temuan program: %w", err)
+		return 0, fmt.Errorf("store: delete program findings: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
@@ -470,10 +476,10 @@ func decodeProgram(name, in, out, preset, upd string) *Program {
 
 // ---- UserStore (RBAC) ----
 
-// CreateUser: lihat UserStore.CreateUser.
+// CreateUser: see UserStore.CreateUser.
 func (s *SQLite) CreateUser(ctx context.Context, u User) error {
 	if strings.TrimSpace(u.Username) == "" {
-		return fmt.Errorf("store: username wajib")
+		return fmt.Errorf("store: username is required")
 	}
 	if u.Created.IsZero() {
 		u.Created = s.now().UTC()
@@ -485,12 +491,12 @@ func (s *SQLite) CreateUser(ctx context.Context, u User) error {
 		if strings.Contains(strings.ToLower(err.Error()), "unique") {
 			return ErrUserExists
 		}
-		return fmt.Errorf("store: buat user: %w", err)
+		return fmt.Errorf("store: create user: %w", err)
 	}
 	return nil
 }
 
-// GetUser: lihat UserStore.GetUser.
+// GetUser: see UserStore.GetUser.
 func (s *SQLite) GetUser(ctx context.Context, username string) (*User, error) {
 	var role, hash, created string
 	err := s.db.QueryRowContext(ctx, `SELECT role, pass_hash, created_at FROM users WHERE username=?`, username).Scan(&role, &hash, &created)
@@ -498,17 +504,17 @@ func (s *SQLite) GetUser(ctx context.Context, username string) (*User, error) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("store: ambil user: %w", err)
+		return nil, fmt.Errorf("store: get user: %w", err)
 	}
 	t, _ := time.Parse(time.RFC3339, created)
 	return &User{Username: username, Role: role, PassHash: hash, Created: t}, nil
 }
 
-// ListUsers: lihat UserStore.ListUsers.
+// ListUsers: see UserStore.ListUsers.
 func (s *SQLite) ListUsers(ctx context.Context) ([]*User, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT username, role, pass_hash, created_at FROM users ORDER BY username`)
 	if err != nil {
-		return nil, fmt.Errorf("store: daftar user: %w", err)
+		return nil, fmt.Errorf("store: list users: %w", err)
 	}
 	defer rows.Close()
 	var out []*User
@@ -523,11 +529,11 @@ func (s *SQLite) ListUsers(ctx context.Context) ([]*User, error) {
 	return out, rows.Err()
 }
 
-// DeleteUser: lihat UserStore.DeleteUser.
+// DeleteUser: see UserStore.DeleteUser.
 func (s *SQLite) DeleteUser(ctx context.Context, username string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE username=?`, username)
 	if err != nil {
-		return fmt.Errorf("store: hapus user: %w", err)
+		return fmt.Errorf("store: delete user: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
@@ -535,7 +541,7 @@ func (s *SQLite) DeleteUser(ctx context.Context, username string) error {
 	return nil
 }
 
-// SetPassword: lihat UserStore.SetPassword.
+// SetPassword: see UserStore.SetPassword.
 func (s *SQLite) SetPassword(ctx context.Context, username, passHash string) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE users SET pass_hash=? WHERE username=?`, passHash, username)
 	if err != nil {
@@ -547,22 +553,22 @@ func (s *SQLite) SetPassword(ctx context.Context, username, passHash string) err
 	return nil
 }
 
-// CountUsers: lihat UserStore.CountUsers.
+// CountUsers: see UserStore.CountUsers.
 func (s *SQLite) CountUsers(ctx context.Context) (int, error) {
 	var n int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("store: hitung user: %w", err)
+		return 0, fmt.Errorf("store: count users: %w", err)
 	}
 	return n, nil
 }
 
-// Close menutup database.
+// Close closes the database.
 func (s *SQLite) Close() error { return s.db.Close() }
 
 func decodeDoc(doc string) (*finding.Finding, error) {
 	var f finding.Finding
 	if err := json.Unmarshal([]byte(doc), &f); err != nil {
-		return nil, fmt.Errorf("store: dokumen temuan rusak: %w", err)
+		return nil, fmt.Errorf("store: corrupt finding document: %w", err)
 	}
 	return &f, nil
 }

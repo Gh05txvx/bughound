@@ -11,33 +11,34 @@ import (
 	"bughound/internal/eval"
 )
 
-// runEval menjalankan `bughound eval -findings <file> [-baseline juice-shop]
-// [-min-recall N] [-json]`: menilai keluaran scan (ekspor GET /api/v1/findings
-// atau array JSON temuan) terhadap baseline ground-truth, lalu mencetak recall
-// atas kelas DAST-detectable. Murni offline — tak memindai & tak menyentuh
-// jaringan/scope/egress/secret.
+// runEval runs `bughound eval -findings <file> [-baseline juice-shop]
+// [-min-recall N] [-json]`: it scores scan output (an export of GET
+// /api/v1/findings, or a JSON array of findings) against a ground-truth
+// baseline and prints the recall over the DAST-detectable classes. It works
+// offline: it does not scan and does not touch the network, scope, egress or
+// secrets.
 func runEval(args []string) {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
-	baseline := fs.String("baseline", "juice-shop", "nama baseline bawaan atau path berkas JSON")
-	findingsPath := fs.String("findings", "", "path berkas JSON temuan (array, atau respons /api/v1/findings)")
-	minRecall := fs.Float64("min-recall", 0, "gagal (exit 1) bila recall wajib < nilai ini [0..1]; 0 = tanpa gate")
-	asJSON := fs.Bool("json", false, "cetak hasil sebagai JSON (bukan kartu-skor teks)")
+	baseline := fs.String("baseline", "juice-shop", "built-in baseline name, or path to a JSON file")
+	findingsPath := fs.String("findings", "", "path to a findings JSON file (an array, or a /api/v1/findings response)")
+	minRecall := fs.Float64("min-recall", 0, "fail (exit 1) when required recall is below this value [0..1]; 0 = no gate")
+	asJSON := fs.Bool("json", false, "print the result as JSON (instead of a text scorecard)")
 	_ = fs.Parse(args)
 
 	if *findingsPath == "" {
-		log.Fatalf("eval: butuh -findings <file.json> (ekspor dari GET /api/v1/findings?program=...).\n  baseline bawaan: %s", strings.Join(eval.BuiltinBaselines(), ", "))
+		log.Fatalf("eval: -findings <file.json> is required (export it from GET /api/v1/findings?program=...).\n  built-in baselines: %s", strings.Join(eval.BuiltinBaselines(), ", "))
 	}
 	b, err := eval.LoadBaseline(*baseline, os.ReadFile)
 	if err != nil {
-		log.Fatalf("eval: muat baseline %q: %v", *baseline, err)
+		log.Fatalf("eval: load baseline %q: %v", *baseline, err)
 	}
 	data, err := os.ReadFile(*findingsPath)
 	if err != nil {
-		log.Fatalf("eval: baca temuan %q: %v", *findingsPath, err)
+		log.Fatalf("eval: read findings %q: %v", *findingsPath, err)
 	}
 	findings, err := eval.ParseFindings(data)
 	if err != nil {
-		log.Fatalf("eval: parse temuan: %v", err)
+		log.Fatalf("eval: parse findings: %v", err)
 	}
 	res := eval.Score(findings, b)
 
@@ -46,13 +47,13 @@ func runEval(args []string) {
 		enc.SetIndent("", "  ")
 		enc.SetEscapeHTML(false)
 		if err := enc.Encode(res); err != nil {
-			log.Fatalf("eval: enkode JSON: %v", err)
+			log.Fatalf("eval: encode JSON: %v", err)
 		}
 	} else {
 		fmt.Print(res.Report())
 	}
 	if *minRecall > 0 && res.Recall < *minRecall {
-		fmt.Fprintf(os.Stderr, "\nGATE GAGAL: recall wajib %.3f < min %.3f\n", res.Recall, *minRecall)
+		fmt.Fprintf(os.Stderr, "\nGATE FAILED: required recall %.3f < min %.3f\n", res.Recall, *minRecall)
 		os.Exit(1)
 	}
 }

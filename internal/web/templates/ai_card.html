@@ -1,8 +1,8 @@
 {{define "ai_card"}}
 {{if .NotConfigured}}
 <div class="ai-card muted small">
-  Analisis AI belum diaktifkan.
-  {{if .CanConfig}}<a href="/ai/settings">Aktifkan di menu MCP / AI →</a>{{else}}Minta admin mengaktifkan di menu MCP / AI.{{end}}
+  AI analysis is not enabled yet.
+  {{if .CanConfig}}<a href="/ai/settings">Enable it in the MCP / AI menu →</a>{{else}}Ask an admin to enable it in the MCP / AI menu.{{end}}
 </div>
 {{else}}
 <div class="ai-card">
@@ -16,27 +16,27 @@
   <div class="ai-target mono small muted">{{if .Target.Method}}<b>{{.Target.Method}}</b> {{end}}{{.Target.URL}}{{if .Target.Parameter}} · param <b>{{.Target.Parameter}}</b>{{if .Target.ParamLocation}} ({{.Target.ParamLocation}}){{end}}{{end}}</div>
 
   {{if .Err}}
-  <div class="ai-err small">⚠️ Gagal menghasilkan analisis: {{.Err}}
-    <button class="btn ghost small" hx-post="/ai/finding/{{.FindingID}}/regen" hx-target="#ai-card-{{.FindingID}}" hx-swap="innerHTML">Coba lagi</button>
+  <div class="ai-err small">⚠️ Could not produce the analysis: {{.Err}}
+    <button class="btn ghost small" hx-post="/ai/finding/{{.FindingID}}/regen" hx-target="#ai-card-{{.FindingID}}" hx-swap="innerHTML">Try again</button>
   </div>
   {{end}}
 
   {{with .Analysis}}
   <div class="ai-dec ai-dec-{{.Decision}}">
-    {{if eq .Decision "verify_now"}}Prioritas: verifikasi sekarang
-    {{else if eq .Decision "likely_fp"}}Kemungkinan false positive
-    {{else}}Perlu info lebih dulu{{end}}
+    {{if eq .Decision "verify_now"}}Priority: verify now
+    {{else if eq .Decision "likely_fp"}}Likely false positive
+    {{else}}Needs more info first{{end}}
   </div>
   {{if .Why}}<p class="ai-why">{{.Why}}</p>{{end}}
 
   {{if .Hypotheses}}
-  <div class="ai-sub">Uji di Burp Repeater <span class="muted small">(manual, non-destruktif)</span></div>
+  <div class="ai-sub">Test in Burp Repeater <span class="muted small">(manual, non-destructive)</span></div>
   <ol class="ai-hyps">
     {{range .Hypotheses}}
     <li>
       <code class="ai-mut">{{.Mutation}}</code>
-      <div class="small"><span class="muted">harapkan:</span> {{.Expected}}</div>
-      {{if .Confirms}}<div class="small"><span class="muted">membuktikan:</span> {{.Confirms}}</div>{{end}}
+      <div class="small"><span class="muted">expect:</span> {{.Expected}}</div>
+      {{if .Confirms}}<div class="small"><span class="muted">proves:</span> {{.Confirms}}</div>{{end}}
     </li>
     {{end}}
   </ol>
@@ -45,22 +45,22 @@
   {{end}}
 
   {{if and (not .Err) (not .Analysis)}}
-  <p class="muted small">Belum ada analisis.</p>
+  <p class="muted small">No analysis yet.</p>
   {{end}}
 
-  {{/* Benih deterministik: tampil saat AI belum memberi hipotesis konkret —
-       termasuk saat generate GAGAL (mis. kredit habis) agar hunter tetap dapat
-       panduan. Aman saat Analysis nil (and short-circuit, Go 1.27). */}}
+  {{/* Deterministic seeds: shown when the AI has not given concrete hypotheses
+       yet, including when generation FAILED (e.g. credit ran out) so the hunter still
+       gets guidance. Safe when Analysis is nil (and short-circuit, Go 1.27). */}}
   {{if and .SeedHints (not (and .Analysis .Analysis.Hypotheses))}}
-    <div class="small"><span class="muted">benih uji (deterministik):</span> {{join .SeedHints "; "}}</div>
+    <div class="small"><span class="muted">test seeds (deterministic):</span> {{join .SeedHints "; "}}</div>
   {{end}}
 
   <div class="ai-safety small">⚠️ {{.Safety}}</div>
 
   {{if .Analysis}}
   <div class="ai-foot muted small">
-    {{if .Cached}}dari cache{{else}}baru dibuat{{end}}{{if .GeneratedAt}} · {{.GeneratedAt}}{{end}}
-    <button class="btn ghost small" hx-post="/ai/finding/{{.FindingID}}/regen" hx-target="#ai-card-{{.FindingID}}" hx-swap="innerHTML">Regenerasi</button>
+    {{if .Cached}}from cache{{else}}freshly made{{end}}{{if .GeneratedAt}} · {{.GeneratedAt}}{{end}}
+    <button class="btn ghost small" hx-post="/ai/finding/{{.FindingID}}/regen" hx-target="#ai-card-{{.FindingID}}" hx-swap="innerHTML">Regenerate</button>
   </div>
   {{end}}
 </div>

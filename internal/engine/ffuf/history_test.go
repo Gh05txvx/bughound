@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestMain: dengan BH_FAKE_FFUF=1 binary tes ini menyamar sebagai ffuf (fakeFFUF),
-// agar Scan bisa diuji end-to-end tanpa ffuf asli & lintas OS.
+// TestMain: with BH_FAKE_FFUF=1 this test binary stands in for ffuf (fakeFFUF),
+// so Scan can be tested end-to-end without a real ffuf and across OSes.
 func TestMain(m *testing.M) {
 	if os.Getenv("BH_FAKE_FFUF") == "1" {
 		fakeFFUF()
@@ -18,9 +18,9 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// fakeFFUF meniru ffuf v2: menulis opsi run (termasuk header -H) ke
-// $XDG_CONFIG_HOME/ffuf/history, mencatat dir itu (+ salinan wordlist -w bila
-// BH_FAKE_FFUF_WL diset), lalu hasil kosong ke -o.
+// fakeFFUF imitates ffuf v2: it writes the run options (including the -H header)
+// to $XDG_CONFIG_HOME/ffuf/history, records that dir (plus a copy of the -w
+// wordlist when BH_FAKE_FFUF_WL is set), then writes an empty result to -o.
 func fakeFFUF() {
 	cfg := os.Getenv("XDG_CONFIG_HOME")
 	hist := filepath.Join(cfg, "ffuf", "history", "x")
@@ -41,8 +41,8 @@ func fakeFFUF() {
 	os.Exit(0)
 }
 
-// Scan berlogin: entri route logout dibuang dari wordlist (bawaan memuat
-// "logout") — satu GET mematikan sesi. Tanpa login wordlist utuh.
+// Authenticated scan: logout route entries are dropped from the wordlist (the
+// default holds "logout"), since one GET kills the session. Without login the wordlist is intact.
 func TestScanDropsLogoutWordsWhenAuth(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -68,17 +68,17 @@ func TestScanDropsLogoutWordsWhenAuth(t *testing.T) {
 			words[w] = true
 		}
 		if words["logout"] == auth {
-			t.Errorf("auth=%v: entri logout ada=%v", auth, words["logout"])
+			t.Errorf("auth=%v: logout entry present=%v", auth, words["logout"])
 		}
 		if !words["login"] || !words["admin"] {
-			t.Errorf("auth=%v: entri non-logout harus tetap ada", auth)
+			t.Errorf("auth=%v: non-logout entries must remain", auth)
 		}
 	}
 }
 
-// Regresi kebocoran secret (live 2026-11-16): history ffuf memuat nilai header
-// auth, jadi tak boleh jatuh ke config home bersama — tiap run memakai dir
-// sendiri yang dihapus selepas run.
+// Secret leak regression (live 2026-11-16): the ffuf history holds the auth
+// header value, so it must not land in a shared config home. Each run uses its
+// own dir that is removed after the run.
 func TestScanFFUFConfigDirPerRun(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -97,15 +97,15 @@ func TestScanFFUFConfigDirPerRun(t *testing.T) {
 	}
 	cfg, err := os.ReadFile(logf)
 	if err != nil || len(cfg) == 0 {
-		t.Fatalf("ffuf palsu tak dijalankan: %v", err)
+		t.Fatalf("fake ffuf did not run: %v", err)
 	}
 	if string(cfg) == shared {
-		t.Fatal("ffuf masih memakai config home bersama")
+		t.Fatal("ffuf still uses the shared config home")
 	}
 	if _, err := os.Stat(string(cfg)); !os.IsNotExist(err) {
-		t.Errorf("dir konfigurasi per run harus dihapus selepas run: %s (%v)", cfg, err)
+		t.Errorf("the per-run config dir must be removed after the run: %s (%v)", cfg, err)
 	}
 	if ents, _ := os.ReadDir(shared); len(ents) != 0 {
-		t.Errorf("config home bersama harus tetap kosong; ada %d entri", len(ents))
+		t.Errorf("the shared config home must stay empty; found %d entries", len(ents))
 	}
 }

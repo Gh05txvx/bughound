@@ -16,38 +16,38 @@ import (
 	"bughound/internal/finding"
 )
 
-// Runner adalah engine ZAP NYATA. Dua mode, KEDUANYA lewat ZAP Automation
-// Framework (plan YAML → laporan traditional-json):
-//   - "quick"/"baseline" (default): spider + PASSIVE scan, TANPA active scan.
-//     Tidak mengirim payload serangan (setara zap-baseline): hanya aturan pasif
-//     (header hilang, versi/informasi bocor, berkas tersingkap). Aman & ringan.
-//   - "full": spider + ACTIVE scan (mengirim payload: SQLi/XSS/dst.) + laporan.
-//     Cakupan lebih dalam, lebih lama, dan AKTIF MENYERANG — hanya saat
-//     startup `-zap-mode full`.
+// Runner is the REAL ZAP engine. Two modes, BOTH through the ZAP Automation
+// Framework (plan YAML → traditional-json report):
+//   - "quick"/"baseline" (default): spider + PASSIVE scan, NO active scan.
+//     It sends no attack payload (like zap-baseline): only passive rules
+//     (missing headers, version/info leaks, exposed files). Safe & light.
+//   - "full": spider + ACTIVE scan (sends payloads: SQLi/XSS/etc.) + report.
+//     Deeper coverage, longer, and ACTIVELY ATTACKING — only when
+//     started with `-zap-mode full`.
 //
-// Bukan default; butuh OWASP ZAP terpasang. Bila UseProxy diset, koneksi ZAP
-// diarahkan ke proxy egress bughound lewat config upstream proxy (scope guard
-// per koneksi). Invokasi ZAP berat (JVM); args/plan & Parse diuji, eksekusi nyata
-// dipakai sadar untuk target sah.
+// Not the default; needs OWASP ZAP installed. When UseProxy is set, ZAP's connections
+// are routed to bughound's egress proxy through the upstream proxy config (scope guard
+// per connection). A ZAP invocation is heavy (JVM); args/plan & Parse are tested, real execution
+// is used deliberately for a valid target.
 type Runner struct {
 	Binary      string // default "zap.sh"
 	Mode        string // "quick" (default) | "baseline" | "full"
-	RateLimit   int    // throttle active scan: 0 = default ZAP; >0 = 1 thread/host + jeda ~1000/rate ms
+	RateLimit   int    // throttle the active scan: 0 = ZAP default; >0 = 1 thread/host + a ~1000/rate ms gap
 	proxyAddr   string
-	authHeaders []string // Lever 1: header auth → aturan Replacer di plan (lihat UseAuthHeaders)
+	authHeaders []string // Lever 1: auth headers → a Replacer rule in the plan (see UseAuthHeaders)
 }
 
-// Name memenuhi engine.Engine.
+// Name satisfies engine.Engine.
 func (r *Runner) Name() string { return "zap" }
 
-// UseProxy memenuhi engine.ProxyAware.
+// UseProxy satisfies engine.ProxyAware.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
 
-// UseAuthHeaders memenuhi engine.AuthAware: tiap header "Nama: nilai" menjadi
-// aturan Replacer di plan, sehingga SETIAP request ZAP (spider, passive, active)
-// membawa sesi login (Lever 1). Nilai = secret: hanya tertulis ke plan (0600) &
-// home ZAP per run (config.xml, zap.log) — keduanya di dir sementara 0700 yang
-// dihapus selepas run (lihat buildPlanArgs).
+// UseAuthHeaders satisfies engine.AuthAware: each "Name: value" header becomes
+// a Replacer rule in the plan, so EVERY ZAP request (spider, passive, active)
+// carries the login session (Lever 1). The value = secret: it is only written to the plan (0600) &
+// ZAP's home per run (config.xml, zap.log) — both in a 0700 temp dir that
+// is deleted after the run (see buildPlanArgs).
 func (r *Runner) UseAuthHeaders(h []string) { r.authHeaders = h }
 
 func (r *Runner) mode() string {
@@ -61,11 +61,11 @@ func (r *Runner) mode() string {
 	}
 }
 
-// active menandai mode yang mengirim payload serangan (active scan). HANYA "full".
-// quick/baseline sengaja pasif agar default aman untuk target bug bounty.
+// active marks the mode that sends attack payloads (active scan). ONLY "full".
+// quick/baseline are deliberately passive so the default is safe for a bug bounty target.
 func (r *Runner) active() bool { return r.mode() == "full" }
 
-// Scan memenuhi engine.Engine.
+// Scan satisfies engine.Engine.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
 	bin := r.Binary
 	if bin == "" {
@@ -74,20 +74,20 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	return r.scanPlan(ctx, bin, target, program, runID, r.active())
 }
 
-// scanPlan menulis plan Automation Framework (spider + passive, atau + active bila
-// full), menjalankan ZAP, lalu Parse laporan JSON. active=false TAK mengirim
-// payload serangan apa pun.
+// scanPlan writes the Automation Framework plan (spider + passive, or + active when
+// full), runs ZAP, then Parses the JSON report. active=false sends NO
+// attack payload at all.
 func (r *Runner) scanPlan(ctx context.Context, bin, target, program, runID string, active bool) ([]*finding.Finding, error) {
 	dir, err := os.MkdirTemp("", "zap-*")
 	if err != nil {
-		return nil, fmt.Errorf("zap: dir sementara: %w", err)
+		return nil, fmt.Errorf("zap: temp dir: %w", err)
 	}
 	defer os.RemoveAll(dir)
 
 	const reportFile = "report.json"
 	planPath := filepath.Join(dir, "plan.yaml")
 	if err := os.WriteFile(planPath, []byte(planYAML(target, dir, reportFile, active, r.authHeaders)), 0o600); err != nil {
-		return nil, fmt.Errorf("zap: tulis plan: %w", err)
+		return nil, fmt.Errorf("zap: write plan: %w", err)
 	}
 	port, err := freePort()
 	if err != nil {
@@ -95,8 +95,8 @@ func (r *Runner) scanPlan(ctx context.Context, bin, target, program, runID strin
 	}
 	reportPath := filepath.Join(dir, reportFile)
 	if err := r.run(ctx, bin, append(r.buildPlanArgs(planPath, dir), "-port", port)); err != nil {
-		// Exit 2 = plan Automation Framework tuntas DENGAN peringatan (mis. target
-		// membalas 401 di semua halaman): laporannya sah. Exit lain / tanpa laporan = gagal.
+		// Exit 2 = the Automation Framework plan finished WITH warnings (e.g. the target
+		// replies 401 on every page): its report is valid. Any other exit / no report = failure.
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() == 2 {
 			if fs, rerr := readReport(reportPath, program, runID); rerr == nil {
@@ -108,11 +108,11 @@ func (r *Runner) scanPlan(ctx context.Context, bin, target, program, runID strin
 	return readReport(reportPath, program, runID)
 }
 
-// freePort meminta port lokal bebas ke OS untuk proxy utama ZAP: mode -cmd tetap
-// membuka proxy itu (default 8080), jadi dua run bersamaan berebut port →
-// "BindException Address already in use" (live 2026-11-16). Skrip docker ZAP
-// sendiri memilih port dengan cara yang sama.
-// shortcut: port bisa direbut proses lain di antara Close & bind ZAP (jendela milidetik); tambah retry bila BindException muncul lagi di log.
+// freePort asks the OS for a free local port for ZAP's main proxy: -cmd mode still
+// opens that proxy (default 8080), so two concurrent runs fight over the port →
+// "BindException Address already in use" (live 2026-11-16). The ZAP docker script
+// itself picks a port the same way.
+// shortcut: the port can be taken by another process between Close & ZAP's bind (a millisecond window); add a retry if BindException shows up again in the log.
 func freePort() (string, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -127,7 +127,7 @@ func (r *Runner) run(ctx context.Context, bin string, args []string) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("zap: eksekusi gagal: %w (%s)", err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("zap: execution failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	return nil
 }
@@ -135,25 +135,25 @@ func (r *Runner) run(ctx context.Context, bin string, args []string) error {
 func readReport(path, program, runID string) ([]*finding.Finding, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("zap: baca laporan: %w", err)
+		return nil, fmt.Errorf("zap: read report: %w", err)
 	}
 	return Parse(bytes.NewReader(data), program, runID)
 }
 
-// buildPlanArgs: -dir menjadikan homeDir (dir sementara per run, dihapus selepas
-// run) sebagai home ZAP. ZAP menyimpan opsi run ke home-nya — termasuk aturan
-// Replacer berisi NILAI header auth (config.xml, zap.log, sesi). Home bersama
-// (~/.ZAP) membuat sesi satu program ikut terkirim ke scan berikutnya (program
-// lain) & tertinggal di disk — terbukti live 2026-11-16.
+// buildPlanArgs: -dir makes homeDir (a temp dir per run, deleted after the
+// run) ZAP's home. ZAP stores run options to its home — including the
+// Replacer rule holding the auth header VALUE (config.xml, zap.log, session). A shared home
+// (~/.ZAP) makes one program's session carry into the next scan (another
+// program) & linger on disk — proven live 2026-11-16.
 func (r *Runner) buildPlanArgs(planPath, homeDir string) []string {
 	args := append([]string{"-cmd", "-dir", homeDir, "-autorun", planPath}, r.proxyConfigArgs()...)
 	return append(args, r.throttleArgs()...)
 }
 
-// throttleArgs menjepit keagresifan active scanner ZAP ke target (RateLimit
-// req/dtk): satu thread per host + jeda antar-request ~1000/rate ms. Hanya
-// berpengaruh pada mode full (active scan); di quick/baseline (pasif) ini no-op —
-// laju request pasif tetap dijepit oleh rate limiter di proxy egress bughound.
+// throttleArgs clamps how aggressive ZAP's active scanner is against the target (RateLimit
+// req/s): one thread per host + a ~1000/rate ms gap between requests. It only
+// affects full mode (active scan); in quick/baseline (passive) it is a no-op —
+// the passive request rate is still clamped by the rate limiter in bughound's egress proxy.
 func (r *Runner) throttleArgs() []string {
 	if r.RateLimit <= 0 {
 		return nil
@@ -168,7 +168,7 @@ func (r *Runner) throttleArgs() []string {
 	}
 }
 
-// proxyConfigArgs mengarahkan ZAP ke proxy egress bughound (bila diset).
+// proxyConfigArgs points ZAP at bughound's egress proxy (when set).
 func (r *Runner) proxyConfigArgs() []string {
 	if r.proxyAddr == "" {
 		return nil
@@ -184,31 +184,31 @@ func (r *Runner) proxyConfigArgs() []string {
 	}
 }
 
-// Batas waktu plan (menit). Active scan tanpa batas bisa berjalan berjam-jam dan
-// membanjiri target — terutama di SPA catch-all yang permukaan spider-nya hampir
-// tak-hingga. Batas ini menjaga scan tetap tuntas & tak menumbangkan target;
-// throttle per-request (throttleArgs) tetap di jalur terpisah.
+// Plan time limits (minutes). An unlimited active scan can run for hours and
+// flood the target — especially on a catch-all SPA whose spider surface is nearly
+// infinite. These limits keep the scan finishing & not toppling the target;
+// the per-request throttle (throttleArgs) stays on a separate path.
 const (
-	spiderMaxDurationMin      = 3  // spider berhenti setelah 3 menit
-	passiveWaitMaxDurationMin = 5  // tunggu antrean passive scan kosong maksimal 5 menit
-	ascanMaxDurationMin       = 10 // total active scan maksimal 10 menit (mode full)
-	ascanMaxRuleDurMin        = 2  // tiap rule active scan maksimal 2 menit (mode full)
+	spiderMaxDurationMin      = 3  // the spider stops after 3 minutes
+	passiveWaitMaxDurationMin = 5  // wait for the passive scan queue to drain, at most 5 minutes
+	ascanMaxDurationMin       = 10 // total active scan at most 10 minutes (full mode)
+	ascanMaxRuleDurMin        = 2  // each active scan rule at most 2 minutes (full mode)
 )
 
-// planYAML menyusun rencana ZAP Automation Framework. Selalu: spider → (job scan) →
-// laporan traditional-json. Job scan tergantung active:
-//   - active=false (quick/baseline): passiveScan-wait — tunggu aturan PASIF tuntas,
-//     tanpa mengirim satu pun payload serangan.
-//   - active=true (full): activeScan — kirim payload (SQLi/XSS/dst.).
+// planYAML builds the ZAP Automation Framework plan. Always: spider → (scan job) →
+// traditional-json report. The scan job depends on active:
+//   - active=false (quick/baseline): passiveScan-wait — wait for the PASSIVE rules to finish,
+//     without sending a single attack payload.
+//   - active=true (full): activeScan — send payloads (SQLi/XSS/etc.).
 //
-// Spider & activeScan dibatasi durasinya (lihat konstanta) agar tuntas di host
-// kecil dan tak membanjiri target. Bila ada header auth, job replacer (lihat
-// replacerJob) dipasang paling depan dan route logout dikeluarkan dari context.
+// The spider & activeScan are duration-limited (see the constants) so they finish on a small
+// host and do not flood the target. When there are auth headers, the replacer job (see
+// replacerJob) is placed first and the logout route is excluded from the context.
 func planYAML(target, reportDir, reportFile string, active bool, authHeaders []string) string {
 	replacer, excl := replacerJob(authHeaders), ""
 	if replacer != "" {
-		// Spider ZAP mengikuti link logout (live 2026-11-16) → sesi mati & sisa scan
-		// diam-diam tanpa login. URL di luar context tak di-spider/scan.
+		// The ZAP spider follows a logout link (live 2026-11-16) → the session dies & the rest of the scan
+		// runs silently without login. A URL outside the context is not spidered/scanned.
 		excl = "      excludePaths:\n        - " + strconv.Quote(engine.LogoutPattern) + "\n"
 	}
 	plan := "" +
@@ -247,13 +247,13 @@ func planYAML(target, reportDir, reportFile string, active bool, authHeaders []s
 		"      reportFile: \"" + reportFile + "\"\n"
 }
 
-// replacerJob merender header auth (Lever 1) menjadi job Replacer ZAP. Dipasang
-// SEBELUM spider agar semua job sesudahnya membawa header. matchType req_header:
-// header ditambah bila absen, ditimpa bila ada. url & initiators kosong = semua
-// request ZAP; batasnya tetap scope guard di egress, sama seperti `-H` engine lain.
-// Nama & nilai di-quote strconv.Quote (escape Go ⊂ escape double-quoted YAML), jadi
-// cookie berisi `"`/`#`/`:` tak bisa merusak atau menyusupi plan. Tanpa header sah
-// → "" (plan tak berubah).
+// replacerJob renders the auth headers (Lever 1) into a ZAP Replacer job. Placed
+// BEFORE the spider so every job after it carries the header. matchType req_header:
+// the header is added when absent, overwritten when present. An empty url & initiators = every
+// ZAP request; the bound is still the scope guard at egress, like other engines' `-H`.
+// Name & value are strconv.Quote-quoted (Go escaping ⊂ double-quoted YAML escaping), so a
+// cookie with `"`/`#`/`:` cannot break or inject into the plan. Without valid headers
+// → "" (the plan is unchanged).
 func replacerJob(headers []string) string {
 	var rules strings.Builder
 	n := 0
@@ -261,7 +261,7 @@ func replacerJob(headers []string) string {
 		name, val, ok := strings.Cut(h, ":")
 		name, val = strings.TrimSpace(name), strings.TrimSpace(val)
 		if !ok || name == "" || val == "" {
-			continue // baris rusak dilewati; nilai kosong malah MENGHAPUS header di Replacer
+			continue // a broken line is skipped; an empty value would REMOVE the header in the Replacer
 		}
 		n++
 		fmt.Fprintf(&rules, "      - description: \"bughound-auth-%d\"\n"+

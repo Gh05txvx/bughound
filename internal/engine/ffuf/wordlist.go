@@ -12,9 +12,9 @@ import (
 //go:embed default-wordlist.txt
 var defaultWordlist []byte
 
-// resolveWordlist mengembalikan path wordlist siap pakai. Bila Wordlist diisi,
-// dipakai apa adanya (cleanup no-op). Bila kosong, wordlist bawaan ditulis ke
-// berkas sementara dan cleanup menghapusnya.
+// resolveWordlist returns a ready-to-use wordlist path. When Wordlist is set, it
+// is used as-is (cleanup is a no-op). When empty, the built-in wordlist is
+// written to a temp file and cleanup removes it.
 func (r *Runner) resolveWordlist() (path string, cleanup func(), err error) {
 	if strings.TrimSpace(r.Wordlist) != "" {
 		return r.Wordlist, func() {}, nil
@@ -22,9 +22,9 @@ func (r *Runner) resolveWordlist() (path string, cleanup func(), err error) {
 	return tempWordlist("ffuf-wl-*.txt", defaultWordlist)
 }
 
-// withoutLogout menulis salinan wordlist tanpa baris route logout
-// (engine.IsLogoutPath) — untuk scan berlogin: satu GET ke route logout mematikan
-// sesi (wordlist bawaan memuat "logout"; robots.txt sering men-Disallow-nya).
+// withoutLogout writes a copy of the wordlist without logout route lines
+// (engine.IsLogoutPath), for an authenticated scan: one GET to a logout route
+// kills the session (the built-in wordlist holds "logout"; robots.txt often Disallows it).
 func withoutLogout(basePath string) (string, func(), error) {
 	base, err := os.ReadFile(basePath)
 	if err != nil {
@@ -39,7 +39,7 @@ func withoutLogout(basePath string) (string, func(), error) {
 	return tempWordlist("ffuf-wl-auth-*.txt", buf.Bytes())
 }
 
-// tempWordlist menulis data ke berkas wordlist sementara; cleanup menghapusnya.
+// tempWordlist writes data to a temp wordlist file; cleanup removes it.
 func tempWordlist(pattern string, data []byte) (string, func(), error) {
 	tmp, err := os.CreateTemp("", pattern)
 	if err != nil {

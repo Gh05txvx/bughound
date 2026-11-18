@@ -110,7 +110,7 @@ func TestIntercept_ConnectReplyCarriesHeader(t *testing.T) {
 				t.Fatalf("baca respons CONNECT: %v", err)
 			}
 			if resp.StatusCode != http.StatusOK {
-				t.Fatalf("status = %d, ingin 200", resp.StatusCode)
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
 			}
 			if resp.Header.Get("Proxy-Agent") == "" {
 				t.Errorf("balasan CONNECT tanpa header Proxy-Agent (klien rawhttp bisa menggantung di Peek)")
@@ -146,7 +146,7 @@ func openTunnel(t *testing.T, proxyAddr, authority string) net.Conn {
 		t.Fatalf("baca respons CONNECT: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("CONNECT %s = %d, ingin 200", authority, resp.StatusCode)
+		t.Fatalf("CONNECT %s = %d, want 200", authority, resp.StatusCode)
 	}
 	return conn
 }
@@ -191,12 +191,12 @@ func TestIntercept_BlocksExcludedPathOverHTTPS(t *testing.T) {
 
 	for _, p := range []string{"/admin", "/admin/", "/admin/users.html?id=1'", "/%61dmin", "/public/../admin"} {
 		if st := statusOf(t, c, srv.URL+p); st != http.StatusForbidden {
-			t.Errorf("GET %s = %d, ingin 403", p, st)
+			t.Errorf("GET %s = %d, want 403", p, st)
 		}
 	}
 	for _, p := range []string{"/", "/public/", "/administrator", "/public?next=/admin"} {
 		if st := statusOf(t, c, srv.URL+p); st != http.StatusOK {
-			t.Errorf("GET %s = %d, ingin 200", p, st)
+			t.Errorf("GET %s = %d, want 200", p, st)
 		}
 	}
 	if hit := got.under("/admin"); len(hit) != 0 {
@@ -219,10 +219,10 @@ func TestIntercept_BlocksExcludedPathOnNamedHost(t *testing.T) {
 	base := "https://demo.test:" + port
 
 	if st := statusOf(t, c, base+"/admin/x"); st != http.StatusForbidden {
-		t.Errorf("/admin/x = %d, ingin 403", st)
+		t.Errorf("/admin/x = %d, want 403", st)
 	}
 	if st := statusOf(t, c, base+"/public"); st != http.StatusOK {
-		t.Errorf("/public = %d, ingin 200", st)
+		t.Errorf("/public = %d, want 200", st)
 	}
 	if hit := got.under("/admin"); len(hit) != 0 {
 		t.Errorf("path terlarang tersentuh: %v", hit)
@@ -394,7 +394,7 @@ func TestHandleHTTP_StillVerifiesTLS(t *testing.T) {
 	conn.SetDeadline(time.Now().Add(5 * time.Second))
 	fmt.Fprintf(conn, "GET https://%s/public HTTP/1.1\r\nHost: %s\r\n\r\n", host, host)
 	if st := readStatus(t, bufio.NewReader(conn)); st != http.StatusBadGateway {
-		t.Errorf("status = %d, ingin 502", st)
+		t.Errorf("status = %d, want 502", st)
 	}
 	if n := len(got.list()); n != 0 {
 		t.Errorf("backend kena %d kali", n)
@@ -424,7 +424,7 @@ func TestIntercept_OpaqueRequestTargetIsRefused(t *testing.T) {
 	conn := openTunnel(t, addr, host)
 	fmt.Fprintf(conn, "GET http:x@127.0.0.1/public/%%2e%%2e/admin HTTP/1.1\r\nHost: %s\r\n\r\n", host)
 	if st := readStatus(t, bufio.NewReader(conn)); st != http.StatusMethodNotAllowed {
-		t.Errorf("status = %d, ingin 405", st)
+		t.Errorf("status = %d, want 405", st)
 	}
 	if n := accepted.Load(); n != 0 {
 		t.Errorf("%d koneksi sampai ke target", n)
@@ -453,7 +453,7 @@ func TestIntercept_ProtocolUpgradeIsRefused(t *testing.T) {
 	conn := openTunnel(t, addr, host)
 	fmt.Fprintf(conn, "GET /ws HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n", host)
 	if st := readStatus(t, bufio.NewReader(conn)); st != http.StatusBadGateway {
-		t.Errorf("status = %d, ingin 502", st)
+		t.Errorf("status = %d, want 502", st)
 	}
 	select {
 	case <-closed:
@@ -511,7 +511,7 @@ func TestIntercept_DenialIsAuditedWithItsPath(t *testing.T) {
 		t.Errorf("audit tak tepat: %+v", d)
 	}
 	if n := len(p.Denials()); n != 1 {
-		t.Errorf("Denials = %d, ingin 1", n)
+		t.Errorf("Denials = %d, want 1", n)
 	}
 }
 
@@ -589,7 +589,7 @@ func TestIntercept_TravelsThroughUpstreamChain(t *testing.T) {
 	}
 	c := insecureClient(t, startProxy(t, p))
 	if st := statusOf(t, c, "https://"+host+"/public"); st != http.StatusOK {
-		t.Errorf("/public = %d, ingin 200", st)
+		t.Errorf("/public = %d, want 200", st)
 	}
 	if connects.Load() == 0 {
 		t.Error("koneksi keluar harus lewat upstream")
@@ -609,7 +609,7 @@ func TestIntercept_ForwardLegStillUsesGuardedDial(t *testing.T) {
 	}
 	c := insecureClient(t, startProxy(t, p))
 	if st := statusOf(t, c, "https://demo.test:"+port+"/public"); st != http.StatusBadGateway {
-		t.Errorf("status = %d, ingin 502", st)
+		t.Errorf("status = %d, want 502", st)
 	}
 	if n := len(got.list()); n != 0 {
 		t.Errorf("IP internal tersentuh %d kali", n)
@@ -635,7 +635,7 @@ func TestOriginHost(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := originHost(c.scheme, c.authority); got != c.want {
-			t.Errorf("originHost(%q, %q) = %q, ingin %q", c.scheme, c.authority, got, c.want)
+			t.Errorf("originHost(%q, %q) = %q, want %q", c.scheme, c.authority, got, c.want)
 		}
 	}
 }

@@ -1,8 +1,8 @@
-// Package nuclei menormalkan output nuclei (JSONL) ke Skema Temuan Seragam
-// (BH-SPEC-FINDING) dan menyediakan engine mock untuk M0/E2E.
+// Package nuclei normalizes nuclei output (JSONL) into the Unified Finding Schema
+// (BH-SPEC-FINDING) and provides a mock engine for M0/E2E.
 //
-// Adapter ini tidak pernah menyimpan secret mentah: nilai header otentikasi di
-// request/response disensor sebelum masuk evidence MAUPUN raw.
+// This adapter never stores a raw secret: authentication header values in the
+// request/response are redacted before they enter evidence OR raw.
 package nuclei
 
 import (
@@ -18,9 +18,9 @@ import (
 	"bughound/internal/finding"
 )
 
-// stringList menerima nilai JSON berupa array string ATAU satu string
-// (dipisah koma), karena versi nuclei berbeda menulis tags/reference/cwe
-// dengan salah satu bentuk.
+// stringList accepts a JSON value that is either a string array OR a single
+// string (comma-separated), because different nuclei versions write
+// tags/reference/cwe in one form or the other.
 type stringList []string
 
 func (s *stringList) UnmarshalJSON(b []byte) error {
@@ -81,12 +81,12 @@ type nucleiClass struct {
 	CVSSScore   float64    `json:"cvss-score"`
 }
 
-// Parse membaca output nuclei dalam format JSONL dan mengembalikan temuan
-// ternormalkan. Baris kosong dan baris non-JSON (banner) dilewati; baris JSON
-// yang rusak menghasilkan error.
+// Parse reads nuclei output in JSONL format and returns normalized findings.
+// Blank lines and non-JSON lines (banners) are skipped; a broken JSON line
+// produces an error.
 func Parse(r io.Reader, program, runID string) ([]*finding.Finding, error) {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // request/response bisa besar
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024) // request/response can be large
 
 	var out []*finding.Finding
 	lineNo := 0
@@ -96,21 +96,21 @@ func Parse(r io.Reader, program, runID string) ([]*finding.Finding, error) {
 		if len(b) == 0 || b[0] != '{' {
 			continue
 		}
-		raw := make([]byte, len(b)) // Scanner memakai ulang buffer-nya
+		raw := make([]byte, len(b)) // the Scanner reuses its buffer
 		copy(raw, b)
 
 		var ev nucleiEvent
 		if err := json.Unmarshal(raw, &ev); err != nil {
-			return nil, fmt.Errorf("nuclei: baris %d bukan JSON valid: %w", lineNo, err)
+			return nil, fmt.Errorf("nuclei: line %d is not valid JSON: %w", lineNo, err)
 		}
 		f, err := mapEvent(&ev, raw, program, runID)
 		if err != nil {
-			return nil, fmt.Errorf("nuclei: baris %d: %w", lineNo, err)
+			return nil, fmt.Errorf("nuclei: line %d: %w", lineNo, err)
 		}
 		out = append(out, f)
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("nuclei: gagal membaca output: %w", err)
+		return nil, fmt.Errorf("nuclei: failed to read output: %w", err)
 	}
 	return out, nil
 }
@@ -118,10 +118,10 @@ func Parse(r io.Reader, program, runID string) ([]*finding.Finding, error) {
 func mapEvent(ev *nucleiEvent, raw []byte, program, runID string) (*finding.Finding, error) {
 	locURL := firstNonEmpty(ev.MatchedAt, ev.Host)
 	if locURL == "" {
-		return nil, errors.New("event tanpa matched-at/host")
+		return nil, errors.New("event without matched-at/host")
 	}
 
-	// Sensor request/response SATU KALI; dipakai untuk evidence dan raw.
+	// Redact request/response ONCE; used for both evidence and raw.
 	sReq := sanitizeHTTP(ev.Request)
 	sResp := sanitizeHTTP(ev.Response)
 
@@ -135,7 +135,7 @@ func mapEvent(ev *nucleiEvent, raw []byte, program, runID string) (*finding.Find
 		RunID:          runID,
 		Target:         firstNonEmpty(ev.Host, locURL),
 		Type:           typ,
-		Title:          firstNonEmpty(ev.Info.Name, ev.TemplateID, "temuan nuclei"),
+		Title:          firstNonEmpty(ev.Info.Name, ev.TemplateID, "nuclei finding"),
 		Description:    ev.Info.Description,
 		Severity:       mapSeverity(ev.Info.Severity),
 		Confidence:     mapConfidence(ev),
@@ -160,8 +160,8 @@ func mapEvent(ev *nucleiEvent, raw []byte, program, runID string) (*finding.Find
 	return f, nil
 }
 
-// sanitizeRaw mempertahankan seluruh field mentah nuclei tapi mengganti
-// request/response dengan versi tersensor, agar raw pun tidak membawa secret.
+// sanitizeRaw keeps all of nuclei's raw fields but replaces request/response with
+// the redacted version, so raw does not carry a secret either.
 func sanitizeRaw(raw []byte, sReq, sResp string) json.RawMessage {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -210,7 +210,7 @@ func mapSeverity(s string) finding.Severity {
 		return finding.SeverityMedium
 	case "low":
 		return finding.SeverityLow
-	default: // info, unknown, kosong, atau tak dikenal => info (aman)
+	default: // info, unknown, empty, or unrecognized => info (safe)
 		return finding.SeverityInfo
 	}
 }
@@ -245,9 +245,9 @@ func cvssVersion(metrics string) string {
 	return rest
 }
 
-// methodFromRequest mengambil method HTTP dari baris pertama request mentah
-// (mis. "POST /x HTTP/1.1" → "POST"). Mengembalikan "" bila bukan method yang
-// dikenal — agar Location.Method hanya terisi nilai sah (omitempty bila kosong).
+// methodFromRequest takes the HTTP method from the first line of the raw request
+// (e.g. "POST /x HTTP/1.1" -> "POST"). Returns "" when it is not a known method,
+// so Location.Method only holds a valid value (omitempty when empty).
 func methodFromRequest(req string) string {
 	req = strings.TrimSpace(req)
 	if req == "" {
@@ -291,5 +291,5 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "\n...[dipotong]"
+	return s[:max] + "\n...[truncated]"
 }

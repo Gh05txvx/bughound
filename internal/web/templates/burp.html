@@ -1,82 +1,82 @@
 {{define "content"}}
 <div class="card">
-  <h2>Integrasi Burp Suite</h2>
+  <h2>Burp Suite integration</h2>
   <p class="muted small">
-    BugHound menemukan kandidat bug; kamu memvalidasinya manual di Burp Repeater.
-    Integrasi ini menjembatani keduanya tanpa pindah-pindah tool — <b>dari sisi Burp</b>:
-    sebuah extension menarik temuan dari BugHound, lalu kirim request-nya ke Repeater.
+    BugHound finds candidate bugs; you validate them by hand in Burp Repeater.
+    This integration bridges the two without switching tools, <b>from the Burp side</b>:
+    an extension pulls findings from BugHound, then sends their request to Repeater.
   </p>
   <div class="result-summary">
-    <span class="chip">BugHound <span class="muted">temukan</span></span>
+    <span class="chip">BugHound <span class="muted">finds</span></span>
     <span class="muted">→</span>
     <span class="chip mono">API /api/v1/findings</span>
     <span class="muted">→</span>
-    <span class="chip">tab “BugHound” di Burp</span>
+    <span class="chip">the “BugHound” tab in Burp</span>
     <span class="muted">→</span>
     <span class="chip">Repeater <span class="muted">(Send manual)</span></span>
   </div>
   <p class="small" style="margin-top:10px">
-    <span class="chip ok">Jalan di Burp Community</span>
-    Kamu <b>belum butuh Burp Pro</b>: Repeater dan memuat extension <code>.jar</code> sendiri
-    tersedia di Community. Pro hanya perlu untuk active scanner, Intruder penuh, atau simpan project —
-    bukan syarat alur ini.
+    <span class="chip ok">Works in Burp Community</span>
+    You <b>do not need Burp Pro</b> yet: Repeater and loading a <code>.jar</code> extension yourself
+    are available in Community. Pro is only needed for the active scanner, the full Intruder, or saving a project,
+    none of which this flow requires.
   </p>
   <p class="muted small">
-    Read-only &amp; tanpa auto-submit: extension hanya <b>membaca</b> dari BugHound (GET) lalu
-    memuat request ke Repeater. Mengirim ke target tetap aksi manualmu lewat tombol <b>Send</b>.
+    Read-only &amp; no auto-submit: the extension only <b>reads</b> from BugHound (GET), then
+    loads the request into Repeater. Sending it to the target stays your manual action through the <b>Send</b> button.
   </p>
 </div>
 
 <div class="grid-2">
   <div class="card">
     <h2>1 · API BugHound (read-only)</h2>
-    <p class="muted small">Sumber data extension. Auth <b>HTTP Basic</b> dengan akun BugHound-mu (GET, tak perlu CSRF). Tanpa kredensial → <span class="mono">401</span>.</p>
+    <p class="muted small">The extension's data source. Auth is <b>HTTP Basic</b> with your BugHound account (GET, no CSRF needed). Without credentials → <span class="mono">401</span>.</p>
     <table class="tbl">
-      <thead><tr><th>Endpoint</th><th>Keterangan</th></tr></thead>
+      <thead><tr><th>Endpoint</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td class="mono">GET /api/v1/findings?program=&lt;nama&gt;</td><td>Daftar temuan satu program. Opsi: <span class="mono">run_id</span>, <span class="mono">status</span>, <span class="mono">severity</span> (koma), <span class="mono">include_duplicates=1</span>.</td></tr>
-        <tr><td class="mono">GET /api/v1/findings/{id}</td><td>Satu temuan lengkap (termasuk <span class="mono">evidence.request</span>).</td></tr>
+        <tr><td class="mono">GET /api/v1/findings?program=&lt;name&gt;</td><td>The findings of one program. Options: <span class="mono">run_id</span>, <span class="mono">status</span>, <span class="mono">severity</span> (comma-separated), <span class="mono">include_duplicates=1</span>.</td></tr>
+        <tr><td class="mono">GET /api/v1/findings/{id}</td><td>One full finding (including <span class="mono">evidence.request</span>).</td></tr>
       </tbody>
     </table>
 
     {{if .Programs}}
     <form method="get" action="/burp" class="actions" style="margin-top:12px">
-      <label style="margin:0">Contoh untuk program</label>
+      <label style="margin:0">Example for program</label>
       <select name="program">
         {{range .Programs}}<option value="{{.}}" {{if eq . $.SampleProgram}}selected{{end}}>{{.}}</option>{{end}}
       </select>
-      <button type="submit" class="btn">Perbarui contoh</button>
+      <button type="submit" class="btn">Update the example</button>
     </form>
     {{end}}
 
-    <div class="ev-head"><span class="ev-label">Contoh (ganti PASSWORD dengan sandi akunmu)</span><button type="button" onclick="bhCopy(this)">Salin</button></div>
+    <div class="ev-head"><span class="ev-label">Example (replace PASSWORD with your account password)</span><button type="button" onclick="bhCopy(this)">Copy</button></div>
     <pre class="mono">curl -u {{.User}}:PASSWORD \
   '{{.BaseURL}}/api/v1/findings?program={{.SampleProgram}}'</pre>
-    <p class="muted small">Berguna juga untuk skrip/otomasi lain, bukan hanya extension.</p>
+    <p class="muted small">Useful for other scripts/automation too, not just the extension.</p>
   </div>
 
   <div class="card">
     <h2>2 · Extension Burp (Montoya)</h2>
-    <p class="muted small">Sumbernya ada di repo: <span class="mono">burp-ext/</span>. Build sekali, load ke Burp.</p>
+    <p class="muted small">The source is in the repo: <span class="mono">burp-ext/</span>. Build once, load it into Burp.</p>
 
-    <div class="ev-head"><span class="ev-label">Build</span><button type="button" onclick="bhCopy(this)">Salin</button></div>
+    <div class="ev-head"><span class="ev-label">Build</span><button type="button" onclick="bhCopy(this)">Copy</button></div>
     <pre class="mono">cd burp-ext
 gradle shadowJar
-# hasil: build/libs/bughound-burp.jar</pre>
+# result: build/libs/bughound-burp.jar</pre>
 
-    <p class="small"><b>Load:</b> Burp → <span class="mono">Extensions</span> → <span class="mono">Add</span> → type <b>Java</b> → pilih <span class="mono">bughound-burp.jar</span>. Muncul tab <b>BugHound</b>.</p>
-    <p class="small"><b>Pakai:</b> di tab BugHound isi URL BugHound (<span class="mono">{{.BaseURL}}</span>), user, pass, dan nama program → <b>Muat temuan</b> → pilih baris → <b>Kirim ke Repeater</b> → tekan <b>Send</b> sendiri untuk validasi.</p>
-    <p class="muted small">Prasyarat: JDK 17+ dan Gradle 8+. Detail & troubleshooting (versi <span class="mono">montoya-api</span>) ada di <span class="mono">burp-ext/README.md</span>.</p>
+    <p class="small"><b>Load:</b> Burp → <span class="mono">Extensions</span> → <span class="mono">Add</span> → type <b>Java</b> → pick <span class="mono">bughound-burp.jar</span>. A <b>BugHound</b> tab appears.</p>
+    <p class="small"><b>Use:</b> in the BugHound tab, fill in the BugHound URL (<span class="mono">{{.BaseURL}}</span>), user, pass and program name → <b>Load findings</b> → pick a row → <b>Send to Repeater</b> → press <b>Send</b> yourself to validate.</p>
+    <p class="muted small">Prerequisites: JDK 17+ and Gradle 8+. Details and troubleshooting (the <span class="mono">montoya-api</span> version) are in <span class="mono">burp-ext/README.md</span>.</p>
   </div>
 </div>
 
 <div class="card">
-  <h2>Catatan keamanan</h2>
+  <h2>Security notes</h2>
   <ul class="muted small" style="margin:0;padding-left:18px;line-height:1.7">
-    <li>API dipakai hanya <b>GET</b> — extension tak mengubah data BugHound, tak memicu scan, dan tak pernah mengirim request ke target otomatis.</li>
-    <li>Egress / scope guard / rate limiter BugHound tetap mengatur scan BugHound sendiri; extension ada di luar jalur itu (hanya handoff baca → Repeater).</li>
-    <li>Scope saat validasi: Repeater mengirim ke mana pun kamu tekan Send — pastikan target <b>in-scope</b> program bug bounty-mu. Itu tanggung jawabmu di Burp, sama seperti Repeater biasa.</li>
-    <li>Kredensial hanya di memori extension (tak dipersist). Untuk BugHound non-lokal, taruh di belakang TLS agar Basic auth tak lewat polos.</li>
+    <li>The API is <b>GET</b> only: the extension does not change BugHound data, does not trigger scans, and never sends a request to the target automatically.</li>
+    <li>BugHound's egress / scope guard / rate limiter still govern BugHound's own scans; the extension sits outside that path (a read-only handoff → Repeater).</li>
+    <li>Scope during validation: Repeater sends wherever you press Send, so make sure the target is <b>in scope</b> for your bug bounty program. That is your responsibility in Burp, like any Repeater request.</li>
+    <li>Credentials live only in the extension's memory (not persisted). For a non-local BugHound, put it behind TLS so Basic auth does not travel in the clear.</li>
   </ul>
 </div>
 {{end}}

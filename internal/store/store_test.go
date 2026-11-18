@@ -14,7 +14,7 @@ func mkFinding(program, runID, typ, target, locURL, param string, sev finding.Se
 		RunID:        runID,
 		Target:       target,
 		Type:         typ,
-		Title:        typ + " pada " + locURL,
+		Title:        typ + " at " + locURL,
 		Severity:     sev,
 		Confidence:   finding.ConfidenceMedium,
 		Status:       finding.StatusNew,
@@ -31,13 +31,13 @@ func TestSaveAssignsDerivedFields(t *testing.T) {
 		t.Fatalf("Save error: %v", err)
 	}
 	if res.ID == "" || f.ID == "" {
-		t.Fatal("ID harus terisi otomatis")
+		t.Fatal("the ID must be filled in automatically")
 	}
 	if f.DedupKey == "" || f.SchemaVersion != finding.CurrentSchemaVersion || f.CreatedAt.IsZero() {
-		t.Error("schema_version/dedup_key/created_at harus terisi oleh Save")
+		t.Error("schema_version/dedup_key/created_at must be filled in by Save")
 	}
 	if res.Deduplicated {
-		t.Error("temuan pertama tidak boleh dianggap duplikat")
+		t.Error("the first finding must not be treated as a duplicate")
 	}
 }
 
@@ -45,7 +45,7 @@ func TestDedupMarksDuplicate(t *testing.T) {
 	s := NewMem()
 	ctx := context.Background()
 
-	// run/engine/query berbeda, tapi type+host+path+param sama => duplikat.
+	// Different run/engine/query, but the same type+host+path+param => a duplicate.
 	a := mkFinding("acme", "run1", "xss", "https://acme.io", "https://acme.io/s?q=1", "q", finding.SeverityHigh)
 	b := mkFinding("acme", "run2", "xss", "https://acme.io", "https://acme.io/s?q=zzz", "q", finding.SeverityHigh)
 
@@ -53,14 +53,14 @@ func TestDedupMarksDuplicate(t *testing.T) {
 	rb, _ := s.Save(ctx, b)
 
 	if ra.Deduplicated {
-		t.Fatal("a seharusnya jadi temuan utama")
+		t.Fatal("a should become the main finding")
 	}
 	if !rb.Deduplicated || rb.PrimaryID != ra.ID {
-		t.Fatalf("b seharusnya duplikat dari a: %+v", rb)
+		t.Fatalf("b should be a duplicate of a: %+v", rb)
 	}
 	got, _ := s.Get(ctx, rb.ID)
 	if got.Status != finding.StatusDuplicate || got.DuplicateOf != ra.ID {
-		t.Errorf("b tersimpan: status=%s duplicate_of=%s", got.Status, got.DuplicateOf)
+		t.Errorf("b was stored: status=%s duplicate_of=%s", got.Status, got.DuplicateOf)
 	}
 }
 
@@ -72,7 +72,7 @@ func TestDedupIsolatedPerProgram(t *testing.T) {
 	ra, _ := s.Save(ctx, a)
 	rb, _ := s.Save(ctx, b)
 	if ra.Deduplicated || rb.Deduplicated {
-		t.Error("dedup_key sama di program berbeda tidak boleh saling menduplikasi")
+		t.Error("the same dedup_key in different programs must not duplicate each other")
 	}
 }
 
@@ -86,20 +86,20 @@ func TestListExcludesDuplicatesByDefault(t *testing.T) {
 
 	def, _ := s.List(ctx, Query{Program: "acme"})
 	if len(def) != 1 {
-		t.Fatalf("default harus sembunyikan duplikat: dapat %d", len(def))
+		t.Fatalf("the default must hide duplicates: got %d", len(def))
 	}
 	all, _ := s.List(ctx, Query{Program: "acme", IncludeDuplicates: true})
 	if len(all) != 2 {
-		t.Fatalf("IncludeDuplicates harus tampilkan semua: dapat %d", len(all))
+		t.Fatalf("IncludeDuplicates must show everything: got %d", len(all))
 	}
 	onlyDup, _ := s.List(ctx, Query{Program: "acme", Statuses: []finding.Status{finding.StatusDuplicate}})
 	if len(onlyDup) != 1 {
-		t.Fatalf("filter status=duplicate harus kembalikan duplikat: dapat %d", len(onlyDup))
+		t.Fatalf("the status=duplicate filter must return the duplicates: got %d", len(onlyDup))
 	}
 }
 
-// Isu site-wide (CSP absen) yang dilaporkan ZAP di banyak URL harus terkolaps
-// jadi satu temuan utama — path diabaikan oleh dedup_key.
+// A site-wide issue (missing CSP) that ZAP reports on many URLs must collapse
+// into one main finding: dedup_key ignores the path.
 func TestDedupSiteWideCollapsesAcrossPaths(t *testing.T) {
 	s := NewMem()
 	ctx := context.Background()
@@ -116,16 +116,16 @@ func TestDedupSiteWideCollapsesAcrossPaths(t *testing.T) {
 		}
 	}
 	if dupes != len(paths)-1 {
-		t.Fatalf("CSP di %d URL harus kolaps jadi 1 (sisanya duplikat); duplikat=%d", len(paths), dupes)
+		t.Fatalf("CSP on %d URLs must collapse into 1 (the rest are duplicates); duplicates=%d", len(paths), dupes)
 	}
 	def, _ := s.List(ctx, Query{Program: "acme"})
 	if len(def) != 1 {
-		t.Fatalf("hitungan default harus 1 isu CSP, bukan %d", len(def))
+		t.Fatalf("the default count must be 1 CSP issue, not %d", len(def))
 	}
-	// Semua instance tetap tersimpan untuk audit.
+	// Every instance is still stored for audit.
 	all, _ := s.List(ctx, Query{Program: "acme", IncludeDuplicates: true})
 	if len(all) != len(paths) {
-		t.Fatalf("semua instance harus tetap tersimpan (audit): dapat %d", len(all))
+		t.Fatalf("every instance must still be stored (audit): got %d", len(all))
 	}
 }
 
@@ -134,7 +134,7 @@ func TestListFiltersAndSort(t *testing.T) {
 	ctx := context.Background()
 	mk := func(runID, typ, path string, sev finding.Severity, at time.Time) {
 		f := mkFinding("acme", runID, typ, "https://acme.io", "https://acme.io"+path, "p", sev)
-		f.CreatedAt = finding.NewTime(at) // pra-set agar urutan deterministik
+		f.CreatedAt = finding.NewTime(at) // preset so the order is deterministic
 		if _, err := s.Save(ctx, f); err != nil {
 			t.Fatal(err)
 		}
@@ -144,22 +144,22 @@ func TestListFiltersAndSort(t *testing.T) {
 	mk("run1", "xss", "/b", finding.SeverityLow, base.Add(time.Hour))
 	mk("run2", "xss", "/c", finding.SeverityHigh, base.Add(2*time.Hour))
 
-	// Urutan: severity terberat dulu.
+	// Order: the most severe first.
 	all, _ := s.List(ctx, Query{Program: "acme"})
 	if len(all) != 3 || all[0].Severity != finding.SeverityCritical || all[2].Severity != finding.SeverityLow {
-		t.Fatalf("urutan severity salah: %v", sevs(all))
+		t.Fatalf("wrong severity order: %v", sevs(all))
 	}
 	// Filter run.
 	if r, _ := s.List(ctx, Query{Program: "acme", RunID: "run2"}); len(r) != 1 || r[0].Type != "xss" {
-		t.Errorf("filter run_id salah: %d", len(r))
+		t.Errorf("wrong run_id filter: %d", len(r))
 	}
 	// Filter severity.
 	if r, _ := s.List(ctx, Query{Program: "acme", Severities: []finding.Severity{finding.SeverityHigh, finding.SeverityCritical}}); len(r) != 2 {
-		t.Errorf("filter severity salah: %d", len(r))
+		t.Errorf("wrong severity filter: %d", len(r))
 	}
 	// Filter type.
 	if r, _ := s.List(ctx, Query{Program: "acme", Types: []string{"ssrf"}}); len(r) != 1 {
-		t.Errorf("filter type salah: %d", len(r))
+		t.Errorf("wrong type filter: %d", len(r))
 	}
 }
 
@@ -182,10 +182,10 @@ func TestSetStatus(t *testing.T) {
 	}
 	got, _ := s.Get(ctx, res.ID)
 	if got.Status != finding.StatusConfirmed || got.VerifiedBy != "gh05t" || got.UpdatedAt == nil {
-		t.Errorf("status/verified_by/updated_at tidak terset: %+v", got)
+		t.Errorf("status/verified_by/updated_at were not set: %+v", got)
 	}
-	if err := s.SetStatus(ctx, "tidak-ada", finding.StatusConfirmed, ""); err != ErrNotFound {
-		t.Errorf("id tak ada harus ErrNotFound, dapat %v", err)
+	if err := s.SetStatus(ctx, "missing", finding.StatusConfirmed, ""); err != ErrNotFound {
+		t.Errorf("a missing id must be ErrNotFound, got %v", err)
 	}
 }
 
@@ -194,26 +194,26 @@ func TestUpdateContent(t *testing.T) {
 	ctx := context.Background()
 	res, _ := s.Save(ctx, mkFinding("acme", "r", "ssrf", "https://acme.io", "https://acme.io/x", "p", finding.SeverityHigh))
 
-	repro := []string{"Kirim GET /x", "Amati respons internal"}
-	if err := s.UpdateContent(ctx, res.ID, "deskripsi baru", "dampak: SSRF ke metadata internal", repro); err != nil {
+	repro := []string{"Send GET /x", "Observe the internal response"}
+	if err := s.UpdateContent(ctx, res.ID, "new description", "impact: SSRF to internal metadata", repro); err != nil {
 		t.Fatalf("UpdateContent error: %v", err)
 	}
 	got, _ := s.Get(ctx, res.ID)
-	if got.Description != "deskripsi baru" || got.Impact != "dampak: SSRF ke metadata internal" {
-		t.Errorf("deskripsi/dampak tak terset: %+v", got)
+	if got.Description != "new description" || got.Impact != "impact: SSRF to internal metadata" {
+		t.Errorf("the description/impact were not set: %+v", got)
 	}
-	if len(got.Reproduction) != 2 || got.Reproduction[0] != "Kirim GET /x" {
-		t.Errorf("reproduction tak terset: %v", got.Reproduction)
+	if len(got.Reproduction) != 2 || got.Reproduction[0] != "Send GET /x" {
+		t.Errorf("the reproduction was not set: %v", got.Reproduction)
 	}
 	if got.UpdatedAt == nil {
-		t.Error("updated_at harus terset")
+		t.Error("updated_at must be set")
 	}
-	// Tak menyentuh status/severity (triase & dedup jalur terpisah).
+	// It does not touch status/severity (triage and dedup are separate paths).
 	if got.Status != finding.StatusNew || got.Severity != finding.SeverityHigh {
-		t.Errorf("UpdateContent tak boleh mengubah status/severity: %+v", got)
+		t.Errorf("UpdateContent must not change status/severity: %+v", got)
 	}
-	if err := s.UpdateContent(ctx, "tidak-ada", "d", "i", nil); err != ErrNotFound {
-		t.Errorf("id tak ada harus ErrNotFound, dapat %v", err)
+	if err := s.UpdateContent(ctx, "missing", "d", "i", nil); err != ErrNotFound {
+		t.Errorf("a missing id must be ErrNotFound, got %v", err)
 	}
 }
 
@@ -224,20 +224,20 @@ func TestGetClonesNoAliasing(t *testing.T) {
 	res, _ := s.Save(ctx, f)
 
 	got, _ := s.Get(ctx, res.ID)
-	got.Title = "DIUBAH"
+	got.Title = "CHANGED"
 	got.Severity = finding.SeverityInfo
 
 	again, _ := s.Get(ctx, res.ID)
-	if again.Title == "DIUBAH" || again.Severity == finding.SeverityInfo {
-		t.Error("Get harus mengembalikan salinan; mutasi pemanggil tidak boleh bocor ke store")
+	if again.Title == "CHANGED" || again.Severity == finding.SeverityInfo {
+		t.Error("Get must return a copy; a caller's mutation must not leak into the store")
 	}
 }
 
 func TestSaveRejectsInvalid(t *testing.T) {
 	s := NewMem()
-	f := mkFinding("acme", "r", "ssrf", "https://acme.io", "https://acme.io/x", "p", "mega") // severity ilegal
+	f := mkFinding("acme", "r", "ssrf", "https://acme.io", "https://acme.io/x", "p", "mega") // invalid severity
 	if _, err := s.Save(context.Background(), f); err == nil {
-		t.Fatal("severity tidak sah harus ditolak Save")
+		t.Fatal("an invalid severity must be rejected by Save")
 	}
 }
 
@@ -245,7 +245,7 @@ func TestMemProgramCRUD(t *testing.T) {
 	s := NewMem()
 	ctx := context.Background()
 	if _, err := s.GetProgram(ctx, "demo"); err != ErrNotFound {
-		t.Fatalf("program tak ada harus ErrNotFound, dapat %v", err)
+		t.Fatalf("a missing program must be ErrNotFound, got %v", err)
 	}
 	if err := s.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"demo.test"}, OutScope: []string{"admin.demo.test"}}); err != nil {
 		t.Fatal(err)
@@ -255,31 +255,31 @@ func TestMemProgramCRUD(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got.InScope) != 1 || got.InScope[0] != "demo.test" || len(got.OutScope) != 1 || got.UpdatedAt.IsZero() {
-		t.Errorf("program tersimpan tak sesuai: %+v", got)
+		t.Errorf("the stored program does not match: %+v", got)
 	}
 	s.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"a", "b"}}) // update
 	if g2, _ := s.GetProgram(ctx, "demo"); len(g2.InScope) != 2 {
-		t.Error("update scope gagal")
+		t.Error("scope update failed")
 	}
 	s.SaveProgram(ctx, Program{Name: "alpha"})
 	if ps, _ := s.ListPrograms(ctx); len(ps) != 2 || ps[0].Name != "alpha" {
-		t.Errorf("ListPrograms harus 2 & terurut: %+v", ps)
+		t.Errorf("ListPrograms must be 2 and sorted: %+v", ps)
 	}
 	if err := s.SaveProgram(ctx, Program{Name: "  "}); err == nil {
-		t.Error("nama kosong harus ditolak")
+		t.Error("an empty name must be rejected")
 	}
-	// Delete: hapus "demo", sisakan "alpha"; hapus yang tak ada → ErrNotFound.
+	// Delete: delete "demo", keep "alpha"; deleting one that does not exist → ErrNotFound.
 	if err := s.DeleteProgram(ctx, "demo"); err != nil {
 		t.Fatalf("DeleteProgram: %v", err)
 	}
 	if _, err := s.GetProgram(ctx, "demo"); err != ErrNotFound {
-		t.Errorf("program terhapus harus ErrNotFound, dapat %v", err)
+		t.Errorf("a deleted program must be ErrNotFound, got %v", err)
 	}
 	if ps, _ := s.ListPrograms(ctx); len(ps) != 1 || ps[0].Name != "alpha" {
-		t.Errorf("setelah hapus harus sisa [alpha]: %+v", ps)
+		t.Errorf("after the delete [alpha] must remain: %+v", ps)
 	}
 	if err := s.DeleteProgram(ctx, "demo"); err != ErrNotFound {
-		t.Errorf("hapus program tak ada harus ErrNotFound, dapat %v", err)
+		t.Errorf("deleting a missing program must be ErrNotFound, got %v", err)
 	}
 }
 
@@ -291,7 +291,7 @@ func TestMemPrograms(t *testing.T) {
 	s.Save(ctx, mkFinding("alpha", "r", "y", "https://a.io", "https://a.io/b", "p", finding.SeverityLow))
 	ps, _ := s.Programs(ctx)
 	if len(ps) != 2 || ps[0] != "alpha" || ps[1] != "beta" {
-		t.Errorf("programs harus unik & terurut: %v", ps)
+		t.Errorf("programs must be unique and sorted: %v", ps)
 	}
 }
 
@@ -301,28 +301,28 @@ func TestMemDeleteFindingsByProgram(t *testing.T) {
 	s.Save(ctx, mkFinding("A", "r1", "ssrf", "https://a.io", "https://a.io/x", "p", finding.SeverityHigh))
 	s.Save(ctx, mkFinding("A", "r1", "xss", "https://a.io", "https://a.io/y", "q", finding.SeverityLow))
 	s.Save(ctx, mkFinding("B", "r1", "ssrf", "https://b.io", "https://b.io/x", "p", finding.SeverityHigh))
-	s.SaveProgram(ctx, Program{Name: "A", InScope: []string{"a.io"}}) // definisi scope harus bertahan
+	s.SaveProgram(ctx, Program{Name: "A", InScope: []string{"a.io"}}) // the scope definition must survive
 
 	n, err := s.DeleteFindingsByProgram(ctx, "A")
 	if err != nil || n != 2 {
-		t.Fatalf("DeleteFindingsByProgram(A) = %d,%v; ingin 2,nil", n, err)
+		t.Fatalf("DeleteFindingsByProgram(A) = %d,%v; want 2,nil", n, err)
 	}
 	if fs, _ := s.List(ctx, Query{Program: "A"}); len(fs) != 0 {
-		t.Errorf("temuan A harus habis, sisa %d", len(fs))
+		t.Errorf("findings of A must be gone, %d left", len(fs))
 	}
 	if fs, _ := s.List(ctx, Query{Program: "B"}); len(fs) != 1 {
-		t.Errorf("temuan B (program lain) harus tetap, dapat %d", len(fs))
+		t.Errorf("findings of B (another program) must stay, got %d", len(fs))
 	}
 	if _, err := s.GetProgram(ctx, "A"); err != nil {
-		t.Errorf("definisi scope A harus tetap (hanya temuan dihapus): %v", err)
+		t.Errorf("the scope definition of A must stay (only findings are deleted): %v", err)
 	}
-	// State dedup ter-reset: dedup_key yang sama kini jadi primary lagi.
+	// The dedup state is reset: the same dedup_key now becomes a primary again.
 	res, _ := s.Save(ctx, mkFinding("A", "r2", "ssrf", "https://a.io", "https://a.io/x", "p", finding.SeverityHigh))
 	if res.Deduplicated {
-		t.Error("setelah hapus, dedup_key lama harus jadi primary lagi")
+		t.Error("after the delete, the old dedup_key must become a primary again")
 	}
-	// Program tanpa temuan → 0, nil (bukan error).
-	if n, err := s.DeleteFindingsByProgram(ctx, "kosong"); n != 0 || err != nil {
-		t.Errorf("hapus program tanpa temuan = %d,%v; ingin 0,nil", n, err)
+	// A program without findings → 0, nil (not an error).
+	if n, err := s.DeleteFindingsByProgram(ctx, "empty"); n != 0 || err != nil {
+		t.Errorf("deleting a program without findings = %d,%v; want 0,nil", n, err)
 	}
 }

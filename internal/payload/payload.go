@@ -1,18 +1,19 @@
-// Package payload mengimplementasikan Bank Payload & Template (BH-SPEC-PAYLOAD):
-// satu lapisan KATALOG netral di atas template native tiap engine. Isi payload
-// tidak pernah diterjemahkan — template nuclei tetap YAML nuclei — bughound
-// hanya menambahkan metadata seragam yang mengatalogkan tiap template sehingga
-// bank bisa difilter, diperbarui, ditambah, dan dilacak balik.
+// Package payload implements the Payload & Template Bank (BH-SPEC-PAYLOAD): one
+// neutral CATALOG layer on top of each engine's native templates. Payload
+// content is never translated (a nuclei template stays nuclei YAML); bughound
+// only adds uniform metadata that catalogs each template so the bank can be
+// filtered, updated, extended and traced back.
 //
-// Model: "hibrida condong tipis" (BH-SPEC-PAYLOAD §Model yang dipilih). Paket ini
-// MEMBACA sumber (direktori template) dan membangun katalog; ia tidak menjalankan
-// apa pun dan tidak membuka koneksi jaringan. Eksekusi tetap milik engine adapter,
-// dan setiap koneksi keluar tetap melewati scope guard (BH-SPEC-SCOPE) — template
-// tak bisa memintas scope.
+// Model: "hybrid, leaning thin" (BH-SPEC-PAYLOAD §Chosen model). This package
+// READS sources (template directories) and builds the catalog; it runs nothing
+// and opens no network connections. Execution stays with the engine adapters,
+// and every outbound connection still passes the scope guard (BH-SPEC-SCOPE),
+// so a template cannot bypass scope.
 //
-// Ketertelusuran: template_id di katalog berbentuk "<engine>:<native-id>" dan
-// itulah nilai yang terbawa ke field source_template pada temuan
-// (BH-SPEC-FINDING), sehingga tiap temuan bisa dilacak balik ke payload asalnya.
+// Traceability: a template_id in the catalog has the form
+// "<engine>:<native-id>", and that value is carried into the source_template
+// field of a finding (BH-SPEC-FINDING), so every finding can be traced back to
+// the payload it came from.
 package payload
 
 import (
@@ -22,10 +23,10 @@ import (
 	"bughound/internal/finding"
 )
 
-// Trust adalah tingkat kepercayaan sumber template (BH-SPEC-PAYLOAD §Keamanan).
-// Hanya sumber `trusted` yang templatenya boleh aktif (enabled) secara otomatis;
-// `review`/`untrusted` masuk katalog dalam keadaan nonaktif sampai ditinjau dan
-// dinaikkan trust-nya secara sadar.
+// Trust is the trust level of a template source (BH-SPEC-PAYLOAD §Security).
+// Only templates from a `trusted` source may be enabled automatically;
+// `review`/`untrusted` templates enter the catalog disabled until they are
+// reviewed and their trust is raised deliberately.
 type Trust string
 
 const (
@@ -34,7 +35,7 @@ const (
 	TrustUntrusted Trust = "untrusted"
 )
 
-// Valid melaporkan apakah t salah satu tingkat trust yang sah.
+// Valid reports whether t is one of the valid trust levels.
 func (t Trust) Valid() bool {
 	switch t {
 	case TrustTrusted, TrustReview, TrustUntrusted:
@@ -43,30 +44,32 @@ func (t Trust) Valid() bool {
 	return false
 }
 
-// Safety mengklasifikasi dampak payload terhadap target (BH-SPEC-PAYLOAD
-// §Keamanan, aditif). Dipakai untuk memfilter payload yang berpotensi MENGUBAH
-// state/konfigurasi target: alur bug bounty bughound mencari kandidat bug untuk
-// diverifikasi manual, bukan mengeksekusi sampai merusak.
+// Safety classifies a payload's impact on the target (BH-SPEC-PAYLOAD
+// §Security, additive). It is used to filter payloads that could CHANGE the
+// target's state or configuration: bughound's bug bounty flow looks for
+// candidate bugs to verify manually and does not execute to the point of
+// damage.
 type Safety string
 
 const (
-	// SafetyReadOnly: payload deteksi yang tak mengubah state (probe boolean/
-	// time/error, cek refleksi). Default untuk template nuclei pada umumnya.
+	// SafetyReadOnly: a detection payload that does not change state (boolean/
+	// time/error probes, reflection checks). The default for most nuclei templates.
 	SafetyReadOnly Safety = "read-only"
-	// SafetyMutating: berpotensi mengubah/merusak (mis. DoS, tag intrusive/
-	// destructive). Tidak dijalankan engine DAST secara default.
+	// SafetyMutating: could change or damage things (e.g. DoS, intrusive/
+	// destructive tags). DAST engines do not run it by default.
 	SafetyMutating Safety = "mutating"
 )
 
-// Valid melaporkan apakah s salah satu nilai safety yang sah.
+// Valid reports whether s is one of the valid safety values.
 func (s Safety) Valid() bool { return s == SafetyReadOnly || s == SafetyMutating }
 
-// mutatingTags adalah penanda tag yang menandakan payload mengubah/merusak.
-// Konservatif dan bisa diperluas; selaras dengan destructiveExcludeTags engine.
+// mutatingTags are the tags that mark a payload as changing or damaging.
+// Conservative and extensible; in line with the engines' destructiveExcludeTags.
 var mutatingTags = map[string]bool{"dos": true, "intrusive": true, "destructive": true}
 
-// classifySafety menurunkan Safety dari tag template: mutating bila ada penanda
-// berbahaya, selain itu read-only (template nuclei mayoritas deteksi/read-only).
+// classifySafety derives Safety from a template's tags: mutating when a
+// dangerous marker is present, otherwise read-only (most nuclei templates are
+// detection/read-only).
 func classifySafety(tags []string) Safety {
 	for _, t := range tags {
 		if mutatingTags[strings.ToLower(strings.TrimSpace(t))] {
@@ -76,65 +79,65 @@ func classifySafety(tags []string) Safety {
 	return SafetyReadOnly
 }
 
-// Entry adalah satu baris katalog: metadata seragam untuk satu template/payload,
-// apa pun engine asalnya (BH-SPEC-PAYLOAD §Metadata katalog). Body native template
-// TIDAK disalin ke sini — hanya ditunjuk lewat NativeRef.
+// Entry is one catalog row: uniform metadata for one template/payload, whatever
+// engine it comes from (BH-SPEC-PAYLOAD §Catalog metadata). The native template
+// body is NOT copied here; NativeRef only points at it.
 type Entry struct {
-	// TemplateID: id stabil unik di seluruh bank, "<engine>:<native-id>"
-	// (mis. "nuclei:prometheus-metrics"). Terbawa ke source_template temuan.
+	// TemplateID: a stable id, unique across the bank, "<engine>:<native-id>"
+	// (e.g. "nuclei:prometheus-metrics"). Carried into a finding's source_template.
 	TemplateID string `json:"template_id"`
-	// Source: id sumber asal (mis. "nuclei-official", "custom").
+	// Source: the id of the originating source (e.g. "nuclei-official", "custom").
 	Source string `json:"source"`
-	// Engine: engine yang menjalankan (mis. "nuclei", "custom").
+	// Engine: the engine that runs it (e.g. "nuclei", "custom").
 	Engine string `json:"engine"`
-	// NativeRef: lokasi template dalam format native-nya di sumber (path relatif).
+	// NativeRef: where the template lives in its native format in the source (relative path).
 	NativeRef string `json:"native_ref"`
-	// Name: nama ringkas yang terbaca manusia.
+	// Name: a short human-readable name.
 	Name string `json:"name"`
-	// Type: jenis kerentanan, selaras taksonomi `type` di skema temuan.
+	// Type: the vulnerability type, in line with the `type` taxonomy of the finding schema.
 	Type string `json:"type,omitempty"`
-	// SeverityDefault: severity bawaan (enum skema temuan).
+	// SeverityDefault: the default severity (finding schema enum).
 	SeverityDefault finding.Severity `json:"severity_default,omitempty"`
-	// Tags: label untuk seleksi (mis. "ssrf", "cve", "fast").
+	// Tags: labels for selection (e.g. "ssrf", "cve", "fast").
 	Tags []string `json:"tags,omitempty"`
-	// Safety: klasifikasi dampak payload (read-only | mutating). Diturunkan dari
-	// tag, dapat ditimpa sidecar. Engine DAST hanya kirim yang read-only default.
+	// Safety: the payload impact class (read-only | mutating). Derived from the
+	// tags; a sidecar can override it. DAST engines only send read-only by default.
 	Safety Safety `json:"safety,omitempty"`
-	// References: tautan referensi.
+	// References: reference links.
 	References []string `json:"references,omitempty"`
-	// Trust: diwarisi dari sumber; menentukan perlakuan keamanan.
+	// Trust: inherited from the source; it decides the security treatment.
 	Trust Trust `json:"trust"`
-	// Version: versi isi template (hash isi), agar perubahan terdeteksi.
+	// Version: the version of the template content (content hash), so changes are detected.
 	Version string `json:"version"`
-	// Enabled: apakah ikut dijalankan secara default. Hanya true bila sumber
-	// `trusted` DAN metadata minimum lengkap (lihat canEnable).
+	// Enabled: whether it runs by default. True only when the source is
+	// `trusted` AND the minimum metadata is complete (see canEnable).
 	Enabled bool `json:"enabled"`
-	// AddedAt: waktu masuk katalog (diisi saat build).
+	// AddedAt: when it entered the catalog (set at build time).
 	AddedAt time.Time `json:"added_at,omitempty"`
-	// Note: catatan bila metadata tak lengkap / template perlu dilengkapi.
-	// Template tetap masuk katalog tapi tidak diam-diam dipakai dengan metadata
-	// kosong (BH-SPEC-PAYLOAD §Format satu template).
+	// Note: a note for when the metadata is incomplete or the template needs
+	// completing. The template still enters the catalog but is not used silently
+	// with empty metadata (BH-SPEC-PAYLOAD §Format of one template).
 	Note string `json:"note,omitempty"`
 }
 
-// hasMinMeta melaporkan apakah metadata minimum untuk boleh `enabled` terpenuhi:
-// nama ada, severity sah, dan type ada (BH-SPEC-PAYLOAD §Pertanyaan terbuka:
-// metadata minimum). Tanpa ini, template tetap dikatalogkan tapi nonaktif.
+// hasMinMeta reports whether the minimum metadata needed to be `enabled` is
+// there: a name, a valid severity and a type (BH-SPEC-PAYLOAD §Open questions:
+// minimum metadata). Without it the template is still cataloged but disabled.
 func (e Entry) hasMinMeta() bool {
 	return strings.TrimSpace(e.Name) != "" &&
 		e.SeverityDefault.Valid() &&
 		strings.TrimSpace(e.Type) != ""
 }
 
-// canEnable menerapkan aturan keamanan: hanya sumber `trusted` dengan metadata
-// minimum lengkap yang boleh aktif otomatis.
+// canEnable applies the security rule: only a `trusted` source with complete
+// minimum metadata may be enabled automatically.
 func (e Entry) canEnable() bool {
 	return e.Trust == TrustTrusted && e.hasMinMeta()
 }
 
-// SourceInfo meringkas satu sumber setelah di-scan (untuk panel sumber di UI dan
-// ketertelusuran). Version adalah versi sumber bila diketahui (mis. versi
-// nuclei-templates), bukan versi tiap template.
+// SourceInfo summarizes one source after it is scanned (for the sources panel
+// in the UI and for traceability). Version is the source's version when known
+// (e.g. the nuclei-templates version), not the version of each template.
 type SourceInfo struct {
 	ID        string    `json:"id"`
 	Engine    string    `json:"engine"`
@@ -149,16 +152,16 @@ type SourceInfo struct {
 	Note      string    `json:"note,omitempty"`
 }
 
-// Catalog adalah snapshot bank: semua entri + ringkasan sumber + waktu build.
+// Catalog is a snapshot of the bank: every entry + the source summaries + the build time.
 type Catalog struct {
 	Entries []Entry      `json:"entries"`
 	Sources []SourceInfo `json:"sources"`
 	BuiltAt time.Time    `json:"built_at"`
 }
 
-// normSeverity memetakan severity native (string) ke enum skema temuan. Nilai
-// tak dikenal/kosong → info (aman), dan known=false agar pemanggil tahu metadata
-// severity tak eksplisit.
+// normSeverity maps a native severity (string) to the finding schema enum. An
+// unknown or empty value → info (safe), with known=false so the caller knows
+// the severity metadata was not explicit.
 func normSeverity(s string) (sev finding.Severity, known bool) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "critical":

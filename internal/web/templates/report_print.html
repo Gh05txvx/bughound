@@ -22,23 +22,23 @@
 </head>
 <body>
   <div class="noprint" style="text-align:right;margin-bottom:12px;">
-    <button onclick="window.print()">Cetak / Simpan sebagai PDF</button>
+    <button onclick="window.print()">Print / Save as PDF</button>
   </div>
   <h1>{{.Title}}</h1>
-  <p class="meta">Dihasilkan {{.GeneratedAt.Format "2006-01-02 15:04 MST"}} · {{len .Items}} temuan terkonfirmasi · <span class="draft">DRAFT — verifikasi manual sebelum submit</span></p>
+  <p class="meta">Generated {{.GeneratedAt.Format "2006-01-02 15:04 MST"}} · {{len .Items}} confirmed findings · <span class="draft">DRAFT — verify manually before submitting</span></p>
 
   {{if .Items}}
-  <h2>Ringkasan</h2>
+  <h2>Summary</h2>
   <ul>{{range .BySeverity}}<li>{{.Severity}}: {{.Count}}</li>{{end}}</ul>
 
-  <h2>Temuan</h2>
+  <h2>Findings</h2>
   {{range $i, $f := .Items}}
   <div class="item">
     <h3>{{add $i 1}}. {{$f.Title}} <span class="sev">{{$f.Severity}}</span></h3>
     <dl>
       <dt>Type</dt><dd>{{$f.Type}}</dd>
       <dt>Target</dt><dd>{{$f.Target}}</dd>
-      <dt>Lokasi</dt><dd>{{$f.Location.URL}}{{if $f.Location.Parameter}} (param: {{$f.Location.Parameter}}){{end}}</dd>
+      <dt>Location</dt><dd>{{$f.Location.URL}}{{if $f.Location.Parameter}} (param: {{$f.Location.Parameter}}){{end}}</dd>
       {{if $f.CVSS}}<dt>CVSS</dt><dd>{{$f.CVSS.Score}} {{$f.CVSS.Vector}}</dd>{{end}}
       {{if $f.CWE}}<dt>CWE</dt><dd>{{join $f.CWE ", "}}</dd>{{end}}
     </dl>
@@ -50,7 +50,7 @@
   </div>
   {{end}}
   {{else}}
-  <p>Belum ada temuan terkonfirmasi.</p>
+  <p>No confirmed findings yet.</p>
   {{end}}
 </body>
 </html>{{end}}

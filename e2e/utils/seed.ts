@@ -2,13 +2,13 @@ import { type Page, expect } from '@playwright/test';
 import { ScanPage } from '../pages/scan.page';
 import { FindingsPage } from '../pages/findings.page';
 
-// Target dummy milik sendiri — tidak pernah aset pihak ketiga (persona BH-P05).
+// Our own dummy targets, never third-party assets (persona BH-P05).
 export const DUMMY_IN_SCOPE = 'demo.test\n*.demo.test';
 export const DUMMY_OUT_SCOPE = 'admin.demo.test';
 
 /**
- * Jalankan satu scan engine-MOCK untuk `program` memakai target dummy, lalu
- * kembali setelah run selesai. Deterministik dan tanpa jaringan.
+ * Run a single MOCK-engine scan for `program` using dummy targets, then
+ * return once the run finishes. Deterministic and with no network.
  */
 export async function runMockScan(page: Page, program: string, targets: string[] = ['demo.test']) {
   const scan = new ScanPage(page);
@@ -24,11 +24,11 @@ export async function runMockScan(page: Page, program: string, targets: string[]
   await scan.waitForDone();
 }
 
-/** Konfirmasi semua temuan program (via aksi massal), siap masuk draft report. */
+/** Confirm all of a program's findings (via bulk action), ready for the draft report. */
 export async function confirmAllFindings(page: Page, program: string) {
   const findings = new FindingsPage(page);
   await findings.goto(program);
   await findings.selectAllVisible();
-  await findings.bulk('Konfirmasi');
+  await findings.bulk('Confirm');
   await expect(page.locator('.pill.st-confirmed').first()).toBeVisible();
 }

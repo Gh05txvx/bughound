@@ -1,7 +1,7 @@
-// Command bughound menjalankan aplikasi web bughound (M0).
+// Command bughound runs the bughound web application.
 //
-// Default bind ke localhost saja: ini tool offensive, jangan diekspos tanpa
-// sadar. Engine di M0 adalah mock (tanpa koneksi jaringan).
+// It binds to localhost by default: this is an offensive tool, so do not expose
+// it by accident. The default engine set is a mock (no network connections).
 package main
 
 import (
@@ -33,40 +33,40 @@ import (
 	"bughound/internal/web"
 )
 
-// version di-inject saat build lewat -ldflags "-X main.version=...".
-// Default "dev" untuk build lokal (go build/go run).
+// version is injected at build time with -ldflags "-X main.version=...".
+// It defaults to "dev" for local builds (go build/go run).
 var version = "dev"
 
 func main() {
-	// Subperintah CLI: `bughound templates update|list` mengelola Bank Payload
-	// (BH-SPEC-PAYLOAD) tanpa menjalankan server.
+	// CLI subcommand: `bughound templates update|list` manages the Payload Bank
+	// (BH-SPEC-PAYLOAD) without starting the server.
 	if len(os.Args) > 1 && os.Args[1] == "templates" {
 		runTemplates(os.Args[2:])
 		return
 	}
-	// `bughound eval` menilai keluaran scan terhadap baseline ground-truth
-	// (recall kelas DAST-detectable). Murni offline, tak menjalankan server.
+	// `bughound eval` scores scan output against a ground-truth baseline (recall
+	// over the DAST-detectable classes). It works offline and starts no server.
 	if len(os.Args) > 1 && os.Args[1] == "eval" {
 		runEval(os.Args[2:])
 		return
 	}
 
-	addr := flag.String("addr", "127.0.0.1:8787", "alamat bind (default localhost saja)")
-	showVersion := flag.Bool("version", false, "cetak versi lalu keluar")
-	dbPath := flag.String("db", "bughound.db", "path file SQLite (kosongkan untuk in-memory/ephemeral)")
-	engineMode := flag.String("engine", "mock", "set engine: mock (nuclei+ffuf mock, tanpa jaringan) | real (nuclei + subfinder/httpx/katana nyata lewat proxy egress)")
-	keyPath := flag.String("key", "bughound.key", "path file kunci master untuk enkripsi secret (atau set env BUGHOUND_MASTER_KEY)")
-	adminUser := flag.String("admin-user", "", "username admin awal saat bootstrap (atau env BUGHOUND_ADMIN_USER; default \"admin\")")
-	adminPass := flag.String("admin-password", "", "kata sandi admin awal (atau env BUGHOUND_ADMIN_PASSWORD); kosong = dibuat acak & dicetak ke konsol sekali")
-	noAuth := flag.Bool("no-auth", false, "NONAKTIFKAN login & RBAC (akses terbuka) — hanya untuk localhost tepercaya / test")
-	rotateKey := flag.Bool("rotate-key", false, "rotasi kunci master: re-enkripsi semua secret ke kunci baru lalu keluar")
-	sastRoot := flag.String("sast-root", "", "root kode untuk SAST (kosong = nonaktif); analisis statis dikurung ke dir ini")
-	ffufWordlist := flag.String("ffuf-wordlist", "", "path wordlist untuk engine ffuf nyata (kosong = wordlist bawaan)")
-	zapMode := flag.String("zap-mode", "quick", "mode engine ZAP nyata: quick|baseline (spider + passive, TANPA serangan) | full (+ active scan)")
-	grpcMode := flag.String("grpc", "mock", "engine enumerasi gRPC: mock | real (grpcurl, butuh binary)")
-	grpcPlaintext := flag.Bool("grpc-plaintext", false, "gRPC tanpa TLS (-plaintext) untuk engine gRPC nyata")
-	nucleiTemplates := flag.String("nuclei-templates", "", "dir nuclei-templates untuk Bank Payload (kosong = auto: env NUCLEI_TEMPLATES_DIR / $HOME/nuclei-templates)")
-	customTemplates := flag.String("custom-templates", "", "dir template custom untuk Bank Payload (opsional; atau env BUGHOUND_CUSTOM_TEMPLATES)")
+	addr := flag.String("addr", "127.0.0.1:8787", "bind address (localhost only by default)")
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	dbPath := flag.String("db", "bughound.db", "path to the SQLite file (empty = in-memory, ephemeral)")
+	engineMode := flag.String("engine", "mock", "engine set: mock (mock nuclei+ffuf, no network) | real (real nuclei + subfinder/httpx/katana through the egress proxy)")
+	keyPath := flag.String("key", "bughound.key", "path to the master key file used to encrypt secrets (or set env BUGHOUND_MASTER_KEY)")
+	adminUser := flag.String("admin-user", "", "initial admin username at bootstrap (or env BUGHOUND_ADMIN_USER; default \"admin\")")
+	adminPass := flag.String("admin-password", "", "initial admin password (or env BUGHOUND_ADMIN_PASSWORD); empty = generated at random and printed to the console once")
+	noAuth := flag.Bool("no-auth", false, "DISABLE login and RBAC (open access); only for a trusted localhost or tests")
+	rotateKey := flag.Bool("rotate-key", false, "rotate the master key: re-encrypt every secret with a new key, then exit")
+	sastRoot := flag.String("sast-root", "", "code root for SAST (empty = off); static analysis is confined to this dir")
+	ffufWordlist := flag.String("ffuf-wordlist", "", "wordlist path for the real ffuf engine (empty = built-in wordlist)")
+	zapMode := flag.String("zap-mode", "quick", "real ZAP engine mode: quick|baseline (spider + passive, NO attacks) | full (+ active scan)")
+	grpcMode := flag.String("grpc", "mock", "gRPC enumeration engine: mock | real (grpcurl, needs the binary)")
+	grpcPlaintext := flag.Bool("grpc-plaintext", false, "gRPC without TLS (-plaintext) for the real gRPC engine")
+	nucleiTemplates := flag.String("nuclei-templates", "", "nuclei-templates dir for the Payload Bank (empty = auto: env NUCLEI_TEMPLATES_DIR / $HOME/nuclei-templates)")
+	customTemplates := flag.String("custom-templates", "", "custom template dir for the Payload Bank (optional; or env BUGHOUND_CUSTOM_TEMPLATES)")
 	flag.Parse()
 
 	if *showVersion {
@@ -75,7 +75,7 @@ func main() {
 	}
 
 	if *noAuth && !isLocalhost(*addr) {
-		log.Printf("PERINGATAN: -no-auth + bind non-localhost (%s) — UI TERBUKA tanpa kredensial. Jangan ekspos ke jaringan.", *addr)
+		log.Printf("WARNING: -no-auth with a non-localhost bind (%s): the UI is OPEN without credentials. Do not expose it to a network.", *addr)
 	}
 
 	var st store.Store
@@ -85,25 +85,25 @@ func main() {
 	} else {
 		sq, err := store.OpenSQLite(*dbPath)
 		if err != nil {
-			log.Fatalf("bughound: gagal buka database %q: %v", *dbPath, err)
+			log.Fatalf("bughound: cannot open database %q: %v", *dbPath, err)
 		}
 		defer sq.Close()
 		st = sq
 		log.Printf("store: sqlite (%s)", *dbPath)
 	}
 
-	// Kunci master + vault secret (enkripsi saat disimpan, terisolasi dari temuan).
+	// Master key + secret vault (encrypted at rest, isolated from findings).
 	kr, src, err := secret.LoadKeyring(*keyPath)
 	if err != nil {
-		log.Fatalf("bughound: kunci master: %v", err)
+		log.Fatalf("bughound: master key: %v", err)
 	}
 	switch src {
 	case secret.SourceGenerated:
-		log.Printf("secret: kunci master BARU dibuat di %s (0600) — amankan & JANGAN commit", *keyPath)
+		log.Printf("secret: NEW master key created at %s (0600); keep it safe and do NOT commit it", *keyPath)
 	case secret.SourceEphemeral:
-		log.Printf("secret: kunci master ephemeral (tak dipersist); set env %s atau -key agar secret bertahan", secret.EnvKey)
+		log.Printf("secret: ephemeral master key (not persisted); set env %s or -key so secrets survive a restart", secret.EnvKey)
 	default:
-		log.Printf("secret: kunci master dari %s (key-id %s)", src, kr.ActiveID())
+		log.Printf("secret: master key from %s (key-id %s)", src, kr.ActiveID())
 	}
 
 	var vault secret.Vault
@@ -117,41 +117,41 @@ func main() {
 		}
 		defer vv.Close()
 		vault = vv
-		log.Printf("secret: vault %s (terpisah dari temuan)", vpath)
+		log.Printf("secret: vault %s (separate from findings)", vpath)
 	}
 
 	if *rotateKey {
 		if src == secret.SourceEnv {
-			log.Fatalf("bughound: rotasi butuh kunci berbasis file (bukan env %s)", secret.EnvKey)
+			log.Fatalf("bughound: rotation needs a file-based key (not env %s)", secret.EnvKey)
 		}
 		if *keyPath == "" {
-			log.Fatalf("bughound: rotasi butuh -key")
+			log.Fatalf("bughound: rotation needs -key")
 		}
 		oldID := kr.ActiveID()
 		newKey, nerr := secret.NewRandomKey()
 		if nerr != nil {
 			log.Fatalf("bughound: %v", nerr)
 		}
-		// 1) simpan kunci baru + SEMUA kunci lama (transisi aman: bila proses
-		//    mati, semua secret tetap bisa didekripsi dan rotasi bisa diulang).
+		// 1) save the new key plus ALL old keys (a safe transition: if the process
+		//    dies, every secret can still be decrypted and the rotation can be rerun).
 		if werr := secret.WriteKeyFile(*keyPath, append([]secret.Key{newKey}, kr.AllKeys()...)...); werr != nil {
-			log.Fatalf("bughound: tulis kunci: %v", werr)
+			log.Fatalf("bughound: write key: %v", werr)
 		}
 		kr.Rotate(newKey)
 		n, rerr := vault.Rotate(context.Background())
 		if rerr != nil {
-			log.Fatalf("bughound: rotasi vault gagal (kunci lama masih tersimpan, aman diulang): %v", rerr)
+			log.Fatalf("bughound: vault rotation failed (the old keys are still saved, safe to rerun): %v", rerr)
 		}
-		// 2) re-enkripsi selesai: simpan hanya kunci baru.
+		// 2) re-encryption is done: keep only the new key.
 		if werr := secret.WriteKeyFile(*keyPath, newKey); werr != nil {
-			log.Fatalf("bughound: finalisasi kunci: %v", werr)
+			log.Fatalf("bughound: finalize key: %v", werr)
 		}
-		log.Printf("rotasi selesai: %d secret di-re-enkripsi; key-id %s -> %s (%s)", n, oldID, newKey.ID(), *keyPath)
+		log.Printf("rotation done: %d secrets re-encrypted; key-id %s -> %s (%s)", n, oldID, newKey.ID(), *keyPath)
 		return
 	}
 
-	// Kunci audit (HMAC) TERPISAH dari master, agar rotasi master tak memutus
-	// rantai audit yang sudah ada.
+	// The audit key (HMAC) is SEPARATE from the master key, so rotating the master
+	// key does not break the existing audit chain.
 	var auditKey []byte
 	if *dbPath == "" {
 		ak, _ := secret.NewRandomKey()
@@ -160,7 +160,7 @@ func main() {
 		akPath := strings.TrimSuffix(*keyPath, ".key") + ".audit.key"
 		akr, _, aerr := secret.LoadKeyring(akPath)
 		if aerr != nil {
-			log.Fatalf("bughound: kunci audit: %v", aerr)
+			log.Fatalf("bughound: audit key: %v", aerr)
 		}
 		auditKey = akr.Subkey("hmac")
 	}
@@ -177,10 +177,10 @@ func main() {
 		}
 		defer al.Close()
 		auditLog = al
-		log.Printf("audit: trail %s + anchor %s (append-only, rantai HMAC + attestation eksternal)", apath, anchorPath)
+		log.Printf("audit: trail %s + anchor %s (append-only, HMAC chain + external attestation)", apath, anchorPath)
 	}
 
-	// Catat akses secret (Reveal) ke audit trail (tanpa nilai).
+	// Record secret access (Reveal) in the audit trail (without the value).
 	vault.SetRevealHook(func(scope, name string) {
 		_, _ = auditLog.Append(context.Background(), audit.Event{Kind: "secret.reveal", Program: scope, Message: "secret: " + name})
 	})
@@ -189,9 +189,10 @@ func main() {
 	var rec recon.Engine
 	var engineFactory func(rps float64, sel web.Selection) ([]engine.Engine, recon.Engine)
 	names, useMock := parseEngineMode(*engineMode)
-	// Dir template deteksi custom Bank Payload (flag → env BUGHOUND_CUSTOM_TEMPLATES).
-	// Dipakai bersama oleh runner "nuclei-custom" (roster) & DefaultSources (katalog)
-	// agar keduanya menunjuk direktori yang sama. Kosong = tak ada runner custom.
+	// Custom detection template dir for the Payload Bank (flag → env
+	// BUGHOUND_CUSTOM_TEMPLATES). The "nuclei-custom" runner (roster) and
+	// DefaultSources (catalog) share it so both point at the same directory.
+	// Empty = no custom runner.
 	customDir := strings.TrimSpace(*customTemplates)
 	if customDir == "" {
 		customDir = strings.TrimSpace(os.Getenv("BUGHOUND_CUSTOM_TEMPLATES"))
@@ -199,94 +200,97 @@ func main() {
 	if useMock {
 		engines = []engine.Engine{nuclei.Mock{}, ffuf.Mock{}, zap.Mock{}}
 		rec = recon.MockPipeline{}
-		log.Printf("engine: mock (nuclei + ffuf + zap) — tanpa koneksi jaringan")
+		log.Printf("engine: mock (nuclei + ffuf + zap), no network connections")
 	} else {
-		// Factory: bangun engine + recon BARU per scan dengan laju request dijepit
-		// ke rps scan (throttle per-engine, di jalur eksekusi). Web memanggilnya
-		// untuk tiap run agar tiap run punya engine & proxy egress sendiri.
+		// Factory: build NEW engines + recon per scan, with the request rate clamped
+		// to the scan rps (per-engine throttle, in the execution path). The web layer
+		// calls it for every run so each run has its own engines and egress proxy.
 		engineFactory = func(rps float64, sel web.Selection) ([]engine.Engine, recon.Engine) {
 			rate := engineRate(rps)
 			var es []engine.Engine
 			for _, n := range names {
 				switch n {
 				case "nuclei":
-					// Seleksi template (tags/severity) hanya berlaku untuk nuclei —
-					// -tags/-severity memilih subset dari templates terpasang.
+					// Template selection (tags/severity) applies to nuclei only: -tags/-severity
+					// pick a subset of the installed templates.
 					es = append(es, &nuclei.Runner{RateLimit: rate, Tags: sel.Tags, Severity: sel.Severity})
 				case "ffuf":
 					es = append(es, &ffuf.Runner{Wordlist: *ffufWordlist, RateLimit: rate, APIRoutes: sel.APIRoutes})
 				case "zap":
 					es = append(es, &zap.Runner{Mode: *zapMode, RateLimit: rate})
 				case "retire":
-					// retire.js: SCA library JS klien. Egress (fetch HTML + unduh JS
-					// same-origin) lewat proxy scope guard yang sama; tanpa proxy = tak
-					// fetch (fail-safe di Runner).
+					// retire.js: SCA for client-side JS libraries. Its egress (fetch the HTML,
+					// download same-origin JS) goes through the same scope guard proxy; without
+					// a proxy it fetches nothing (fail-safe in the Runner).
 					es = append(es, &retire.Runner{RateLimit: rate})
 				case "nuclei-dast":
-					// DAST AKTIF (nuclei fuzzing): crawl katana → fuzz parameter dgn
-					// payload (SQLi/XSS/dst.). Egress crawl+fuzz lewat proxy scope guard
-					// yang sama; volume dibatasi rate + agresi 'low'; tanpa proxy = tak
-					// ada koneksi (fail-safe). Temuan = kandidat (draft->verify).
-					// Profil keamanan: non-destruktif selalu aktif; stealth dari form scan.
+					// ACTIVE DAST (nuclei fuzzing): katana crawls, then parameters are fuzzed
+					// with payloads (SQLi/XSS/etc.). Crawl and fuzz egress goes through the
+					// same scope guard proxy; volume is limited by the rate and the 'low'
+					// aggression level; without a proxy there are no connections (fail-safe).
+					// Findings are candidates (draft -> verify). Safety profile:
+					// non-destructive is always on; stealth comes from the scan form.
 					es = append(es, &nuclei.DASTRunner{RateLimit: rate, Safety: nuclei.Safety{Stealth: sel.Stealth}})
 				case "dalfox":
-					// DAST AKTIF khusus XSS: kirim payload XSS ke parameter target,
-					// normalkan PoC → temuan. Egress lewat proxy scope guard yang sama;
-					// volume dibatasi worker+delay; tanpa proxy = tak ada koneksi
-					// (fail-safe). Non-destruktif; temuan = kandidat (draft→verify).
+					// ACTIVE DAST for XSS only: send XSS payloads to the target's parameters
+					// and normalize each PoC into a finding. Egress goes through the same scope
+					// guard proxy; volume is limited by workers + delay; without a proxy there
+					// are no connections (fail-safe). Non-destructive; findings are candidates
+					// (draft → verify).
 					es = append(es, &dalfox.Runner{RateLimit: rate, Stealth: sel.Stealth})
 				case "nuclei-custom":
-					// Runner nuclei KHUSUS template deteksi custom Bank Payload
-					// (BH-SPEC-PAYLOAD): `-t <customDir>` → HANYA menjalankan template
-					// read-only milik sendiri, TERPISAH dari runner "nuclei" resmi yang
-					// menjalankan set bawaan penuh. Non-destruktif tetap dipaksa di
-					// buildArgs. Tanpa customDir (flag/env kosong) = dilewati diam-diam.
-					// Sengaja TIDAK memakai sel.Tags/Severity: dir custom sudah kecil &
-					// terkurasi — biar semua template custom jalan, tak terpangkas
-					// seleksi scan utama (mis. user memilih tag "sqli" untuk nuclei).
+					// A nuclei runner ONLY for the Payload Bank's custom detection templates
+					// (BH-SPEC-PAYLOAD): `-t <customDir>` runs just your own read-only
+					// templates, SEPARATE from the official "nuclei" runner that runs the full
+					// built-in set. buildArgs still forces non-destructive mode. Without
+					// customDir (empty flag/env) the runner is skipped silently. It
+					// deliberately ignores sel.Tags/Severity: the custom dir is small and
+					// curated, so every custom template should run and the main scan
+					// selection (e.g. the user picking the "sqli" tag for nuclei) must not
+					// trim it.
 					if customDir != "" {
 						es = append(es, &nuclei.Runner{RateLimit: rate, TemplatesDir: customDir})
 					}
 				}
 			}
 			if sel.Stealth {
-				log.Printf("scan: profil STEALTH low-and-slow aktif (laju scan & DAST dijepit, UA browser) + non-destruktif")
+				log.Printf("scan: STEALTH low-and-slow profile is on (scan and DAST rate clamped, browser UA) + non-destructive")
 			}
 			return es, recon.NewRealPipelineRate(rate)
 		}
-		engines, rec = engineFactory(0, web.Selection{}) // instance representatif (laju default, semua template) utk validasi & fallback
+		engines, rec = engineFactory(0, web.Selection{}) // representative instance (default rate, all templates) for validation and fallback
 		if len(engines) == 0 {
-			log.Fatalf("bughound: -engine %q tak mengenali engine apa pun (pilih: mock | real | daftar: nuclei,ffuf,zap,retire,nuclei-dast,dalfox,nuclei-custom)", *engineMode)
+			log.Fatalf("bughound: -engine %q names no known engine (choose: mock | real | a list of: nuclei,ffuf,zap,retire,nuclei-dast,dalfox,nuclei-custom)", *engineMode)
 		}
-		// Rantai recon dari Name() pipeline agar log tak basi saat tahapnya berubah.
-		log.Printf("engine: NYATA (%s) + %s — egress HTTP lewat proxy scope guard; naabu (TCP langsung) hanya ke host in-scope · throttle per-engine aktif (laju dari rps scan, default %d/dtk)", strings.Join(names, ", "), rec.Name(), engineRate(0))
-		log.Printf("PERINGATAN: hanya scan target yang sah (in-scope / lab / izin eksplisit)")
+		// Build the recon chain from the pipeline's Name() so the log does not go stale when its stages change.
+		log.Printf("engine: REAL (%s) + %s; HTTP egress goes through the scope guard proxy; naabu (direct TCP) only reaches in-scope hosts · per-engine throttle is on (rate from the scan rps, default %d/s)", strings.Join(names, ", "), rec.Name(), engineRate(0))
+		log.Printf("WARNING: only scan authorized targets (in scope / lab / explicit permission)")
 		for _, n := range names {
 			if n == "ffuf" && strings.TrimSpace(*ffufWordlist) == "" {
-				log.Printf("ffuf: -ffuf-wordlist kosong, memakai wordlist bawaan")
+				log.Printf("ffuf: -ffuf-wordlist is empty, using the built-in wordlist")
 			}
 			if n == "nuclei-custom" {
 				if customDir == "" {
-					log.Printf("nuclei-custom: AKTIF di roster tapi dir template custom kosong (set -custom-templates / BUGHOUND_CUSTOM_TEMPLATES) — runner dilewati, tak ada yang dijalankan")
+					log.Printf("nuclei-custom: ON in the roster but the custom template dir is empty (set -custom-templates / BUGHOUND_CUSTOM_TEMPLATES); the runner is skipped and nothing runs")
 				} else {
-					log.Printf("nuclei-custom: menjalankan HANYA template custom read-only dari %q (terpisah dari nuclei set penuh); non-destruktif dipaksa", customDir)
+					log.Printf("nuclei-custom: running ONLY the read-only custom templates from %q (separate from the full nuclei set); non-destructive mode is forced", customDir)
 				}
 			}
 			if n == "zap" {
 				m := strings.ToLower(strings.TrimSpace(*zapMode))
 				if m == "full" {
-					log.Printf("zap: mode %q — spider + ACTIVE scan (mengirim payload serangan)", m)
+					log.Printf("zap: mode %q: spider + ACTIVE scan (sends attack payloads)", m)
 				} else {
-					log.Printf("zap: mode %q — spider + passive scan (tanpa serangan; pakai -zap-mode full untuk active)", m)
+					log.Printf("zap: mode %q: spider + passive scan (no attacks; use -zap-mode full for active)", m)
 				}
 			}
 		}
 	}
 
-	// SAST aktif bila -sast-root atau env BUGHOUND_SAST_ROOT diset. Image
-	// men-deklarasikan BUGHOUND_SAST_ROOT=/data/sast sehingga SAST langsung hidup
-	// setelah deploy tanpa flag tambahan; resolveSASTRoot memastikan dir-nya ada
-	// (volume kosong yang di-bind di atas /data bisa menutupi dir bawaan image).
+	// SAST is on when -sast-root or env BUGHOUND_SAST_ROOT is set. The image
+	// declares BUGHOUND_SAST_ROOT=/data/sast, so SAST works right after a deploy
+	// with no extra flag; resolveSASTRoot makes sure the dir exists (an empty
+	// volume bound over /data can hide the image's built-in dir).
 	sastRootEff, sastLog := resolveSASTRoot(*sastRoot, os.Getenv("BUGHOUND_SAST_ROOT"))
 	if sastLog != "" {
 		log.Print(sastLog)
@@ -294,17 +298,17 @@ func main() {
 
 	grpcReal := strings.EqualFold(*grpcMode, "real") || strings.EqualFold(*grpcMode, "grpcurl")
 	if grpcReal {
-		log.Printf("grpc: enumerasi NYATA via grpcurl (plaintext=%t)", *grpcPlaintext)
+		log.Printf("grpc: REAL enumeration via grpcurl (plaintext=%t)", *grpcPlaintext)
 	}
 
-	// RBAC: store menyediakan akun pengguna. Login WAJIB secara default; -no-auth
-	// membukanya (hanya untuk localhost tepercaya / test).
+	// RBAC: the store provides user accounts. Login is REQUIRED by default;
+	// -no-auth opens it up (only for a trusted localhost or tests).
 	webUsers, ok := st.(store.UserStore)
 	if !ok {
-		log.Fatalf("bughound: store tidak mendukung manajemen pengguna")
+		log.Fatalf("bughound: the store does not support user management")
 	}
 	if *noAuth {
-		log.Printf("auth: DINONAKTIFKAN (-no-auth) — akses terbuka tanpa login & tanpa RBAC")
+		log.Printf("auth: DISABLED (-no-auth): open access with no login and no RBAC")
 	} else {
 		au := firstNonEmpty(*adminUser, os.Getenv("BUGHOUND_ADMIN_USER"), "admin")
 		ap := firstNonEmpty(*adminPass, os.Getenv("BUGHOUND_ADMIN_PASSWORD"))
@@ -314,64 +318,66 @@ func main() {
 		}
 		switch {
 		case created && generated:
-			log.Printf("auth: admin %q dibuat — kata sandi: %s", au, pw)
-			log.Printf("auth: SIMPAN kata sandi di atas; tak akan ditampilkan lagi. Ganti via halaman Users.")
+			log.Printf("auth: admin %q created, password: %s", au, pw)
+			log.Printf("auth: SAVE the password above; it will not be shown again. Change it on the Users page.")
 		case created:
-			log.Printf("auth: admin %q dibuat dari -admin-password/env", au)
+			log.Printf("auth: admin %q created from -admin-password/env", au)
 		default:
-			log.Printf("auth: login WAJIB (akun sudah ada; kelola via halaman Users)")
+			log.Printf("auth: login REQUIRED (an account already exists; manage accounts on the Users page)")
 		}
 	}
 
-	// Bank Payload (BH-SPEC-PAYLOAD): sumber template yang di-scan saat refresh
-	// katalog. Hanya membaca berkas lokal (tanpa jaringan); aman di mode apa pun.
+	// Payload Bank (BH-SPEC-PAYLOAD): the template sources scanned on a catalog
+	// refresh. It only reads local files (no network), so it is safe in any mode.
 	payloadSources := payload.DefaultSources(*nucleiTemplates, customDir)
 	if len(payloadSources) > 0 {
 		var ids []string
 		for _, ps := range payloadSources {
 			ids = append(ids, fmt.Sprintf("%s(%s,%s)", ps.ID, ps.Engine, ps.Trust))
 		}
-		log.Printf("bank payload: %d sumber [%s] — refresh via /payloads atau `bughound templates update`", len(payloadSources), strings.Join(ids, ", "))
+		log.Printf("payload bank: %d sources [%s]; refresh via /payloads or `bughound templates update`", len(payloadSources), strings.Join(ids, ", "))
 	}
 
-	// GeoIP (opsional): melabeli IP egress di menu Proxy dengan negara & ASN dari
-	// database GeoLite2 LOKAL. Sepenuhnya OFFLINE — tak pernah memanggil layanan
-	// geolokasi pihak ketiga (menjaga egress-isolation, Prinsip #2). Nonaktif bila
-	// env tak diset; bila DB gagal dibuka, fitur mati mulus (menu Proxy tetap
-	// menampilkan IP tanpa negara). Server menutup DB saat shutdown.
+	// GeoIP (optional): labels the egress IP on the Proxy page with a country and
+	// ASN from a LOCAL GeoLite2 database. It is fully OFFLINE and never calls a
+	// third-party geolocation service (this keeps egress isolation, Principle #2).
+	// It is off when the env is not set; if the DB cannot be opened the feature
+	// degrades cleanly (the Proxy page still shows the IP without a country). The
+	// server closes the DB on shutdown.
 	var geoResolver geoip.Resolver = geoip.Nop{}
 	if gdb, gerr := geoip.Open(os.Getenv("BUGHOUND_GEOIP_COUNTRY_DB"), os.Getenv("BUGHOUND_GEOIP_ASN_DB")); gerr != nil {
-		log.Printf("geoip: DB tak dimuat (%v) — menu Proxy tetap tampil IP tanpa negara", gerr)
+		log.Printf("geoip: DB not loaded (%v); the Proxy page still shows the IP without a country", gerr)
 	} else if gdb != nil {
 		geoResolver = gdb
-		log.Printf("geoip: aktif — pelabelan negara/ASN IP egress dari DB GeoLite2 lokal (offline)")
+		log.Printf("geoip: on; egress IP country/ASN labels come from the local GeoLite2 DB (offline)")
 	}
 
 	srv, err := web.NewServer(web.Config{Store: st, Engines: engines, Recon: rec, NewEngines: engineFactory, Vault: vault, Audit: auditLog, Users: webUsers, AuthDisabled: *noAuth, Version: version, SASTRoot: sastRootEff, GRPCReal: grpcReal, GRPCPlaintext: *grpcPlaintext, PayloadSources: payloadSources, GeoIP: geoResolver})
 	if err != nil {
-		log.Fatalf("bughound: gagal inisialisasi: %v", err)
+		log.Fatalf("bughound: initialization failed: %v", err)
 	}
 	defer srv.Close()
 
-	log.Printf("bughound di http://%s", *addr)
-	log.Printf("scope guard aktif · rate limiter wajib · tanpa auto-submit")
+	log.Printf("bughound listening on http://%s", *addr)
+	log.Printf("scope guard on · rate limiter required · no auto-submit")
 
 	httpSrv := &http.Server{Addr: *addr, Handler: srv, ReadHeaderTimeout: 10 * time.Second}
 	if err := httpSrv.ListenAndServe(); err != nil {
-		log.Fatalf("bughound: server berhenti: %v", err)
+		log.Fatalf("bughound: server stopped: %v", err)
 	}
 }
 
-// bootstrapAdmin membuat akun admin pertama bila store belum punya pengguna.
-// Mengembalikan apakah user dibuat, apakah kata sandinya dibuat acak, dan kata
-// sandi tersebut (hanya terisi bila acak — agar bisa dicetak sekali ke konsol).
+// bootstrapAdmin creates the first admin account when the store has no users.
+// It returns whether a user was created, whether the password was generated at
+// random, and that password (set only when it was generated, so it can be
+// printed to the console once).
 func bootstrapAdmin(ctx context.Context, users store.UserStore, user, pass string) (created, generated bool, pw string, err error) {
 	n, err := users.CountUsers(ctx)
 	if err != nil {
 		return false, false, "", err
 	}
 	if n > 0 {
-		return false, false, "", nil // sudah ada akun; jangan bootstrap ulang
+		return false, false, "", nil // an account already exists; do not bootstrap again
 	}
 	if user == "" {
 		user = "admin"
@@ -393,7 +399,7 @@ func bootstrapAdmin(ctx context.Context, users store.UserStore, user, pass strin
 	return true, generated, pw, nil
 }
 
-// randomPassword menghasilkan kata sandi acak url-safe (~16 karakter).
+// randomPassword returns a random url-safe password (~16 characters).
 func randomPassword() (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
@@ -402,7 +408,7 @@ func randomPassword() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// firstNonEmpty mengembalikan argumen non-kosong (ter-trim) pertama.
+// firstNonEmpty returns the first non-empty (trimmed) argument.
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if s := strings.TrimSpace(v); s != "" {
@@ -412,30 +418,31 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-// resolveSASTRoot memilih root SAST efektif: flag -sast-root lalu env
-// BUGHOUND_SAST_ROOT. Bila diset, direktorinya dipastikan ada (dibuat bila
-// perlu) agar path-scope sast.Resolve tak gagal pada root yang belum ada —
-// penting karena image men-deklarasikan BUGHOUND_SAST_ROOT=/data/sast sementara
-// volume kosong yang di-bind di atas /data menutupi dir bawaan image. Kembalian:
-// root efektif ("" = SAST nonaktif) + satu baris log untuk dicetak pemanggil.
-// Gagal menyiapkan dir TIDAK fatal — SAST dinonaktifkan agar orkestrator tetap
-// jalan (fitur lain tak ikut tumbang karena salah konfigurasi SAST).
+// resolveSASTRoot picks the effective SAST root: the -sast-root flag, then env
+// BUGHOUND_SAST_ROOT. When one is set, it makes sure the directory exists
+// (creating it if needed) so sast.Resolve's path scoping does not fail on a
+// root that is not there yet. This matters because the image declares
+// BUGHOUND_SAST_ROOT=/data/sast while an empty volume bound over /data hides
+// the image's built-in dir. It returns the effective root ("" = SAST off) and
+// one log line for the caller to print. Failing to prepare the dir is NOT
+// fatal: SAST is disabled so the orchestrator keeps running (a SAST
+// misconfiguration does not take the other features down).
 func resolveSASTRoot(flagVal, envVal string) (root, logMsg string) {
 	root = firstNonEmpty(flagVal, envVal)
 	if root == "" {
 		return "", ""
 	}
 	if err := os.MkdirAll(root, 0o750); err != nil {
-		return "", fmt.Sprintf("sast: root %q tak bisa disiapkan (%v) — SAST dinonaktifkan", root, err)
+		return "", fmt.Sprintf("sast: root %q cannot be prepared (%v); SAST is disabled", root, err)
 	}
-	return root, fmt.Sprintf("sast: aktif, dikurung ke root %q (analisis statis lokal, tanpa jaringan)", root)
+	return root, fmt.Sprintf("sast: enabled, confined to root %q (local static analysis, no network)", root)
 }
 
-// parseEngineMode menafsirkan flag -engine. "" / "mock" -> engine mock (mock
-// eksklusif). Selain itu daftar dipisah koma: "real" = alias nuclei; nama yang
-// dikenal (nuclei, ffuf, zap, retire, nuclei-dast, dalfox) membangun Runner nyata. Nama
-// tak dikenal diabaikan (pemanggil menolak bila tak ada yang dikenali).
-// Ter-dedup, urut input.
+// parseEngineMode interprets the -engine flag. "" / "mock" -> mock engines
+// (mock is exclusive). Anything else is a comma-separated list: "real" is an
+// alias for nuclei; known names (nuclei, ffuf, zap, retire, nuclei-dast,
+// dalfox) build real Runners. Unknown names are ignored (the caller rejects
+// the flag when nothing is recognized). Deduplicated, in input order.
 func parseEngineMode(mode string) (names []string, mock bool) {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" {
@@ -451,9 +458,9 @@ func parseEngineMode(mode string) (names []string, mock bool) {
 	for _, tok := range strings.Split(mode, ",") {
 		switch strings.TrimSpace(tok) {
 		case "":
-			// lewati
+			// skip
 		case "mock":
-			return nil, true // mock mengalahkan sisanya
+			return nil, true // mock overrides the rest
 		case "real", "nuclei":
 			add("nuclei")
 		case "ffuf":
@@ -467,18 +474,19 @@ func parseEngineMode(mode string) (names []string, mock bool) {
 		case "dalfox":
 			add("dalfox")
 		case "nuclei-custom":
-			// Runner nuclei read-only khusus template deteksi custom (Bank Payload).
-			// Hanya aktif bila dir custom dikonfigurasi (flag/env); lihat roster.
+			// Read-only nuclei runner for custom detection templates only (Payload Bank).
+			// It is active only when a custom dir is configured (flag/env); see the roster.
 			add("nuclei-custom")
 		}
 	}
 	return names, false
 }
 
-// engineRate menurunkan laju request per-engine (req/dtk) dari rps scan. Nilai
-// 0/negatif → default aman; dijepit ≤ maxEngineRate agar tak pernah "praktis
-// tanpa batas" — senada dengan penjepitan di paket ratelimit, sehingga throttle
-// selalu ada di jalur eksekusi dan tak bisa dimatikan lewat input.
+// engineRate derives the per-engine request rate (req/s) from the scan rps. A
+// zero or negative value → the safe default; the result is clamped to
+// maxEngineRate so it is never "practically unlimited". This matches the
+// clamping in package ratelimit, so the throttle is always in the execution
+// path and input cannot turn it off.
 func engineRate(rps float64) int {
 	const defaultEngineRate, maxEngineRate = 20, 50
 	r := rps
@@ -491,9 +499,9 @@ func engineRate(rps float64) int {
 	return int(r)
 }
 
-// splitSubcommand melepas verb subperintah (argumen non-flag pertama) dari args
-// sehingga flag setelahnya tetap bisa diurai. Mengembalikan def bila argumen
-// pertama adalah flag atau args kosong.
+// splitSubcommand strips the subcommand verb (the first non-flag argument) from
+// args so the flags after it can still be parsed. It returns def when the first
+// argument is a flag or args is empty.
 func splitSubcommand(args []string, def string) (string, []string) {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		return args[0], args[1:]
@@ -501,26 +509,26 @@ func splitSubcommand(args []string, def string) (string, []string) {
 	return def, args
 }
 
-// runTemplates menjalankan subperintah `bughound templates <update|list>` untuk
-// mengelola Bank Payload (BH-SPEC-PAYLOAD): men-scan sumber lalu me-refresh
-// katalog yang tersimpan di SQLite. Hanya membaca berkas lokal (tanpa jaringan).
+// runTemplates runs the `bughound templates <update|list>` subcommand that
+// manages the Payload Bank (BH-SPEC-PAYLOAD): it scans the sources and
+// refreshes the catalog stored in SQLite. It only reads local files (no network).
 func runTemplates(args []string) {
-	// Ambil verb subperintah lebih dulu: flag package berhenti mengurai begitu
-	// menemui argumen non-flag, jadi verb harus dilepas sebelum Parse agar flag
-	// SETELAH verb (mis. `templates update -db ...`) tetap terbaca.
+	// Take the subcommand verb first: the flag package stops parsing at the first
+	// non-flag argument, so the verb has to come off before Parse for the flags
+	// AFTER it (e.g. `templates update -db ...`) to be read.
 	sub, args := splitSubcommand(args, "update")
 
 	fs := flag.NewFlagSet("templates", flag.ExitOnError)
-	db := fs.String("db", "bughound.db", "path file SQLite tempat katalog disimpan")
-	nucleiDir := fs.String("nuclei-templates", "", "dir nuclei-templates (kosong = auto: env NUCLEI_TEMPLATES_DIR / $HOME/nuclei-templates)")
-	customDir := fs.String("custom-templates", "", "dir template custom (opsional; atau env BUGHOUND_CUSTOM_TEMPLATES)")
+	db := fs.String("db", "bughound.db", "path to the SQLite file where the catalog is stored")
+	nucleiDir := fs.String("nuclei-templates", "", "nuclei-templates dir (empty = auto: env NUCLEI_TEMPLATES_DIR / $HOME/nuclei-templates)")
+	customDir := fs.String("custom-templates", "", "custom template dir (optional; or env BUGHOUND_CUSTOM_TEMPLATES)")
 	_ = fs.Parse(args)
 	if *db == "" {
-		log.Fatalf("templates: butuh -db (SQLite) untuk menyimpan katalog")
+		log.Fatalf("templates: -db (SQLite) is required to store the catalog")
 	}
 	st, err := store.OpenSQLite(*db)
 	if err != nil {
-		log.Fatalf("templates: buka database %q: %v", *db, err)
+		log.Fatalf("templates: open database %q: %v", *db, err)
 	}
 	defer st.Close()
 	ctx := context.Background()
@@ -529,23 +537,23 @@ func runTemplates(args []string) {
 	case "update", "refresh":
 		sources := payload.DefaultSources(*nucleiDir, *customDir)
 		if len(sources) == 0 {
-			log.Fatalf("templates: tak ada sumber (set -nuclei-templates / -custom-templates atau env)")
+			log.Fatalf("templates: no sources (set -nuclei-templates / -custom-templates or the env)")
 		}
 		before, _ := st.CatalogStats(ctx)
 		cat := payload.Build(ctx, sources)
 		if err := st.ReplaceCatalog(ctx, cat); err != nil {
-			log.Fatalf("templates: simpan katalog: %v", err)
+			log.Fatalf("templates: save catalog: %v", err)
 		}
-		fmt.Printf("katalog diperbarui: %d template dari %d sumber (sebelumnya %d)\n", len(cat.Entries), len(cat.Sources), before.Total)
+		fmt.Printf("catalog updated: %d templates from %d sources (previously %d)\n", len(cat.Entries), len(cat.Sources), before.Total)
 		for _, s := range cat.Sources {
-			status := "tersedia"
+			status := "available"
 			if !s.Available {
-				status = "TAK TERSEDIA"
+				status = "UNAVAILABLE"
 			}
-			fmt.Printf("  - %-16s %-7s trust=%-9s %6d template (%d aktif) [%s] %s\n",
+			fmt.Printf("  - %-16s %-7s trust=%-9s %6d templates (%d active) [%s] %s\n",
 				s.ID, s.Engine, s.Trust, s.Count, s.Enabled, status, s.Path)
 			if s.Note != "" {
-				fmt.Printf("      catatan: %s\n", s.Note)
+				fmt.Printf("      note: %s\n", s.Note)
 			}
 		}
 	case "list":
@@ -553,7 +561,7 @@ func runTemplates(args []string) {
 		if err != nil {
 			log.Fatalf("templates: list: %v", err)
 		}
-		fmt.Printf("%d template di katalog (menampilkan %d):\n", total, len(entries))
+		fmt.Printf("%d templates in the catalog (showing %d):\n", total, len(entries))
 		for _, e := range entries {
 			en := "off"
 			if e.Enabled {
@@ -562,7 +570,7 @@ func runTemplates(args []string) {
 			fmt.Printf("  [%s] %-44s %-7s %-8s %s\n", en, e.TemplateID, e.Engine, e.SeverityDefault, e.Trust)
 		}
 	default:
-		log.Fatalf("templates: subperintah tak dikenal %q (pakai: update | list)", sub)
+		log.Fatalf("templates: unknown subcommand %q (use: update | list)", sub)
 	}
 }
 

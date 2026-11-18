@@ -2,7 +2,7 @@
 <div class="report-head">
   <div>
     <h2>Users</h2>
-    <p class="muted small">Akun &amp; peran RBAC. <strong>admin</strong> kelola pengguna · <strong>operator</strong> jalankan scan &amp; triase · <strong>viewer</strong> hanya baca.</p>
+    <p class="muted small">RBAC accounts &amp; roles. <strong>admin</strong> manages users · <strong>operator</strong> runs scans &amp; triage · <strong>viewer</strong> read-only.</p>
   </div>
 </div>
 
@@ -10,7 +10,7 @@
 {{if .Note}}<div class="pill st-confirmed small" style="margin-bottom:12px"><span class="dot ok"></span>{{.Note}}</div>{{end}}
 
 <div class="card">
-  <h3 class="card-title">Tambah pengguna</h3>
+  <h3 class="card-title">Add a user</h3>
   <form method="post" action="/users" class="form-grid">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
     <div class="field">
@@ -18,44 +18,44 @@
       <input type="text" name="username" autocomplete="off" required>
     </div>
     <div class="field">
-      <label>Kata sandi</label>
+      <label>Password</label>
       <input type="password" name="password" autocomplete="new-password" required>
     </div>
     <div class="field">
-      <label>Peran</label>
+      <label>Role</label>
       <select name="role">
         {{range .Roles}}<option value="{{.}}">{{.}}</option>{{end}}
       </select>
     </div>
     <div class="field field-action">
-      <button type="submit" class="btn primary">+ Buat pengguna</button>
+      <button type="submit" class="btn primary">+ Create user</button>
     </div>
   </form>
 </div>
 
 {{if .Users}}
 <table class="tbl">
-  <thead><tr><th>Username</th><th>Peran</th><th>Dibuat</th><th>Reset kata sandi</th><th></th></tr></thead>
+  <thead><tr><th>Username</th><th>Role</th><th>Created</th><th>Reset password</th><th></th></tr></thead>
   <tbody>
   {{range .Users}}
   <tr>
-    <td class="mono">{{.Username}}{{if .IsSelf}} <span class="muted small">(Anda)</span>{{end}}</td>
+    <td class="mono">{{.Username}}{{if .IsSelf}} <span class="muted small">(you)</span>{{end}}</td>
     <td><span class="pill st-{{if eq .Role "admin"}}confirmed{{else if eq .Role "operator"}}new{{else}}ignored{{end}} small">{{.Role}}</span></td>
     <td class="mono muted">{{.Created}}</td>
     <td>
       <form method="post" action="/users/password" class="inline-form">
         <input type="hidden" name="csrf" value="{{$.CSRF}}">
         <input type="hidden" name="username" value="{{.Username}}">
-        <input type="password" name="password" placeholder="kata sandi baru" autocomplete="new-password" required>
+        <input type="password" name="password" placeholder="new password" autocomplete="new-password" required>
         <button type="submit" class="btn ghost">set</button>
       </form>
     </td>
     <td>
       {{if .IsSelf}}<span class="muted small">—</span>{{else}}
-      <form method="post" action="/users/delete" class="inline-form" onsubmit="return confirm('Hapus pengguna {{.Username}}?')">
+      <form method="post" action="/users/delete" class="inline-form" onsubmit="return confirm('Delete user {{.Username}}?')">
         <input type="hidden" name="csrf" value="{{$.CSRF}}">
         <input type="hidden" name="username" value="{{.Username}}">
-        <button type="submit" class="btn ghost danger">hapus</button>
+        <button type="submit" class="btn ghost danger">delete</button>
       </form>
       {{end}}
     </td>
@@ -64,6 +64,6 @@
   </tbody>
 </table>
 {{else}}
-<div class="empty"><p class="muted">Belum ada pengguna.</p></div>
+<div class="empty"><p class="muted">No users yet.</p></div>
 {{end}}
 {{end}}

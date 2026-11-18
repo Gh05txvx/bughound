@@ -3,22 +3,22 @@ package bughound.burp;
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 
-// Titik masuk extension Burp bughound (Montoya API).
+// Entry point of the bughound Burp extension (Montoya API).
 //
-// Tujuan: menarik temuan dari bughound ke dalam Burp, lalu "Kirim ke Repeater"
-// untuk validasi manual — tanpa pindah tool.
+// Goal: pull findings from bughound into Burp, then "Send to Repeater"
+// for manual validation, without leaving the tool.
 //
-// Batas yang disengaja (sejalan prinsip keamanan bughound):
-//   - Extension HANYA MEMBACA dari bughound (GET /api/v1/findings) dan memuat
-//     request ke Repeater. Ia tidak menulis apa pun ke bughound.
-//   - Mengirim request ke target tetap AKSI MANUAL kamu di Repeater
-//     (tombol Send). Tidak ada auto-submit, tidak ada scan otomatis dari sini.
+// Deliberate limits (in line with bughound's security principles):
+//   - The extension only READS from bughound (GET /api/v1/findings) and loads
+//     a request into Repeater. It writes nothing back to bughound.
+//   - Sending a request to a target stays YOUR MANUAL action in Repeater
+//     (the Send button). No auto-submit, no automatic scan from here.
 public class BughoundExtension implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
         api.extension().setName("BugHound");
         BughoundPanel panel = new BughoundPanel(api);
         api.userInterface().registerSuiteTab("BugHound", panel);
-        api.logging().logToOutput("bughound: extension dimuat — buka tab 'BugHound'.");
+        api.logging().logToOutput("bughound: extension loaded, open the 'BugHound' tab.");
     }
 }

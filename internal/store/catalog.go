@@ -12,39 +12,39 @@ import (
 	"bughound/internal/payload"
 )
 
-// CatalogStore mempersist Bank Payload (BH-SPEC-PAYLOAD): katalog metadata
-// seragam di atas template native. Katalog diturunkan dari sumber (lihat
-// internal/payload) lalu disimpan agar UI bisa menampilkan & memfilter daftar
-// tanpa men-scan ulang ribuan berkas tiap muat halaman. Refresh mengganti
-// seluruh katalog secara atomik.
+// CatalogStore persists the Payload Bank (BH-SPEC-PAYLOAD): a uniform metadata
+// catalog on top of the native templates. The catalog is derived from the
+// sources (see internal/payload) and stored so the UI can show and filter the
+// list without rescanning thousands of files on every page load. Refresh
+// replaces the whole catalog atomically.
 //
-// Interface terpisah (bukan bagian Store) agar implementasi store lama tetap
-// kompatibel; pemanggil mendeteksinya lewat type assertion, seperti UserStore.
+// A separate interface (not part of Store) so older store implementations stay
+// compatible; callers detect it through a type assertion, like UserStore.
 type CatalogStore interface {
-	// ReplaceCatalog mengganti seluruh katalog dengan snapshot baru (atomik).
+	// ReplaceCatalog replaces the whole catalog with a new snapshot (atomically).
 	ReplaceCatalog(ctx context.Context, cat payload.Catalog) error
-	// ListCatalog mengembalikan entri terfilter (diurut severity lalu id) plus
-	// total entri yang cocok filter (untuk paginasi).
+	// ListCatalog returns the filtered entries (sorted by severity, then id) plus
+	// the total number of entries matching the filter (for pagination).
 	ListCatalog(ctx context.Context, q CatalogQuery) ([]payload.Entry, int, error)
-	// CatalogStats mengembalikan agregat untuk ringkasan (tanpa filter).
+	// CatalogStats returns aggregates for the summary (no filter).
 	CatalogStats(ctx context.Context) (CatalogStats, error)
-	// ListCatalogSources mengembalikan ringkasan tiap sumber.
+	// ListCatalogSources returns a summary of each source.
 	ListCatalogSources(ctx context.Context) ([]payload.SourceInfo, error)
 }
 
-// CatalogQuery memfilter daftar entri katalog.
+// CatalogQuery filters the list of catalog entries.
 type CatalogQuery struct {
-	Search   string // cocok template_id ATAU name (substring, case-insensitive)
+	Search   string // matches template_id OR name (substring, case-insensitive)
 	Engine   string
 	Trust    string
 	Severity string
 	Tag      string
-	Enabled  string // "" = semua, "1" = aktif, "0" = nonaktif
-	Limit    int    // 0 = tanpa batas
+	Enabled  string // "" = all, "1" = enabled, "0" = disabled
+	Limit    int    // 0 = no limit
 	Offset   int
 }
 
-// CatalogStats meringkas katalog untuk kartu ringkasan di UI.
+// CatalogStats summarizes the catalog for the summary cards in the UI.
 type CatalogStats struct {
 	Total      int
 	Enabled    int
@@ -54,27 +54,27 @@ type CatalogStats struct {
 	BuiltAt    time.Time
 }
 
-// catalogSevRank: ekspresi SQL untuk urut severity terberat dulu.
+// catalogSevRank: an SQL expression that sorts the most severe first.
 const catalogSevRank = `CASE severity
 	WHEN 'critical' THEN 5 WHEN 'high' THEN 4 WHEN 'medium' THEN 3
 	WHEN 'low' THEN 2 WHEN 'info' THEN 1 ELSE 0 END`
 
 // ---- SQLite ----
 
-// ReplaceCatalog: lihat CatalogStore.
+// ReplaceCatalog: see CatalogStore.
 func (s *SQLite) ReplaceCatalog(ctx context.Context, cat payload.Catalog) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: mulai transaksi katalog: %w", err)
+		return fmt.Errorf("store: begin catalog transaction: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck // no-op bila sudah Commit
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit has run
 
 	for _, q := range []string{`DELETE FROM catalog`, `DELETE FROM catalog_sources`} {
 		if _, err := tx.ExecContext(ctx, q); err != nil {
-			return fmt.Errorf("store: kosongkan katalog: %w", err)
+			return fmt.Errorf("store: clear catalog: %w", err)
 		}
 	}
 
@@ -83,7 +83,7 @@ func (s *SQLite) ReplaceCatalog(ctx context.Context, cat payload.Catalog) error 
 		 VALUES (?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(template_id) DO NOTHING`)
 	if err != nil {
-		return fmt.Errorf("store: siapkan insert katalog: %w", err)
+		return fmt.Errorf("store: prepare catalog insert: %w", err)
 	}
 	defer ins.Close()
 
@@ -91,7 +91,7 @@ func (s *SQLite) ReplaceCatalog(ctx context.Context, cat payload.Catalog) error 
 		e := &cat.Entries[i]
 		doc, err := json.Marshal(e)
 		if err != nil {
-			return fmt.Errorf("store: marshal entri katalog: %w", err)
+			return fmt.Errorf("store: marshal catalog entry: %w", err)
 		}
 		enabled := 0
 		if e.Enabled {
@@ -101,21 +101,21 @@ func (s *SQLite) ReplaceCatalog(ctx context.Context, cat payload.Catalog) error 
 			e.TemplateID, e.Source, e.Engine, string(e.Trust), string(e.SeverityDefault),
 			e.Type, " "+strings.Join(e.Tags, " ")+" ", e.Name, enabled, e.Version, string(doc),
 		); err != nil {
-			return fmt.Errorf("store: simpan entri katalog: %w", err)
+			return fmt.Errorf("store: save catalog entry: %w", err)
 		}
 	}
 
 	for _, src := range cat.Sources {
 		doc, err := json.Marshal(src)
 		if err != nil {
-			return fmt.Errorf("store: marshal sumber katalog: %w", err)
+			return fmt.Errorf("store: marshal catalog source: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO catalog_sources (id,doc,updated_at) VALUES (?,?,?)
 			 ON CONFLICT(id) DO UPDATE SET doc=excluded.doc, updated_at=excluded.updated_at`,
 			src.ID, string(doc), src.UpdatedAt.UTC().Format(time.RFC3339),
 		); err != nil {
-			return fmt.Errorf("store: simpan sumber katalog: %w", err)
+			return fmt.Errorf("store: save catalog source: %w", err)
 		}
 	}
 
@@ -124,7 +124,7 @@ func (s *SQLite) ReplaceCatalog(ctx context.Context, cat payload.Catalog) error 
 		 ON CONFLICT(k) DO UPDATE SET v=excluded.v`,
 		cat.BuiltAt.UTC().Format(time.RFC3339),
 	); err != nil {
-		return fmt.Errorf("store: simpan meta katalog: %w", err)
+		return fmt.Errorf("store: save catalog meta: %w", err)
 	}
 	return tx.Commit()
 }
@@ -165,13 +165,13 @@ func catalogWhere(q CatalogQuery) (string, []any) {
 	return " WHERE " + strings.Join(where, " AND "), args
 }
 
-// ListCatalog: lihat CatalogStore.
+// ListCatalog: see CatalogStore.
 func (s *SQLite) ListCatalog(ctx context.Context, q CatalogQuery) ([]payload.Entry, int, error) {
 	whereSQL, args := catalogWhere(q)
 
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM catalog`+whereSQL, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("store: hitung katalog: %w", err)
+		return nil, 0, fmt.Errorf("store: count catalog: %w", err)
 	}
 
 	query := `SELECT doc FROM catalog` + whereSQL + ` ORDER BY ` + catalogSevRank + ` DESC, template_id ASC`
@@ -180,7 +180,7 @@ func (s *SQLite) ListCatalog(ctx context.Context, q CatalogQuery) ([]payload.Ent
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("store: query katalog: %w", err)
+		return nil, 0, fmt.Errorf("store: query catalog: %w", err)
 	}
 	defer rows.Close()
 	var out []payload.Entry
@@ -191,18 +191,18 @@ func (s *SQLite) ListCatalog(ctx context.Context, q CatalogQuery) ([]payload.Ent
 		}
 		var e payload.Entry
 		if err := json.Unmarshal([]byte(doc), &e); err != nil {
-			return nil, 0, fmt.Errorf("store: entri katalog rusak: %w", err)
+			return nil, 0, fmt.Errorf("store: corrupt catalog entry: %w", err)
 		}
 		out = append(out, e)
 	}
 	return out, total, rows.Err()
 }
 
-// CatalogStats: lihat CatalogStore.
+// CatalogStats: see CatalogStore.
 func (s *SQLite) CatalogStats(ctx context.Context) (CatalogStats, error) {
 	st := CatalogStats{ByEngine: map[string]int{}, ByTrust: map[string]int{}, BySeverity: map[string]int{}}
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(enabled),0) FROM catalog`).Scan(&st.Total, &st.Enabled); err != nil {
-		return st, fmt.Errorf("store: statistik katalog: %w", err)
+		return st, fmt.Errorf("store: catalog stats: %w", err)
 	}
 	group := func(col string, dst map[string]int) error {
 		rows, err := s.db.QueryContext(ctx, `SELECT `+col+`, COUNT(*) FROM catalog GROUP BY `+col)
@@ -225,22 +225,22 @@ func (s *SQLite) CatalogStats(ctx context.Context) (CatalogStats, error) {
 	}
 	for col, dst := range map[string]map[string]int{"engine": st.ByEngine, "trust": st.ByTrust, "severity": st.BySeverity} {
 		if err := group(col, dst); err != nil {
-			return st, fmt.Errorf("store: statistik katalog (%s): %w", col, err)
+			return st, fmt.Errorf("store: catalog stats (%s): %w", col, err)
 		}
 	}
 	var builtAt string
 	if err := s.db.QueryRowContext(ctx, `SELECT v FROM catalog_meta WHERE k='built_at'`).Scan(&builtAt); err != nil && err != sql.ErrNoRows {
-		return st, fmt.Errorf("store: meta katalog: %w", err)
+		return st, fmt.Errorf("store: catalog meta: %w", err)
 	}
 	st.BuiltAt, _ = time.Parse(time.RFC3339, builtAt)
 	return st, nil
 }
 
-// ListCatalogSources: lihat CatalogStore.
+// ListCatalogSources: see CatalogStore.
 func (s *SQLite) ListCatalogSources(ctx context.Context) ([]payload.SourceInfo, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT doc FROM catalog_sources ORDER BY id`)
 	if err != nil {
-		return nil, fmt.Errorf("store: daftar sumber katalog: %w", err)
+		return nil, fmt.Errorf("store: list catalog sources: %w", err)
 	}
 	defer rows.Close()
 	var out []payload.SourceInfo
@@ -251,7 +251,7 @@ func (s *SQLite) ListCatalogSources(ctx context.Context) ([]payload.SourceInfo, 
 		}
 		var si payload.SourceInfo
 		if err := json.Unmarshal([]byte(doc), &si); err != nil {
-			return nil, fmt.Errorf("store: sumber katalog rusak: %w", err)
+			return nil, fmt.Errorf("store: corrupt catalog source: %w", err)
 		}
 		out = append(out, si)
 	}
@@ -260,7 +260,7 @@ func (s *SQLite) ListCatalogSources(ctx context.Context) ([]payload.SourceInfo, 
 
 // ---- Mem ----
 
-// ReplaceCatalog: lihat CatalogStore.
+// ReplaceCatalog: see CatalogStore.
 func (m *Mem) ReplaceCatalog(ctx context.Context, cat payload.Catalog) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -301,7 +301,7 @@ func catalogMatch(e payload.Entry, q CatalogQuery) bool {
 	return true
 }
 
-// ListCatalog: lihat CatalogStore.
+// ListCatalog: see CatalogStore.
 func (m *Mem) ListCatalog(ctx context.Context, q CatalogQuery) ([]payload.Entry, int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -331,7 +331,7 @@ func (m *Mem) ListCatalog(ctx context.Context, q CatalogQuery) ([]payload.Entry,
 	return matched, total, nil
 }
 
-// CatalogStats: lihat CatalogStore.
+// CatalogStats: see CatalogStore.
 func (m *Mem) CatalogStats(ctx context.Context) (CatalogStats, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -352,7 +352,7 @@ func (m *Mem) CatalogStats(ctx context.Context) (CatalogStats, error) {
 	return st, nil
 }
 
-// ListCatalogSources: lihat CatalogStore.
+// ListCatalogSources: see CatalogStore.
 func (m *Mem) ListCatalogSources(ctx context.Context) ([]payload.SourceInfo, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

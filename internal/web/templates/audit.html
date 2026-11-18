@@ -1,17 +1,17 @@
 {{define "content"}}
 {{if not .AuditOn}}
-  <div class="empty"><p class="muted">Audit trail tidak dikonfigurasi.</p></div>
+  <div class="empty"><p class="muted">The audit trail is not configured.</p></div>
 {{else}}
 <div class="report-head">
   <div>
     <h2>Audit trail</h2>
-    <p class="muted small">Append-only · rantai HMAC + attestation eksternal — perubahan, penghapusan entri, maupun trunkasi/rollback seluruh log terdeteksi.</p>
+    <p class="muted small">Append-only · an HMAC chain + external attestation, so any change, deletion of an entry, or truncation/rollback of the whole log is detected.</p>
   </div>
   <div>
     {{if .Integrity.OK}}
-      <span class="badge st-confirmed">integritas OK · {{.Integrity.Count}} entri{{if .Integrity.Anchors}} · {{.Integrity.Anchors}} anchor{{end}}</span>
+      <span class="badge st-confirmed">integrity OK · {{.Integrity.Count}} entries{{if .Integrity.Anchors}} · {{.Integrity.Anchors}} anchors{{end}}</span>
     {{else}}
-      <span class="badge sev-critical">INTEGRITAS RUSAK</span>
+      <span class="badge sev-critical">INTEGRITY BROKEN</span>
       <div class="muted small">seq {{.Integrity.BrokenAt}}: {{.Integrity.Reason}}</div>
     {{end}}
   </div>
@@ -19,14 +19,14 @@
 
 <div class="findings-head">
   <div class="prog-tabs">
-    <a href="/audit" class="tab {{if not .Program}}active{{end}}">semua</a>
+    <a href="/audit" class="tab {{if not .Program}}active{{end}}">all</a>
     {{range .Programs}}<a href="/audit?program={{.}}" class="tab {{if eq . $.Program}}active{{end}}">{{.}}</a>{{end}}
   </div>
 </div>
 
 {{if .Events}}
 <table class="tbl compact">
-  <thead><tr><th>Seq</th><th>Waktu</th><th>Jenis</th><th>Target</th><th>Keputusan</th><th>Alasan</th><th>Lapis</th></tr></thead>
+  <thead><tr><th>Seq</th><th>Time</th><th>Kind</th><th>Target</th><th>Decision</th><th>Reason</th><th>Layer</th></tr></thead>
   <tbody>
   {{range .Events}}
     <tr>
@@ -36,7 +36,7 @@
       <td class="mono truncate">{{.Target}}{{if .Message}} <span class="muted">{{.Message}}</span>{{end}}</td>
       <td>
         {{if eq .Kind "scope.decision"}}
-          {{if .Allowed}}<span class="pill st-confirmed">izin</span>{{else}}<span class="pill st-false_positive">tolak</span>{{end}}
+          {{if .Allowed}}<span class="pill st-confirmed">allow</span>{{else}}<span class="pill st-false_positive">deny</span>{{end}}
         {{else}}<span class="muted">—</span>{{end}}
       </td>
       <td class="muted">{{.Reason}}</td>
@@ -45,9 +45,9 @@
   {{end}}
   </tbody>
 </table>
-<p class="muted small">Menampilkan hingga 200 entri terbaru. Tidak ada tombol hapus — audit trail bersifat append-only.</p>
+<p class="muted small">Showing up to the 200 most recent entries. There is no delete button: the audit trail is append-only.</p>
 {{else}}
-<div class="empty"><p class="muted">Belum ada entri audit. Jalankan scan untuk mencatat keputusan scope.</p></div>
+<div class="empty"><p class="muted">No audit entries yet. Run a scan to record scope decisions.</p></div>
 {{end}}
 {{end}}
 {{end}}

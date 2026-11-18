@@ -1,14 +1,15 @@
-// Package eval menilai keluaran scan terhadap baseline ground-truth:
-// berapa banyak kelas temuan yang MESTINYA ketangkap scanner DAST unauth
-// benar-benar ketangkap (recall). Murni offline — membaca dua berkas JSON
-// (baseline + temuan) lalu menghitung; TIDAK memindai, tak menyentuh jaringan,
-// scope guard, egress, maupun secret.
+// Package eval scores scan output against a ground-truth baseline: how many of
+// the finding classes that an unauthenticated DAST scanner SHOULD catch were
+// actually caught (recall). It works offline: it reads two JSON files (baseline
+// + findings) and counts. It does NOT scan and does not touch the network, the
+// scope guard, egress or secrets.
 //
-// Catatan metrik: baseline adalah himpunan "wajib-temu" yang representatif,
-// BUKAN daftar ekshaustif seluruh true-positive. Karena itu "precision" sejati
-// tak bisa dihitung di sini (temuan di luar baseline belum tentu false-positive).
-// Yang dilaporkan: recall atas set wajib + daftar temuan di-luar-baseline untuk
-// ditinjau manual, bukan vonis false-positive.
+// A note on the metric: the baseline is a representative "must find" set, NOT
+// an exhaustive list of every true positive. So real "precision" cannot be
+// computed here (a finding outside the baseline is not necessarily a false
+// positive). What is reported: recall over the required set, plus the list of
+// findings outside the baseline for manual review. That list is not a
+// false-positive verdict.
 package eval
 
 import (
@@ -25,46 +26,46 @@ import (
 //go:embed baselines/*.json
 var builtinFS embed.FS
 
-// Expected = satu kelas temuan yang (untuk baseline ini) semestinya ditemukan.
-// Pencocokan best-effort: substring kata kunci terhadap gabungan field temuan,
-// opsional dijaga oleh keanggotaan CWE.
+// Expected = one finding class that (for this baseline) should be found.
+// Matching is best effort: keyword substrings against the finding's combined
+// fields, optionally gated by CWE membership.
 type Expected struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
 	Category   string   `json:"category,omitempty"`
-	AnyKeyword []string `json:"any_keyword,omitempty"` // cocok bila salah satu = substring (type+title+url+template+engine+tags), huruf kecil
-	AnyCWE     []string `json:"any_cwe,omitempty"`     // bila diisi, temuan WAJIB punya salah satu CWE ini
-	Optional   bool     `json:"optional,omitempty"`    // tak menyeret recall wajib (mis. butuh engine opsional / true-negative tervalidasi)
+	AnyKeyword []string `json:"any_keyword,omitempty"` // matches when any one is a substring (type+title+url+template+engine+tags), lowercase
+	AnyCWE     []string `json:"any_cwe,omitempty"`     // when set, the finding MUST have one of these CWEs
+	Optional   bool     `json:"optional,omitempty"`    // does not drag required recall down (e.g. needs an optional engine / validated true negative)
 	Note       string   `json:"note,omitempty"`
 }
 
-// Baseline = acuan untuk satu target/kelas (mis. juice-shop unauth).
+// Baseline = the reference for one target/class (e.g. unauthenticated juice-shop).
 type Baseline struct {
 	Name       string     `json:"name"`
 	Target     string     `json:"target,omitempty"`
 	Note       string     `json:"note,omitempty"`
-	Detectable []Expected `json:"detectable"`            // set A — di-skor (recall)
-	BlindSpots []string   `json:"blind_spots,omitempty"` // set B — didokumentasikan, TAK di-skor
+	Detectable []Expected `json:"detectable"`            // set A: scored (recall)
+	BlindSpots []string   `json:"blind_spots,omitempty"` // set B: documented, NOT scored
 }
 
 func (b Baseline) validate() error {
 	if strings.TrimSpace(b.Name) == "" {
-		return fmt.Errorf("baseline tanpa nama")
+		return fmt.Errorf("baseline has no name")
 	}
 	if len(b.Detectable) == 0 {
-		return fmt.Errorf("baseline %q tak punya item detectable", b.Name)
+		return fmt.Errorf("baseline %q has no detectable items", b.Name)
 	}
 	seen := map[string]bool{}
 	for i, e := range b.Detectable {
 		if strings.TrimSpace(e.ID) == "" {
-			return fmt.Errorf("item detectable #%d tanpa id", i)
+			return fmt.Errorf("detectable item #%d has no id", i)
 		}
 		if seen[e.ID] {
-			return fmt.Errorf("id detectable duplikat: %q", e.ID)
+			return fmt.Errorf("duplicate detectable id: %q", e.ID)
 		}
 		seen[e.ID] = true
 		if len(e.AnyKeyword) == 0 && len(e.AnyCWE) == 0 {
-			return fmt.Errorf("item %q tak punya kriteria cocok (any_keyword/any_cwe)", e.ID)
+			return fmt.Errorf("item %q has no match criteria (any_keyword/any_cwe)", e.ID)
 		}
 	}
 	return nil
@@ -91,7 +92,7 @@ func (e Expected) matches(f *finding.Finding) bool {
 			return false
 		}
 		if len(e.AnyKeyword) == 0 {
-			return true // hanya gate CWE
+			return true // CWE gate only
 		}
 	}
 	hay := haystack(f)
@@ -103,14 +104,14 @@ func (e Expected) matches(f *finding.Finding) bool {
 	return false
 }
 
-// ItemResult = hasil satu Expected.
+// ItemResult = the result for one Expected.
 type ItemResult struct {
 	Expected  Expected `json:"expected"`
 	Covered   bool     `json:"covered"`
-	MatchedBy []string `json:"matched_by,omitempty"` // ringkasan temuan pencocok
+	MatchedBy []string `json:"matched_by,omitempty"` // summaries of the matching findings
 }
 
-// Result = skor lengkap sebuah scan terhadap baseline.
+// Result = the full score of a scan against a baseline.
 type Result struct {
 	Baseline        string       `json:"baseline"`
 	Items           []ItemResult `json:"items"`
@@ -120,7 +121,7 @@ type Result struct {
 	OptionalCovered int          `json:"optional_covered"`
 	Recall          float64      `json:"recall"` // required_covered / required
 	TotalFindings   int          `json:"total_findings"`
-	Extra           []string     `json:"extra,omitempty"` // temuan tak cocok Expected apa pun — TINJAU MANUAL, bukan vonis false-positive
+	Extra           []string     `json:"extra,omitempty"` // findings that match no Expected: REVIEW MANUALLY, not a false-positive verdict
 	BlindSpots      []string     `json:"blind_spots,omitempty"`
 }
 
@@ -136,9 +137,9 @@ func summ(f *finding.Finding) string {
 	return fmt.Sprintf("%s @ %s (%s)", f.Type, loc, eng)
 }
 
-// Score menilai findings terhadap baseline b. Satu temuan boleh mencocoki
-// beberapa Expected (tak masalah; recall dihitung per-Expected). Temuan yang
-// tak cocok Expected mana pun masuk Extra (tinjau manual).
+// Score scores findings against baseline b. One finding may match several
+// Expected items (that is fine; recall is counted per Expected). A finding that
+// matches no Expected goes into Extra (manual review).
 func Score(findings []*finding.Finding, b Baseline) Result {
 	res := Result{Baseline: b.Name, TotalFindings: len(findings), BlindSpots: b.BlindSpots}
 	matchedAny := make([]bool, len(findings))
@@ -176,8 +177,8 @@ func Score(findings []*finding.Finding, b Baseline) Result {
 	return res
 }
 
-// LoadBaseline memuat baseline dari nama bawaan (mis. "juice-shop") atau path
-// berkas JSON. Nama bawaan dicoba dulu.
+// LoadBaseline loads a baseline by built-in name (e.g. "juice-shop") or from a
+// JSON file path. The built-in name is tried first.
 func LoadBaseline(nameOrPath string, readFile func(string) ([]byte, error)) (Baseline, error) {
 	if data, err := builtinFS.ReadFile("baselines/" + nameOrPath + ".json"); err == nil {
 		return parseBaseline(data)
@@ -192,7 +193,7 @@ func LoadBaseline(nameOrPath string, readFile func(string) ([]byte, error)) (Bas
 func parseBaseline(data []byte) (Baseline, error) {
 	var b Baseline
 	if err := json.Unmarshal(data, &b); err != nil {
-		return b, fmt.Errorf("baseline JSON tak sah: %w", err)
+		return b, fmt.Errorf("invalid baseline JSON: %w", err)
 	}
 	if err := b.validate(); err != nil {
 		return b, err
@@ -200,7 +201,7 @@ func parseBaseline(data []byte) (Baseline, error) {
 	return b, nil
 }
 
-// BuiltinBaselines mengembalikan nama baseline bawaan (tanpa .json).
+// BuiltinBaselines returns the built-in baseline names (without .json).
 func BuiltinBaselines() []string {
 	entries, _ := builtinFS.ReadDir("baselines")
 	var names []string
@@ -211,17 +212,17 @@ func BuiltinBaselines() []string {
 	return names
 }
 
-// ParseFindings menerima BAIK array temuan telanjang `[...]` MAUPUN respons
-// terbungkus `{"findings":[...]}` (bentuk /api/v1/findings).
+// ParseFindings accepts BOTH a bare findings array `[...]` AND the wrapped
+// response `{"findings":[...]}` (the shape of /api/v1/findings).
 func ParseFindings(data []byte) ([]*finding.Finding, error) {
 	t := bytes.TrimSpace(data)
 	if len(t) == 0 {
-		return nil, fmt.Errorf("berkas temuan kosong")
+		return nil, fmt.Errorf("findings file is empty")
 	}
 	if t[0] == '[' {
 		var fs []*finding.Finding
 		if err := json.Unmarshal(t, &fs); err != nil {
-			return nil, fmt.Errorf("array temuan tak sah: %w", err)
+			return nil, fmt.Errorf("invalid findings array: %w", err)
 		}
 		return fs, nil
 	}
@@ -229,12 +230,12 @@ func ParseFindings(data []byte) ([]*finding.Finding, error) {
 		Findings []*finding.Finding `json:"findings"`
 	}
 	if err := json.Unmarshal(t, &wrap); err != nil {
-		return nil, fmt.Errorf("objek temuan tak sah: %w", err)
+		return nil, fmt.Errorf("invalid findings object: %w", err)
 	}
 	return wrap.Findings, nil
 }
 
-// Report merender Result sebagai kartu-skor teks yang mudah dibaca.
+// Report renders the Result as a readable text scorecard.
 func (r Result) Report() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Eval: %s\n", r.Baseline)
@@ -242,14 +243,14 @@ func (r Result) Report() string {
 	if r.Required > 0 {
 		pct = r.Recall * 100
 	}
-	fmt.Fprintf(&b, "Recall (wajib): %d/%d = %.1f%%", r.RequiredCovered, r.Required, pct)
+	fmt.Fprintf(&b, "Recall (required): %d/%d = %.1f%%", r.RequiredCovered, r.Required, pct)
 	if r.Optional > 0 {
-		fmt.Fprintf(&b, "   | opsional: %d/%d", r.OptionalCovered, r.Optional)
+		fmt.Fprintf(&b, "   | optional: %d/%d", r.OptionalCovered, r.Optional)
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "Temuan total: %d   | di luar baseline (tinjau manual): %d\n\n", r.TotalFindings, len(r.Extra))
+	fmt.Fprintf(&b, "Total findings: %d   | outside the baseline (manual review): %d\n\n", r.TotalFindings, len(r.Extra))
 
-	b.WriteString("Set A — DAST-detectable (di-skor):\n")
+	b.WriteString("Set A (DAST-detectable, scored):\n")
 	for _, it := range r.Items {
 		mark := "✗"
 		if it.Covered {
@@ -257,23 +258,23 @@ func (r Result) Report() string {
 		}
 		tag := ""
 		if it.Expected.Optional {
-			tag = " (opsional)"
+			tag = " (optional)"
 		}
 		fmt.Fprintf(&b, "  [%s] %-22s %s%s\n", mark, it.Expected.ID, it.Expected.Name, tag)
 		if it.Covered && len(it.MatchedBy) > 0 {
 			fmt.Fprintf(&b, "        ← %s\n", it.MatchedBy[0])
 		} else if !it.Covered && it.Expected.Note != "" {
-			fmt.Fprintf(&b, "        catatan: %s\n", it.Expected.Note)
+			fmt.Fprintf(&b, "        note: %s\n", it.Expected.Note)
 		}
 	}
 	if len(r.BlindSpots) > 0 {
-		b.WriteString("\nSet B — blind-spot DAST unauth (TAK di-skor, miss = normal):\n")
+		b.WriteString("\nSet B (unauthenticated DAST blind spots, NOT scored, a miss is normal):\n")
 		for _, bs := range r.BlindSpots {
 			fmt.Fprintf(&b, "  - %s\n", bs)
 		}
 	}
 	if len(r.Extra) > 0 {
-		b.WriteString("\nDi luar baseline (baseline tak ekshaustif; ini BUKAN otomatis false-positive — tinjau manual):\n")
+		b.WriteString("\nOutside the baseline (the baseline is not exhaustive, so these are NOT automatically false positives; review manually):\n")
 		for _, e := range r.Extra {
 			fmt.Fprintf(&b, "  · %s\n", e)
 		}

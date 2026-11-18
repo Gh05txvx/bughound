@@ -18,11 +18,11 @@ func TestLooksLikeSpec(t *testing.T) {
 		{"<!doctype html><html>SPA catch-all</html>", false},
 		{"   <html>", false},
 		{"", false},
-		{`{"openapi":"3.0.0"}`, false}, // tanpa paths -> bukan spec yang berguna
+		{`{"openapi":"3.0.0"}`, false}, // no paths -> not a useful spec
 	}
 	for _, c := range cases {
 		if got := looksLikeSpec([]byte(c.body)); got != c.want {
-			t.Errorf("looksLikeSpec(%.30q) = %v; mau %v", c.body, got, c.want)
+			t.Errorf("looksLikeSpec(%.30q) = %v; want %v", c.body, got, c.want)
 		}
 	}
 }
@@ -35,15 +35,15 @@ func TestExtractSwaggerDoc(t *testing.T) {
 	got := string(extractSwaggerDoc([]byte(js)))
 	want := `{"openapi":"3.0.0","paths":{"/orders":{"get":{}}}}`
 	if got != want {
-		t.Fatalf("extractSwaggerDoc = %q; mau %q", got, want)
+		t.Fatalf("extractSwaggerDoc = %q; want %q", got, want)
 	}
-	// Kurung di dalam string tak boleh mengacaukan penghitungan.
+	// Braces inside a string must not throw off the counting.
 	tricky := `x "swaggerDoc": {"a":"}{","paths":{}} rest`
 	if g := string(extractSwaggerDoc([]byte(tricky))); g != `{"a":"}{","paths":{}}` {
-		t.Errorf("extractSwaggerDoc (string berisi kurung) = %q", g)
+		t.Errorf("extractSwaggerDoc (string containing braces) = %q", g)
 	}
-	if extractSwaggerDoc([]byte("tak ada doc")) != nil {
-		t.Error("tanpa swaggerDoc harus nil")
+	if extractSwaggerDoc([]byte("no doc")) != nil {
+		t.Error("without swaggerDoc must be nil")
 	}
 }
 
@@ -51,25 +51,25 @@ func TestEndpointPaths(t *testing.T) {
 	in := []string{
 		"http://t.test/rest/products/search",
 		"http://t.test/api/Users",
-		"http://t.test/rest/products/search", // duplikat
-		"http://OTHER.test/b2b/v2/orders",    // host beda -> path tetap dipakai
+		"http://t.test/rest/products/search", // duplicate
+		"http://OTHER.test/b2b/v2/orders",    // different host -> path still used
 	}
 	got := endpointPaths(in)
 	want := map[string]bool{"rest/products/search": true, "api/Users": true, "b2b/v2/orders": true}
 	if len(got) != len(want) {
-		t.Fatalf("endpointPaths = %v; mau 3 unik", got)
+		t.Fatalf("endpointPaths = %v; want 3 unique", got)
 	}
 	for _, p := range got {
 		if !want[p] {
-			t.Errorf("path tak terduga: %q", p)
+			t.Errorf("unexpected path: %q", p)
 		}
 	}
 }
 
 func TestSpecPathsNoProxyNoFetch(t *testing.T) {
-	r := &Runner{} // proxyAddr kosong
+	r := &Runner{} // proxyAddr empty
 	if got := r.specPaths(context.Background(), "http://demo.test"); got != nil {
-		t.Fatalf("tanpa proxy tak boleh fetch; dapat %v", got)
+		t.Fatalf("without a proxy there must be no fetch; got %v", got)
 	}
 }
 
@@ -90,7 +90,7 @@ func TestSpecPathsFromStandaloneJSON(t *testing.T) {
 		set[p] = true
 	}
 	if !set["rest/products/search"] || !set["api/Users"] {
-		t.Fatalf("spec standalone harus menghasilkan endpoint; dapat %v", got)
+		t.Fatalf("a standalone spec must yield endpoints; got %v", got)
 	}
 }
 
@@ -102,17 +102,17 @@ func TestSpecPathsFromSwaggerUIInit(t *testing.T) {
 			_, _ = w.Write([]byte(js))
 			return
 		}
-		http.NotFound(w, req) // /openapi.json dll 404 -> jatuh ke init.js
+		http.NotFound(w, req) // /openapi.json etc 404 -> fall through to init.js
 	}))
 	defer srv.Close()
 	got := specPathsFrom(context.Background(), srv.Client(), srv.URL)
 	if strings.Join(got, ",") != "b2b/v2/orders" {
-		t.Fatalf("swagger-ui-init.js harus menghasilkan b2b/v2/orders; dapat %v", got)
+		t.Fatalf("swagger-ui-init.js must yield b2b/v2/orders; got %v", got)
 	}
 }
 
-// TestSpecPathsFromSPACatchAll: server SPA yang membalas HTML untuk SEMUA path
-// (termasuk /openapi.json) tak boleh salah di-parse jadi spec.
+// TestSpecPathsFromSPACatchAll: an SPA server that answers HTML for EVERY path
+// (including /openapi.json) must not be mis-parsed as a spec.
 func TestSpecPathsFromSPACatchAll(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
@@ -120,6 +120,6 @@ func TestSpecPathsFromSPACatchAll(t *testing.T) {
 	}))
 	defer srv.Close()
 	if got := specPathsFrom(context.Background(), srv.Client(), srv.URL); got != nil {
-		t.Fatalf("catch-all HTML tak boleh jadi endpoint; dapat %v", got)
+		t.Fatalf("catch-all HTML must not become an endpoint; got %v", got)
 	}
 }

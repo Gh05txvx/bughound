@@ -41,8 +41,8 @@ func newSASTServer(t *testing.T, root string) (*Server, *store.Mem, *audit.MemLo
 
 func TestSASTDisabledByDefault(t *testing.T) {
 	srv, _ := newTestServer(t)
-	if b := do(t, srv, "GET", "/sast", nil).Body.String(); !strings.Contains(b, "dinonaktifkan") {
-		t.Errorf("SAST tanpa root harus tampil nonaktif:\n%s", b)
+	if b := do(t, srv, "GET", "/sast", nil).Body.String(); !strings.Contains(b, "disabled") {
+		t.Errorf("SAST without a root must show disabled:\n%s", b)
 	}
 }
 
@@ -54,29 +54,29 @@ func TestSASTRunMockAndScope(t *testing.T) {
 	srv, st, al := newSASTServer(t, root)
 	ctx := context.Background()
 
-	if b := do(t, srv, "GET", "/sast", nil).Body.String(); !strings.Contains(b, "Jalankan SAST") || !strings.Contains(b, "mock") {
-		t.Errorf("form SAST tak ter-render:\n%s", b)
+	if b := do(t, srv, "GET", "/sast", nil).Body.String(); !strings.Contains(b, "Run SAST") || !strings.Contains(b, "mock") {
+		t.Errorf("the SAST form is not rendered:\n%s", b)
 	}
 
-	// Jalankan adapter mock pada root (subpath "."): 2 temuan tersimpan.
+	// Run the mock adapter on the root (subpath "."): 2 findings stored.
 	rec := do(t, srv, "POST", "/sast/run", url.Values{"program": {"appsec"}, "subpath": {"."}, "engine": {"mock"}})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "temuan baru") {
-		t.Fatalf("run SAST mock gagal: %d\n%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "new findings") {
+		t.Fatalf("running the mock SAST failed: %d\n%s", rec.Code, rec.Body.String())
 	}
 	if fs, _ := st.List(ctx, store.Query{Program: "appsec"}); len(fs) != 2 {
-		t.Fatalf("harus 2 temuan SAST tersimpan; dapat %d", len(fs))
+		t.Fatalf("there must be 2 SAST findings stored; got %d", len(fs))
 	}
-	// Muncul di Findings lewat skema yang sama.
+	// Shows up in Findings through the same schema.
 	if b := do(t, srv, "GET", "/findings?program=appsec", nil).Body.String(); !strings.Contains(b, "hardcode") {
-		t.Errorf("temuan SAST harus muncul di Findings:\n%s", b)
+		t.Errorf("the SAST finding must show up in Findings:\n%s", b)
 	}
 
-	// Path di luar root ditolak (fail-closed) + tercatat audit.
+	// A path outside the root is denied (fail-closed) + recorded in the audit.
 	rec = do(t, srv, "POST", "/sast/run", url.Values{"program": {"appsec"}, "subpath": {"../.."}, "engine": {"mock"}})
-	if !strings.Contains(rec.Body.String(), "ditolak") {
-		t.Errorf("path di luar root harus ditolak di UI:\n%s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "denied") {
+		t.Errorf("a path outside the root must be denied in the UI:\n%s", rec.Body.String())
 	}
 	if ev, _ := al.List(ctx, audit.Filter{Kind: "sast.scope"}); len(ev) == 0 {
-		t.Error("penolakan path harus tercatat di audit (sast.scope)")
+		t.Error("a path denial must be recorded in the audit (sast.scope)")
 	}
 }

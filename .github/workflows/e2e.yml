@@ -1,7 +1,7 @@
 name: e2e
 
-# E2E Playwright: alur pengguna lewat browser, engine MOCK, egress diblok.
-# Tidak pernah menyentuh aset eksternal (lihat e2e/README.md).
+# E2E Playwright: the user flow through the browser, MOCK engines, egress blocked.
+# Never touches an external asset (see e2e/README.md).
 on:
   push:
     branches: [main]
@@ -38,8 +38,8 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
-      # Hangatkan cache modul Go supaya `go build` di dalam webServer (yang
-      # berjalan dengan env proxy mati) hanya meng-compile, tanpa jaringan.
+      # Warm the Go module cache so `go build` inside webServer (which runs
+      # with a dead proxy env) only compiles, with no network.
       - name: Warm Go build cache
         run: go build ./cmd/bughound
 

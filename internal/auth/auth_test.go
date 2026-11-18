@@ -3,40 +3,40 @@ package auth
 import "testing"
 
 func TestHashVerifyRoundTrip(t *testing.T) {
-	h, err := HashPassword("gajah-biru-77")
+	h, err := HashPassword("blue-elephant-77")
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
 	}
-	if !VerifyPassword(h, "gajah-biru-77") {
-		t.Error("kata sandi benar harus terverifikasi")
+	if !VerifyPassword(h, "blue-elephant-77") {
+		t.Error("the correct password must verify")
 	}
-	if VerifyPassword(h, "gajah-biru-78") {
-		t.Error("kata sandi salah tak boleh terverifikasi")
+	if VerifyPassword(h, "blue-elephant-78") {
+		t.Error("a wrong password must not verify")
 	}
 }
 
 func TestHashIsSaltedAndOpaque(t *testing.T) {
-	a, _ := HashPassword("sama")
-	b, _ := HashPassword("sama")
+	a, _ := HashPassword("same")
+	b, _ := HashPassword("same")
 	if a == b {
-		t.Error("dua hash dari kata sandi sama harus berbeda (salt acak)")
+		t.Error("two hashes of the same password must differ (random salt)")
 	}
-	// Kata sandi mentah tak boleh muncul di hash.
-	if a == "sama" || b == "sama" {
-		t.Error("hash tak boleh berisi kata sandi mentah")
+	// The raw password must not appear in the hash.
+	if a == "same" || b == "same" {
+		t.Error("the hash must not contain the raw password")
 	}
 }
 
 func TestHashEmptyRejected(t *testing.T) {
 	if _, err := HashPassword(""); err == nil {
-		t.Error("kata sandi kosong harus ditolak")
+		t.Error("an empty password must be rejected")
 	}
 }
 
 func TestVerifyRejectsMalformedHash(t *testing.T) {
 	for _, h := range []string{"", "plaintext", "pbkdf2_sha256$x$y$z", "md5$1$aa$bb", "pbkdf2_sha256$1$!!$!!"} {
-		if VerifyPassword(h, "apa pun") {
-			t.Errorf("hash rusak %q tak boleh lolos verifikasi", h)
+		if VerifyPassword(h, "anything") {
+			t.Errorf("corrupt hash %q must not verify", h)
 		}
 	}
 }
@@ -53,13 +53,13 @@ func TestRolePermissions(t *testing.T) {
 	}
 	for _, c := range cases {
 		if CanRead(c.role) != c.read {
-			t.Errorf("%s CanRead=%v, ingin %v", c.role, CanRead(c.role), c.read)
+			t.Errorf("%s CanRead=%v, want %v", c.role, CanRead(c.role), c.read)
 		}
 		if CanWrite(c.role) != c.write {
-			t.Errorf("%s CanWrite=%v, ingin %v", c.role, CanWrite(c.role), c.write)
+			t.Errorf("%s CanWrite=%v, want %v", c.role, CanWrite(c.role), c.write)
 		}
 		if CanAdmin(c.role) != c.adminPerm {
-			t.Errorf("%s CanAdmin=%v, ingin %v", c.role, CanAdmin(c.role), c.adminPerm)
+			t.Errorf("%s CanAdmin=%v, want %v", c.role, CanAdmin(c.role), c.adminPerm)
 		}
 	}
 }
@@ -67,10 +67,10 @@ func TestRolePermissions(t *testing.T) {
 func TestRoleValid(t *testing.T) {
 	for _, r := range Roles() {
 		if !r.Valid() {
-			t.Errorf("%s harus valid", r)
+			t.Errorf("%s must be valid", r)
 		}
 	}
 	if Role("").Valid() || Role("root").Valid() {
-		t.Error("peran kosong/tak dikenal tak boleh valid")
+		t.Error("an empty or unknown role must not be valid")
 	}
 }

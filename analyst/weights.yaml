@@ -1,17 +1,17 @@
-# Bobot & mapping SPK (SAW). Σ weights wajib = 1.0 (divalidasi saat load).
-# Semua di sini TUNABLE tanpa ubah kode — inti dari "explainable decision support".
+# Decision-support (SAW) weights & mappings. Σ weights must = 1.0 (validated at load).
+# Everything here is TUNABLE without code changes, the heart of "explainable decision support".
 
 weights:
-  exploitability: 0.26   # C1 benefit — conf × keaktifan engine
-  signal:         0.22   # C2 benefit — sinyal payout per kelas (anti header-noise)
-  bounty:         0.16   # C3 benefit — potensi bounty (scope max_severity bila ada)
-  severity:       0.12   # C4 benefit — severity scanner (sengaja rendah: sering menggelembung utk passive)
+  exploitability: 0.26   # C1 benefit: conf × engine activeness
+  signal:         0.22   # C2 benefit: payout signal per class (anti header-noise)
+  bounty:         0.16   # C3 benefit: bounty potential (scope max_severity when present)
+  severity:       0.12   # C4 benefit: scanner severity (deliberately low: often inflated for passive)
   fp_likelihood:  0.12   # C5 cost
   effort:         0.06   # C6 cost
   owasp:          0.04   # C7 benefit
   freshness:      0.02   # C8 benefit
 
-# Tipe kriteria: benefit (makin besar makin baik) / cost (makin kecil makin baik).
+# Criterion types: benefit (bigger is better) / cost (smaller is better).
 types:
   exploitability: benefit
   signal:         benefit
@@ -22,7 +22,7 @@ types:
   owasp:          benefit
   freshness:      benefit
 
-# Faktor keaktifan engine untuk C1 exploitability.
+# Engine-activeness factor for C1 exploitability.
 engine_factor:
   nuclei-dast: 1.0
   dalfox:      1.0
@@ -34,9 +34,9 @@ engine_factor:
   sast:        0.5
   _default:    0.6
 
-# Sinyal payout (C2) per kelas kerentanan — substring match (lowercase) atas
-# type+title+tags. high→1.0 (eksploitatif/berbayar), noise→0.1 (hygiene/header,
-# nyaris won't-pay di bug bounty), selain itu 0.5. Lever utama anti header-noise.
+# Payout signal (C2) per vulnerability class, substring match (lowercase) over
+# type+title+tags. high->1.0 (exploitable/paid), noise->0.1 (hygiene/header,
+# almost won't-pay in bug bounty), otherwise 0.5. The main anti header-noise lever.
 signal_patterns:
   high:
     - sqli
@@ -91,7 +91,7 @@ signal_patterns:
     - subdomain-takeover
     - unrestricted-upload
     - file-upload
-    # path-juicy (dicocokkan juga atas URL path lewat signal `extra`):
+    # juicy paths (also matched against the URL path via the signal `extra`):
     - backup
     - .sql
     - .bak
@@ -140,8 +140,8 @@ signal_patterns:
     - private-ip-disclosure
     - internal-ip
     - viewstate
-  # path "membosankan": file standar (bukan kerentanan) — menurunkan exposed-path
-  # NETRAL ke noise agar endpoint nyata (/search, /signup) naik di atas file statis.
+  # "boring" paths: standard files (not vulnerabilities), which drop a NEUTRAL
+  # exposed-path to noise so a real endpoint (/search, /signup) rises above static files.
   boring:
     - robots.txt
     - sitemap
@@ -156,7 +156,7 @@ signal_patterns:
     - crossdomain.xml
     - ads.txt
 
-# Prioritas kategori OWASP 2021 (C7), skala 1..5.
+# OWASP 2021 category priority (C7), scale 1..5.
 owasp_priority:
   A01: 5   # Broken Access Control
   A02: 4   # Cryptographic Failures
@@ -170,7 +170,7 @@ owasp_priority:
   A10: 4   # SSRF
   _default: 2
 
-# Estimasi effort verifikasi (C6) per tipe — substring match, lowercase.
+# Verification-effort estimate (C6) per type, substring match, lowercase.
 effort_by_type:
   reflected:    1
   xss:          1
@@ -183,8 +183,8 @@ effort_by_type:
   ssrf:         3
   _default:     2
 
-# Prior heuristik (tunable). Flood ffuf = banyak exposed-path pada satu host →
-# kemungkinan soft-404/wildcard (server balas 200 utk hampir semua path) → fp dinaikkan.
+# Heuristic priors (tunable). An ffuf flood = many exposed-paths on one host ->
+# probably soft-404/wildcard (the server answers 200 for nearly every path) -> fp raised.
 heuristics:
-  ffuf_flood_threshold: 8   # >=N exposed-path ffuf per host memicu prior
-  ffuf_flood_fp: 0.6        # fp_likelihood minimal yang dipaksakan saat flood
+  ffuf_flood_threshold: 8   # >=N ffuf exposed-paths per host triggers the prior
+  ffuf_flood_fp: 0.6        # the minimum fp_likelihood forced during a flood

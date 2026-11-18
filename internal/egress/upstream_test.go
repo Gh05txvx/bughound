@@ -89,7 +89,7 @@ func TestUpstreamHTTPConnectTunnels(t *testing.T) {
 		t.Fatalf("baca echo: %v", err)
 	}
 	if string(buf) != "ping" {
-		t.Errorf("echo via upstream = %q, ingin ping", buf)
+		t.Errorf("echo via upstream = %q, want ping", buf)
 	}
 }
 

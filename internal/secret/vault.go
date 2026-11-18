@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-// ErrSecretNotFound dikembalikan bila secret tak ada.
-var ErrSecretNotFound = errors.New("secret: tidak ditemukan")
+// ErrSecretNotFound is returned when the secret does not exist.
+var ErrSecretNotFound = errors.New("secret: not found")
 
-// Meta adalah metadata secret TANPA nilainya — aman untuk ditampilkan/di-log.
+// Meta is a secret's metadata WITHOUT its value, so it is safe to display or log.
 type Meta struct {
 	Scope     string
 	Name      string
@@ -21,16 +21,16 @@ type Meta struct {
 	UpdatedAt time.Time
 }
 
-// Vault menyimpan secret terenkripsi, terisolasi dari temuan. Nilai hanya bisa
-// diambil lewat Reveal; List/Meta tidak pernah memuat nilai.
+// Vault stores encrypted secrets, isolated from findings. A value can only be
+// read through Reveal; List/Meta never carry the value.
 type Vault interface {
 	Put(ctx context.Context, scope, name string, value []byte) error
 	Reveal(ctx context.Context, scope, name string) ([]byte, error)
 	List(ctx context.Context, scope string) ([]Meta, error)
 	Delete(ctx context.Context, scope, name string) error
-	Rotate(ctx context.Context) (int, error) // re-enkripsi semua ke kunci aktif
-	// SetRevealHook memasang callback yang dipanggil tiap Reveal BERHASIL,
-	// dengan scope+nama (TANPA nilai) — untuk mencatat akses secret ke audit.
+	Rotate(ctx context.Context) (int, error) // re-encrypt everything with the active key
+	// SetRevealHook installs a callback that runs on every SUCCESSFUL Reveal,
+	// with the scope+name (WITHOUT the value), to record secret access in the audit.
 	SetRevealHook(func(scope, name string))
 	Close() error
 }
@@ -49,7 +49,7 @@ type record struct {
 	updatedAt time.Time
 }
 
-// MemVault adalah Vault in-memory (test / ephemeral).
+// MemVault is an in-memory Vault (tests / ephemeral).
 type MemVault struct {
 	kr       *Keyring
 	now      func() time.Time
@@ -58,17 +58,17 @@ type MemVault struct {
 	m        map[string]map[string]*record
 }
 
-// SetRevealHook: lihat Vault.SetRevealHook.
+// SetRevealHook: see Vault.SetRevealHook.
 func (v *MemVault) SetRevealHook(fn func(scope, name string)) { v.onReveal = fn }
 
-// NewMemVault membuat vault in-memory dengan keyring kr.
+// NewMemVault creates an in-memory vault with keyring kr.
 func NewMemVault(kr *Keyring) *MemVault {
 	return &MemVault{kr: kr, now: time.Now, m: map[string]map[string]*record{}}
 }
 
 func (v *MemVault) Put(ctx context.Context, scope, name string, value []byte) error {
 	if name = strings.TrimSpace(name); name == "" {
-		return errors.New("secret: nama wajib")
+		return errors.New("secret: name is required")
 	}
 	token, err := v.kr.Encrypt(value)
 	if err != nil {

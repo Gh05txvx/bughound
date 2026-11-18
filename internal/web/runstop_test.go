@@ -21,9 +21,9 @@ import (
 	"bughound/internal/store"
 )
 
-// blockEngine meniru engine eksternal yang lama berjalan: Scan menunggu ctx
-// dibatalkan, seperti subprocess yang dibunuh exec.CommandContext. Batas waktu
-// menjaga test tak menggantung bila Stop gagal.
+// blockEngine mimics a long-running external engine: Scan waits for the ctx
+// to be cancelled, like a subprocess killed by exec.CommandContext. A deadline
+// keeps the test from hanging if Stop fails.
 type blockEngine struct {
 	started  chan struct{}
 	once     sync.Once
@@ -41,12 +41,12 @@ func (b *blockEngine) Scan(ctx context.Context, _, _, _ string) ([]*finding.Find
 		b.canceled.Store(true)
 		return nil, ctx.Err()
 	case <-time.After(10 * time.Second):
-		return nil, errors.New("blockEngine: tak pernah dibatalkan")
+		return nil, errors.New("blockEngine: never cancelled")
 	}
 }
 
-// ctxLog meniru audit SQLite: Append menolak ctx yang sudah batal. Dipakai untuk
-// membuktikan jejak audit run yang di-Stop tetap tercatat.
+// ctxLog mimics the SQLite audit: Append rejects an already-cancelled ctx. Used to
+// prove the audit trail of a Stopped run is still recorded.
 type ctxLog struct{ audit.Log }
 
 func (l ctxLog) Append(ctx context.Context, e audit.Event) (audit.Event, error) {
@@ -89,7 +89,7 @@ func waitStarted(t *testing.T, b *blockEngine) {
 	select {
 	case <-b.started:
 	case <-time.After(5 * time.Second):
-		t.Fatal("engine tak pernah mulai")
+		t.Fatal("the engine never started")
 	}
 }
 
@@ -101,7 +101,7 @@ func waitStatus(t *testing.T, srv *Server, id string, want jobs.Status) *jobs.Ru
 		}
 	}
 	run, _ := srv.queue.Get(id)
-	t.Fatalf("run %s tak mencapai %s: %+v", id, want, run)
+	t.Fatalf("run %s did not reach %s: %+v", id, want, run)
 	return nil
 }
 
@@ -124,24 +124,24 @@ func TestRunStopCancelsRunningScan(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("stop = %d", rec.Code)
 	}
-	if b := rec.Body.String(); !strings.Contains(b, "menghentikan") && !strings.Contains(b, "dihentikan") {
-		t.Errorf("respons stop harus menunjukkan run dihentikan:\n%s", b)
+	if b := rec.Body.String(); !strings.Contains(b, "stopping") && !strings.Contains(b, "stopped") {
+		t.Errorf("the stop response must show the run stopped:\n%s", b)
 	}
 	waitStatus(t, srv, id, jobs.Cancelled)
 	if !eng.canceled.Load() {
-		t.Error("ctx engine harus dibatalkan agar subprocess ikut mati")
+		t.Error("the engine ctx must be cancelled so the subprocess dies too")
 	}
 
-	// Stop berulang = no-op: tetap 200, tak dicatat ulang.
-	if rec := do(t, srv, "POST", "/runs/"+id+"/stop", url.Values{}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "dihentikan") {
-		t.Errorf("stop ulang = %d, ingin 200 + status dihentikan", rec.Code)
+	// A repeated Stop = no-op: still 200, not recorded again.
+	if rec := do(t, srv, "POST", "/runs/"+id+"/stop", url.Values{}); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "stopped") {
+		t.Errorf("repeated stop = %d, want 200 + stopped status", rec.Code)
 	}
 	if n := len(auditOf(t, al, "run.stop")); n != 1 {
-		t.Errorf("run.stop tercatat %d kali, ingin 1", n)
+		t.Errorf("run.stop recorded %d times, want 1", n)
 	}
-	// run.finish tetap tercatat walau ctx run sudah batal.
-	if fin := auditOf(t, al, "run.finish"); len(fin) != 1 || !strings.HasPrefix(fin[0].Message, "dihentikan") {
-		t.Errorf("run.finish harus tercatat sebagai dihentikan: %+v", fin)
+	// run.finish is still recorded even though the run's ctx is already cancelled.
+	if fin := auditOf(t, al, "run.finish"); len(fin) != 1 || !strings.HasPrefix(fin[0].Message, "stopped") {
+		t.Errorf("run.finish must be recorded as stopped: %+v", fin)
 	}
 }
 
@@ -154,25 +154,25 @@ func TestRunStopFromDashboard(t *testing.T) {
 	stopBtn := `hx-post="/runs/` + id + `/stop?view=dashboard"`
 	rerunBtn := `hx-post="/runs/` + id + `/rerun?view=dashboard"`
 	if panel := do(t, srv, "GET", "/dashboard/scans", nil).Body.String(); !strings.Contains(panel, stopBtn) || strings.Contains(panel, rerunBtn) {
-		t.Fatalf("run berjalan: harus ada Stop, belum ada Run ulang:\n%s", panel)
+		t.Fatalf("a running run: must have Stop, no Rerun yet:\n%s", panel)
 	}
-	// Run ulang ditolak selama run masih berjalan.
-	if b := do(t, srv, "POST", "/runs/"+id+"/rerun?view=dashboard", url.Values{}).Body.String(); !strings.Contains(b, "masih berjalan") {
-		t.Errorf("run ulang saat berjalan harus ditolak:\n%s", b)
+	// Rerun is denied while the run is still running.
+	if b := do(t, srv, "POST", "/runs/"+id+"/rerun?view=dashboard", url.Values{}).Body.String(); !strings.Contains(b, "still running") {
+		t.Errorf("rerun while running must be denied:\n%s", b)
 	}
 	if n := len(srv.queue.List("")); n != 1 {
-		t.Fatalf("tak boleh ada run baru, ada %d", n)
+		t.Fatalf("there must be no new run, there are %d", n)
 	}
 
 	rec := do(t, srv, "POST", "/runs/"+id+"/stop?view=dashboard", url.Values{})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="live-scans"`) {
-		t.Fatalf("stop dari dashboard harus membalas panel: %d\n%s", rec.Code, rec.Body.String())
+		t.Fatalf("stop from the dashboard must reply with the panel: %d\n%s", rec.Code, rec.Body.String())
 	}
 	waitStatus(t, srv, id, jobs.Cancelled)
 
 	panel := do(t, srv, "GET", "/dashboard/scans", nil).Body.String()
-	if !strings.Contains(panel, "dihentikan") || !strings.Contains(panel, rerunBtn) || strings.Contains(panel, stopBtn) {
-		t.Errorf("run dihentikan: harus berlabel dihentikan, ada Run ulang, tanpa Stop:\n%s", panel)
+	if !strings.Contains(panel, "stopped") || !strings.Contains(panel, rerunBtn) || strings.Contains(panel, stopBtn) {
+		t.Errorf("a stopped run: must be labeled stopped, have Rerun, no Stop:\n%s", panel)
 	}
 }
 
@@ -182,17 +182,17 @@ func TestRunStopFinishedIsNoop(t *testing.T) {
 	waitStatus(t, srv, id, jobs.Done)
 
 	rec := do(t, srv, "POST", "/runs/"+id+"/stop", url.Values{})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Lihat findings") {
-		t.Fatalf("stop run selesai = %d, ingin 200 + status selesai:\n%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "View findings") {
+		t.Fatalf("stop a finished run = %d, want 200 + finished status:\n%s", rec.Code, rec.Body.String())
 	}
 	if run, _ := srv.queue.Get(id); run.Status != jobs.Done {
-		t.Errorf("run selesai tak boleh berubah: %s", run.Status)
+		t.Errorf("a finished run must not change: %s", run.Status)
 	}
 	if n := len(auditOf(t, al, "run.stop")); n != 0 {
-		t.Errorf("stop no-op tak boleh diaudit, ada %d", n)
+		t.Errorf("a no-op stop must not be audited, there are %d", n)
 	}
-	if rec := do(t, srv, "POST", "/runs/tidak-ada/stop", url.Values{}); rec.Code != http.StatusNotFound {
-		t.Errorf("stop run asing = %d, ingin 404", rec.Code)
+	if rec := do(t, srv, "POST", "/runs/does-not-exist/stop", url.Values{}); rec.Code != http.StatusNotFound {
+		t.Errorf("stop an unknown run = %d, want 404", rec.Code)
 	}
 }
 
@@ -203,31 +203,31 @@ func TestRunDeleteFromDashboard(t *testing.T) {
 
 	delBtn := `hx-post="/runs/` + id + `/delete?view=dashboard"`
 	if panel := do(t, srv, "GET", "/dashboard/scans", nil).Body.String(); !strings.Contains(panel, delBtn) {
-		t.Fatalf("run selesai harus punya tombol Hapus:\n%s", panel)
+		t.Fatalf("a finished run must have a Delete button:\n%s", panel)
 	}
 
 	rec := do(t, srv, "POST", "/runs/"+id+"/delete?view=dashboard", url.Values{})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="live-scans"`) {
-		t.Fatalf("hapus harus membalas panel: %d\n%s", rec.Code, rec.Body.String())
+		t.Fatalf("delete must reply with the panel: %d\n%s", rec.Code, rec.Body.String())
 	}
 	if _, ok := srv.queue.Get(id); ok {
-		t.Error("run yang dihapus tak boleh lagi ada di queue")
+		t.Error("a deleted run must no longer be in the queue")
 	}
 	if strings.Contains(rec.Body.String(), id) {
-		t.Error("panel tak boleh lagi menampilkan run yang dihapus")
+		t.Error("the panel must no longer show the deleted run")
 	}
 	if _, ok := srv.specFor(id); ok {
-		t.Error("spec run-ulang harus ikut dibuang")
+		t.Error("the rerun spec must be dropped too")
 	}
 	if ev := auditOf(t, al, "run.delete"); len(ev) != 1 || !ev[0].Allowed || ev[0].RunID != id {
-		t.Errorf("hapus harus diaudit untuk run itu: %+v", ev)
+		t.Errorf("delete must be audited for that run: %+v", ev)
 	}
-	// Hapus run yang sudah hilang = tetap 200, tak diaudit ulang.
+	// Deleting an already-gone run = still 200, not audited again.
 	if rec := do(t, srv, "POST", "/runs/"+id+"/delete?view=dashboard", url.Values{}); rec.Code != http.StatusOK {
-		t.Errorf("hapus run yang sudah hilang = %d, ingin 200", rec.Code)
+		t.Errorf("delete an already-gone run = %d, want 200", rec.Code)
 	}
 	if n := len(auditOf(t, al, "run.delete")); n != 1 {
-		t.Errorf("run.delete tercatat %d kali, ingin 1", n)
+		t.Errorf("run.delete recorded %d times, want 1", n)
 	}
 }
 
@@ -237,21 +237,21 @@ func TestRunDeleteActiveRefused(t *testing.T) {
 	id := startScan(t, srv)
 	waitStarted(t, eng)
 
-	// Run berjalan: tak ada tombol Hapus, dan POST ditolak dengan pesan.
+	// A running run: no Delete button, and the POST is denied with a message.
 	if panel := do(t, srv, "GET", "/dashboard/scans", nil).Body.String(); strings.Contains(panel, "/delete?view=dashboard") {
-		t.Error("run berjalan tak boleh punya tombol Hapus")
+		t.Error("a running run must not have a Delete button")
 	}
 	rec := do(t, srv, "POST", "/runs/"+id+"/delete?view=dashboard", url.Values{})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Hentikan dulu") {
-		t.Fatalf("hapus run berjalan harus ditolak dgn pesan:\n%s", rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Stop it first") {
+		t.Fatalf("deleting a running run must be denied with a message:\n%s", rec.Body.String())
 	}
 	if _, ok := srv.queue.Get(id); !ok {
-		t.Error("run berjalan harus tetap ada")
+		t.Error("the running run must stay")
 	}
 	if n := len(auditOf(t, al, "run.delete")); n != 0 {
-		t.Errorf("hapus yang ditolak tak boleh diaudit, ada %d", n)
+		t.Errorf("a denied delete must not be audited, there are %d", n)
 	}
-	// Bereskan agar Close() di cleanup tak menggantung menunggu engine.
+	// Clean up so Close() in cleanup does not hang waiting for the engine.
 	do(t, srv, "POST", "/runs/"+id+"/stop", url.Values{})
 	waitStatus(t, srv, id, jobs.Cancelled)
 }
@@ -260,27 +260,27 @@ func TestRunRerunUsesCurrentScope(t *testing.T) {
 	srv, st, al := newStopServer(t, nuclei.Mock{})
 	id := startScan(t, srv)
 	if first := waitStatus(t, srv, id, jobs.Done); len(first.Summary.Scanned) != 1 {
-		t.Fatalf("run asal harus memindai demo.test: %+v", first.Summary)
+		t.Fatalf("the original run must scan demo.test: %+v", first.Summary)
 	}
-	// Scope dipersempit setelah run asal: run ulang wajib memakai scope terkini.
+	// The scope is narrowed after the original run: the rerun must use the current scope.
 	if err := st.SaveProgram(context.Background(), store.Program{Name: "demo", InScope: []string{"other.test"}}); err != nil {
 		t.Fatal(err)
 	}
 
 	rec := do(t, srv, "POST", "/runs/"+id+"/rerun?view=dashboard", url.Values{})
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `id="live-scans"`) {
-		t.Fatalf("run ulang harus membalas panel: %d", rec.Code)
+		t.Fatalf("rerun must reply with the panel: %d", rec.Code)
 	}
 	runs := srv.queue.List("demo")
 	if len(runs) != 2 {
-		t.Fatalf("run ulang harus menambah satu run, ada %d", len(runs))
+		t.Fatalf("rerun must add one run, there are %d", len(runs))
 	}
 	again := waitStatus(t, srv, runs[0].ID, jobs.Done)
 	if len(again.Summary.Scanned) != 0 || len(again.Summary.Denied) == 0 {
-		t.Errorf("target yang kini di luar scope harus ditolak guard: %+v", again.Summary)
+		t.Errorf("a target now out of scope must be denied by the guard: %+v", again.Summary)
 	}
 	if ev := auditOf(t, al, "run.rerun"); len(ev) != 1 || !ev[0].Allowed || ev[0].RunID != again.ID {
-		t.Errorf("run ulang harus diaudit untuk run baru: %+v", ev)
+		t.Errorf("rerun must be audited for the new run: %+v", ev)
 	}
 }
 
@@ -293,14 +293,14 @@ func TestRunRerunRefusedWithoutProgram(t *testing.T) {
 	}
 
 	rec := do(t, srv, "POST", "/runs/"+id+"/rerun?view=dashboard", url.Values{})
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Run ulang ditolak") {
-		t.Fatalf("run ulang tanpa program harus ditolak:\n%s", rec.Body.String())
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Rerun denied") {
+		t.Fatalf("rerun without a program must be denied:\n%s", rec.Body.String())
 	}
 	if n := len(srv.queue.List("")); n != 1 {
-		t.Errorf("penolakan tak boleh menambah run, ada %d", n)
+		t.Errorf("a denial must not add a run, there are %d", n)
 	}
 	if ev := auditOf(t, al, "run.rerun"); len(ev) != 1 || ev[0].Allowed {
-		t.Errorf("penolakan run ulang harus diaudit Allowed=false: %+v", ev)
+		t.Errorf("a rerun denial must be audited Allowed=false: %+v", ev)
 	}
 }
 
@@ -313,25 +313,25 @@ func TestRunControlsRBAC(t *testing.T) {
 	vc, vsess := loginAs(t, srv, "view", "viewpw")
 	for _, path := range []string{"/runs/" + id + "/stop", "/runs/" + id + "/rerun", "/runs/" + id + "/delete"} {
 		if rec := authedReq(srv, "POST", path, url.Values{}, vc, vsess); rec.Code != http.StatusForbidden {
-			t.Errorf("viewer POST %s = %d, ingin 403", path, rec.Code)
+			t.Errorf("viewer POST %s = %d, want 403", path, rec.Code)
 		}
 	}
 	if b := authedReq(srv, "GET", "/dashboard/scans", nil, vc, vsess).Body.String(); strings.Contains(b, "/rerun") || strings.Contains(b, "/stop") || strings.Contains(b, "/delete") {
-		t.Error("panel viewer tak boleh memuat tombol Stop/Run ulang/Hapus")
+		t.Error("the viewer panel must not hold Stop/Rerun/Delete buttons")
 	}
 	if b := authedReq(srv, "GET", "/dashboard/scans", nil, oc, osess).Body.String(); !strings.Contains(b, "/runs/"+id+"/rerun") || !strings.Contains(b, "/runs/"+id+"/delete") {
-		t.Error("panel operator harus memuat tombol Run ulang & Hapus")
+		t.Error("the operator panel must hold Rerun & Delete buttons")
 	}
 	if rec := authedReq(srv, "POST", "/runs/"+id+"/rerun?view=dashboard", url.Values{}, oc, osess); rec.Code != http.StatusOK {
-		t.Errorf("operator run ulang = %d, ingin 200", rec.Code)
+		t.Errorf("operator rerun = %d, want 200", rec.Code)
 	}
 }
 
 func TestScanSpecRedacted(t *testing.T) {
-	sp := scanSpec{proxyChain: []string{"socks5://user:rahasia@10.0.0.1:1080"}, targets: []string{"demo.test"}}
+	sp := scanSpec{proxyChain: []string{"socks5://user:s3cr3t@10.0.0.1:1080"}, targets: []string{"demo.test"}}
 	for _, f := range []string{"%v", "%+v", "%#v", "%s"} {
-		if out := fmt.Sprintf(f, sp); strings.Contains(out, "rahasia") {
-			t.Errorf("format %s membocorkan kredensial proxy: %s", f, out)
+		if out := fmt.Sprintf(f, sp); strings.Contains(out, "s3cr3t") {
+			t.Errorf("format %s leaks the proxy credential: %s", f, out)
 		}
 	}
 }
@@ -342,12 +342,12 @@ func TestRememberSpecBounded(t *testing.T) {
 		srv.rememberSpec(fmt.Sprintf("run%d", i), scanSpec{})
 	}
 	if _, ok := srv.specFor("run0"); ok {
-		t.Error("spec tertua harus dibuang")
+		t.Error("the oldest spec must be dropped")
 	}
 	if _, ok := srv.specFor(fmt.Sprintf("run%d", rerunKeep+4)); !ok {
-		t.Error("spec terbaru harus ada")
+		t.Error("the newest spec must be present")
 	}
 	if n := len(srv.specs); n != rerunKeep {
-		t.Errorf("spec diingat %d, ingin %d", n, rerunKeep)
+		t.Errorf("specs remembered %d, want %d", n, rerunKeep)
 	}
 }

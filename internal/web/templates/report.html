@@ -4,11 +4,11 @@
 <div class="report-head">
   <div>
     <h2>{{.Title}}</h2>
-    <p class="muted small">Dihasilkan {{.GeneratedAt.Format "2006-01-02 15:04 MST"}} · {{len .Items}} temuan terkonfirmasi · <b>DRAFT</b></p>
+    <p class="muted small">Generated {{.GeneratedAt.Format "2006-01-02 15:04 MST"}} · {{len .Items}} confirmed findings · <b>DRAFT</b></p>
   </div>
   <div class="actions">
-    <a class="btn" href="/report/download?program={{$prog}}">Unduh .md</a>
-    <a class="btn" href="/report/print?program={{$prog}}" target="_blank" rel="noopener">Cetak / PDF</a>
+    <a class="btn" href="/report/download?program={{$prog}}">Download .md</a>
+    <a class="btn" href="/report/print?program={{$prog}}" target="_blank" rel="noopener">Print / PDF</a>
     <a class="btn" href="/report/export?program={{$prog}}&platform=hackerone">Export HackerOne</a>
     <a class="btn" href="/report/export?program={{$prog}}&platform=bugcrowd">Export Bugcrowd</a>
   </div>
@@ -26,17 +26,17 @@
     <h3>{{add $i 1}}. {{$f.Title}}</h3>
   </div>
   <div class="actions">
-    <span class="muted small">export temuan ini:</span>
+    <span class="muted small">export this finding:</span>
     <a class="btn ghost" href="/report/export?program={{$prog}}&id={{$f.ID}}&platform=hackerone">HackerOne .md</a>
     <a class="btn ghost" href="/report/export?program={{$prog}}&id={{$f.ID}}&platform=bugcrowd">Bugcrowd .md</a>
   </div>
   <dl class="meta">
     <dt>Type</dt><dd class="mono">{{$f.Type}}</dd>
     <dt>Target</dt><dd class="mono">{{$f.Target}}</dd>
-    <dt>Lokasi</dt><dd class="mono">{{$f.Location.URL}}{{if $f.Location.Parameter}} · param {{$f.Location.Parameter}}{{end}}</dd>
+    <dt>Location</dt><dd class="mono">{{$f.Location.URL}}{{if $f.Location.Parameter}} · param {{$f.Location.Parameter}}{{end}}</dd>
     {{if $f.CVSS}}<dt>CVSS</dt><dd class="mono">{{$f.CVSS.Score}} · {{$f.CVSS.Vector}}</dd>{{end}}
     {{if $f.CWE}}<dt>CWE</dt><dd class="mono">{{join $f.CWE ", "}}</dd>{{end}}
-    {{if $f.VerifiedBy}}<dt>Diverifikasi</dt><dd>{{$f.VerifiedBy}}</dd>{{end}}
+    {{if $f.VerifiedBy}}<dt>Verified</dt><dd>{{$f.VerifiedBy}}</dd>{{end}}
   </dl>
   {{if $f.Description}}<p>{{$f.Description}}</p>{{end}}
   {{with $f.Evidence}}
@@ -47,17 +47,17 @@
 {{end}}
 
 <details class="card">
-  <summary>Markdown mentah (untuk disalin)</summary>
+  <summary>Raw markdown (to copy)</summary>
   <pre class="ev mono">{{.Markdown}}</pre>
 </details>
 
-<p class="muted small">Report ini <b>draft</b>. Export HackerOne/Bugcrowd hanya memformat draft untuk kamu salin &amp; submit <b>manual</b> — tidak ada tombol submit, tidak ada pengiriman otomatis.</p>
+<p class="muted small">This report is a <b>draft</b>. The HackerOne/Bugcrowd export only formats the draft for you to copy &amp; submit <b>manually</b> — there is no submit button and no automatic sending.</p>
 {{else}}
 <div class="empty rich">
   <div class="empty-ico"><svg class="ico"><use href="#i-file"/></svg></div>
-  <h3>Draft report masih kosong</h3>
-  <p class="muted">Belum ada temuan <b>terkonfirmasi</b> untuk program ini. Konfirmasi temuan dulu, lalu draft-nya muncul di sini siap di-export.</p>
-  <div class="empty-cta"><a class="btn primary" href="/findings?program={{$prog}}"><svg class="ico"><use href="#i-alert"/></svg>Ke Findings</a></div>
+  <h3>The draft report is still empty</h3>
+  <p class="muted">There are no <b>confirmed</b> findings for this program yet. Confirm a finding first, then the draft shows up here ready to export.</p>
+  <div class="empty-cta"><a class="btn primary" href="/findings?program={{$prog}}"><svg class="ico"><use href="#i-alert"/></svg>Go to Findings</a></div>
 </div>
 {{end}}
 {{end}}

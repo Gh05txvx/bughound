@@ -15,7 +15,7 @@ import (
 	"bughound/internal/store"
 )
 
-// fakeGeo adalah Resolver offline palsu untuk menguji wiring tanpa file .mmdb.
+// fakeGeo is a fake offline Resolver to test the wiring without an .mmdb file.
 type fakeGeo struct {
 	m      map[string]geoip.Info
 	loaded bool
@@ -43,17 +43,17 @@ func newServerWithGeo(t *testing.T, geo geoip.Resolver) *Server {
 	return srv
 }
 
-// Tanpa Config.GeoIP, server memakai Nop (fitur mati) — tak pernah nil.
+// Without Config.GeoIP, the server uses Nop (feature off) — never nil.
 func TestServerGeoDefaultsToNop(t *testing.T) {
 	srv, _ := newTestServer(t)
 	if srv.geo == nil {
-		t.Fatal("s.geo tak boleh nil")
+		t.Fatal("s.geo must not be nil")
 	}
 	if srv.geo.Loaded() {
-		t.Error("tanpa DB, Loaded() harus false")
+		t.Error("without a DB, Loaded() must be false")
 	}
 	if _, ok := srv.geo.(geoip.Nop); !ok {
-		t.Errorf("default harus geoip.Nop, dapat %T", srv.geo)
+		t.Errorf("default must be geoip.Nop, got %T", srv.geo)
 	}
 }
 
@@ -61,11 +61,11 @@ func TestServerGeoInjected(t *testing.T) {
 	fake := fakeGeo{loaded: true}
 	srv := newServerWithGeo(t, fake)
 	if !srv.geo.Loaded() {
-		t.Error("resolver yang di-inject harus dipakai (Loaded=true)")
+		t.Error("the injected resolver must be used (Loaded=true)")
 	}
 }
 
-// renderProxyResult mengeksekusi partial proxy_result dengan data yang diberikan.
+// renderProxyResult runs the proxy_result partial with the given data.
 func renderProxyResult(t *testing.T, srv *Server, res *proxyCheckResult) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -77,7 +77,7 @@ func renderProxyResult(t *testing.T, srv *Server, res *proxyCheckResult) string 
 	return rec.Body.String()
 }
 
-// DB termuat → negara & ASN IP exit tampil di hasil.
+// DB loaded → the exit IP's country & ASN show in the result.
 func TestProxyResultShowsCountryAndASN(t *testing.T) {
 	srv, _ := newTestServer(t)
 	res := &proxyCheckResult{Echo: &proxyEchoResult{
@@ -92,16 +92,16 @@ func TestProxyResultShowsCountryAndASN(t *testing.T) {
 	body := renderProxyResult(t, srv, res)
 	for _, want := range []string{"185.220.101.4", "Netherlands (NL)", "AS205100", "DigitalOcean, LLC", "Indonesia (ID)"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("hasil harus memuat %q\n%s", want, body)
+			t.Errorf("the result must contain %q\n%s", want, body)
 		}
 	}
-	// Hint "DB tak dimuat" TAK boleh muncul saat GeoLoaded.
+	// The "DB not loaded" hint must NOT show when GeoLoaded.
 	if strings.Contains(body, "BUGHOUND_GEOIP_COUNTRY_DB") {
-		t.Error("hint DB-tak-dimuat tak boleh tampil saat GeoLoaded=true")
+		t.Error("the DB-not-loaded hint must not show when GeoLoaded=true")
 	}
 }
 
-// DB tak termuat → IP tetap tampil, plus hint cara mengaktifkan (tanpa negara).
+// DB not loaded → the IP still shows, plus a hint on how to enable it (without a country).
 func TestProxyResultGeoDisabledHint(t *testing.T) {
 	srv, _ := newTestServer(t)
 	res := &proxyCheckResult{Echo: &proxyEchoResult{
@@ -110,26 +110,26 @@ func TestProxyResultGeoDisabledHint(t *testing.T) {
 	}}
 	body := renderProxyResult(t, srv, res)
 	if !strings.Contains(body, "185.220.101.4") {
-		t.Error("IP exit tetap harus tampil")
+		t.Error("the exit IP must still show")
 	}
 	if !strings.Contains(body, "BUGHOUND_GEOIP_COUNTRY_DB") {
-		t.Errorf("harus ada hint cara aktifkan GeoIP\n%s", body)
+		t.Errorf("there must be a hint on how to enable GeoIP\n%s", body)
 	}
-	// Tak ada label negara apa pun.
+	// No country label at all.
 	if strings.Contains(body, "class=\"geo\"") {
-		t.Error("tak boleh ada span geo saat DB tak dimuat")
+		t.Error("there must be no geo span when the DB is not loaded")
 	}
 }
 
-// DB termuat tapi IP tak ada di DB (mis. IP privat) → catatan "tak ditemukan".
+// DB loaded but the IP is not in the DB (e.g. a private IP) → a "not found" note.
 func TestProxyResultGeoNotFound(t *testing.T) {
 	srv, _ := newTestServer(t)
 	res := &proxyCheckResult{Echo: &proxyEchoResult{
 		Allowed: true, SourceIP: "203.0.113.9", ExitIP: "10.0.0.5", Changed: true,
-		GeoLoaded: true, // DB ada, tapi ExitGeo kosong (tak terdaftar)
+		GeoLoaded: true, // the DB is present, but ExitGeo is empty (unlisted)
 	}}
 	body := renderProxyResult(t, srv, res)
-	if !strings.Contains(body, "tak ditemukan di DB GeoIP") {
-		t.Errorf("harus ada catatan negara tak ditemukan\n%s", body)
+	if !strings.Contains(body, "was not found in the GeoIP DB") {
+		t.Errorf("there must be a country-not-found note\n%s", body)
 	}
 }

@@ -12,30 +12,30 @@
 {{if not .Program}}
   <div class="panel"><div class="empty rich">
     <div class="empty-ico"><svg class="ico"><use href="#i-activity"/></svg></div>
-    <h3>Belum ada program</h3>
-    <p class="muted">Pilih atau buat program untuk melihat prioritas verifikasi (SAW/SPK).</p>
-    <div class="empty-cta"><a class="btn primary" href="/scan"><svg class="ico"><use href="#i-radio"/></svg>Jalankan scan pertama</a></div>
+    <h3>No programs yet</h3>
+    <p class="muted">Pick or create a program to see the verification priority (SAW/DSS).</p>
+    <div class="empty-cta"><a class="btn primary" href="/scan"><svg class="ico"><use href="#i-radio"/></svg>Run your first scan</a></div>
   </div></div>
 {{else if not .Scored}}
   <div class="panel"><div class="empty rich">
     <div class="empty-ico"><svg class="ico"><use href="#i-shield-check"/></svg></div>
-    <h3>Tak ada temuan untuk diprioritaskan</h3>
-    <p class="muted">Dari {{.Total}} temuan di program ini, tak ada yang lolos prefilter (info / duplikat / false-positive / ignored disaring) — atau memang belum ada temuan.</p>
-    <div class="empty-cta"><a class="btn" href="/findings?program={{.Program}}"><svg class="ico"><use href="#i-alert"/></svg>Lihat semua temuan</a></div>
+    <h3>No findings to prioritize</h3>
+    <p class="muted">Of the {{.Total}} findings in this program, none passed the prefilter (info / duplicate / false-positive / ignored are filtered out), or there are simply no findings yet.</p>
+    <div class="empty-cta"><a class="btn" href="/findings?program={{.Program}}"><svg class="ico"><use href="#i-alert"/></svg>View all findings</a></div>
   </div></div>
 {{else}}
   <div class="panel">
     <div class="pri-head">
       <div>
-        <strong>Prioritas verifikasi · SAW/SPK</strong>
-        <p class="muted small">{{len .Scored}} prioritas dari {{.Total}} temuan — satu wakil per klaster; info/duplikat/FP disaring. Skor &amp; urutan identik dengan tool MCP <code>rank</code>. Deterministik (bukan LLM); verifikasi tetap manual di Burp.</p>
+        <strong>Verification priority · SAW/DSS</strong>
+        <p class="muted small">{{len .Scored}} priorities out of {{.Total}} findings; one representative per cluster, with info/duplicate/FP filtered out. The score &amp; order are identical to the MCP <code>rank</code> tool. Deterministic (not an LLM); verification stays manual in Burp.</p>
       </div>
-      <a class="btn ghost" href="/findings?program={{.Program}}">Semua temuan →</a>
+      <a class="btn ghost" href="/findings?program={{.Program}}">All findings →</a>
     </div>
     <table class="tbl priority">
       <thead><tr>
-        <th class="num">#</th><th>Skor</th><th>Sev</th><th>Type</th>
-        <th>Engine</th><th>Target</th><th>Pendorong</th>
+        <th class="num">#</th><th>Score</th><th>Sev</th><th>Type</th>
+        <th>Engine</th><th>Target</th><th>Drivers</th>
       </tr></thead>
       <tbody>
       {{range .Scored}}
@@ -49,7 +49,7 @@
           <td class="mono">{{.Finding.Type}}</td>
           <td class="mono small muted">{{.Finding.SourceEngine}}</td>
           <td class="mono truncate" onclick="event.stopPropagation()">
-            <a href="/findings?program={{$.Program}}&amp;id={{.Finding.ID}}" title="Buka di Findings">{{.Finding.Location.URL}}</a>
+            <a href="/findings?program={{$.Program}}&amp;id={{.Finding.ID}}" title="Open in Findings">{{.Finding.Location.URL}}</a>
           </td>
           <td class="factors">
             {{range .TopFactors 2}}<span class="chip">{{.Label}}</span>{{end}}

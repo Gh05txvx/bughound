@@ -1,39 +1,47 @@
-# Dokumen BugHound
+# BugHound docs
 
-Berkas Markdown di folder ini adalah **spesifikasi teknis fondasi** dan **panduan operasional** BugHound, disusun agar bisa dibaca langsung di dalam repo. Sebagian merupakan hasil ekspor dari Claude Docs; `guides/` ditulis langsung di repo.
+The Markdown files in this folder are BugHound's **foundational technical specs**
+and **operational guides**, written to be read right inside the repo. Some are
+exported from Claude Docs; `guides/` is written directly in the repo.
 
-> Catatan: dokumen perencanaan & proses internal (PRD, design spec, persona kerja, audit pre-launch, ADR) dikelola privat oleh pemilik repo dan **tidak disertakan di repo publik**.
+> Note: internal planning & process docs (PRD, design spec, work personas,
+> pre-launch audit, ADR) are kept private by the repo owner and **are not included
+> in the public repo**.
 
-## Struktur
+## Structure
 
 ```
 docs/
-  specs/            — spesifikasi teknis fondasi (dirujuk semua komponen)
-  guides/           — panduan operasional fitur (ditulis langsung di repo)
-  BH-CHANGELOG.md   — catatan perkembangan implementasi (apa yang sudah dibangun)
+  specs/            technical foundation specs (referenced by every component)
+  guides/           operational feature guides (written directly in the repo)
+  BH-CHANGELOG.md   implementation progress notes (what has been built)
 ```
 
-> **Perkembangan implementasi:** lihat [`BH-CHANGELOG.md`](BH-CHANGELOG.md) untuk ringkasan apa saja yang sudah dibangun (M0–M3, rilis, keamanan, engine, dll).
+> **Implementation progress:** see [`BH-CHANGELOG.md`](BH-CHANGELOG.md) for a summary
+> of what has been built (M0-M3, releases, security, engines, and so on).
 
-## Daftar berkas
+## File list
 
-### `docs/specs/` — Spesifikasi teknis (fondasi)
+### `docs/specs/`: Technical specs (foundation)
 
-| ID | Berkas |
+| ID | File |
 | --- | --- |
-| `BH-SPEC-FINDING` | `specs/BH-SPEC-FINDING-skema-temuan.md` |
+| `BH-SPEC-FINDING` | `specs/BH-SPEC-FINDING-finding-schema.md` |
 | `BH-SPEC-SCOPE` | `specs/BH-SPEC-SCOPE-scope-guard.md` |
-| `BH-SPEC-PAYLOAD` | `specs/BH-SPEC-PAYLOAD-bank-payload.md` |
+| `BH-SPEC-PAYLOAD` | `specs/BH-SPEC-PAYLOAD-payload-bank.md` |
 
-### `docs/guides/` — Panduan operasional
+### `docs/guides/`: Operational guides
 
-| ID | Berkas | Inti |
+| ID | File | Core |
 | --- | --- | --- |
-| `BH-GUIDE-SCAN` | `guides/BH-GUIDE-SCAN.md` | Mekanisme tiap fitur (scope guard, egress/proxy, DAST/SAST/recon, rate limiter, triase/report) + kebutuhan input per skenario scan; referensi field form Scan/SAST & flag startup. |
-| `BH-GUIDE-PROXY` | `guides/BH-GUIDE-PROXY.md` | Menu Proxy: rantai upstream, endpoint echo IP (wajib in-scope), proxy yang bisa dipakai, requirement untuk program bug bounty eksternal. |
+| `BH-GUIDE-SCAN` | `guides/BH-GUIDE-SCAN.md` | How each feature works (scope guard, egress/proxy, DAST/SAST/recon, rate limiter, triage/report) + the input each scan scenario needs; a reference for the Scan/SAST form fields & startup flags. |
+| `BH-GUIDE-PROXY` | `guides/BH-GUIDE-PROXY.md` | The Proxy menu: upstream chain, the IP echo endpoint (must be in-scope), which proxies can be used, and what an external bug bounty program requires. |
 
-## Catatan ekspor
+## Export notes
 
-- **Diagram tidak terbawa.** Hanya teks, tabel, dan blok kode yang ikut ke Markdown. Setiap diagram yang hilang ditandai dengan baris `> _Diagram: … — tersedia di versi Claude Docs_` di posisi aslinya.
-- **Chip tanggal/mention** dipertahankan sebagai teks biasa (mis. `Oct 21, 2026 · @Gh05t`).
-- Berkas ini adalah salinan statis. Bila dokumen sumber di Claude Docs diperbarui, ekspor ulang untuk menyinkronkan.
+- **Diagrams do not carry over.** Only text, tables, and code blocks make it into
+  Markdown. Each missing diagram is marked with a `> _Diagram: … (available in the Claude Docs version)_`
+  line at its original spot.
+- **Date/mention chips** are kept as plain text (e.g. `Oct 21, 2026 · @Gh05t`).
+- These files are static copies. When the source document in Claude Docs changes,
+  re-export to sync.

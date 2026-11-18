@@ -7,15 +7,15 @@ import (
 	"strings"
 )
 
-// Tool recon tambahan. Semua TIDAK lewat proxy HTTP:
-//   - Gau: PASIF (query arsip web seperti Wayback/CommonCrawl, bukan target).
-//   - Dnsx: query resolver DNS (bukan aplikasi target).
-//   - Naabu: port scan AKTIF via TCP mentah — tak bisa lewat proxy HTTP, maka
-//     hanya dijalankan pada host yang SUDAH terbukti in-scope (keluaran httpx
-//     yang melewati proxy egress), sehingga prinsip "tak menyentuh out-of-scope"
-//     tetap terjaga.
+// Extra recon tools. NONE of them goes through the HTTP proxy:
+//   - Gau: PASSIVE (queries web archives such as Wayback/CommonCrawl, not the target).
+//   - Dnsx: queries DNS resolvers (not the target application).
+//   - Naabu: ACTIVE port scan over raw TCP. It cannot go through an HTTP proxy,
+//     so it only runs against hosts ALREADY proven in scope (httpx output that
+//     passed the egress proxy), which keeps the "never touch out-of-scope"
+//     principle.
 
-// Gau mengumpulkan URL historis (pasif).
+// Gau collects historical URLs (passive).
 type Gau struct{ Binary string }
 
 func (g *Gau) bin() string {
@@ -27,7 +27,7 @@ func (g *Gau) bin() string {
 
 func (g *Gau) args() []string { return []string{"--threads", "5", "--subs"} }
 
-// Collect membaca domain dari stdin dan mengembalikan URL historis.
+// Collect reads domains from stdin and returns historical URLs.
 func (g *Gau) Collect(ctx context.Context, domains []string) ([]string, error) {
 	domains = nonEmpty(domains)
 	if len(domains) == 0 {
@@ -36,7 +36,7 @@ func (g *Gau) Collect(ctx context.Context, domains []string) ([]string, error) {
 	return runLines(ctx, g.bin(), strings.Join(domains, "\n"), nil, g.args()...)
 }
 
-// Dnsx memvalidasi/mengresolve host via DNS.
+// Dnsx validates/resolves hosts through DNS.
 type Dnsx struct{ Binary string }
 
 func (d *Dnsx) bin() string {
@@ -48,7 +48,7 @@ func (d *Dnsx) bin() string {
 
 func (d *Dnsx) args() []string { return []string{"-silent"} }
 
-// Resolve membaca host dari stdin dan mengembalikan host yang resolve.
+// Resolve reads hosts from stdin and returns the ones that resolve.
 func (d *Dnsx) Resolve(ctx context.Context, hosts []string) ([]string, error) {
 	hosts = nonEmpty(hosts)
 	if len(hosts) == 0 {
@@ -57,10 +57,10 @@ func (d *Dnsx) Resolve(ctx context.Context, hosts []string) ([]string, error) {
 	return runLines(ctx, d.bin(), strings.Join(hosts, "\n"), nil, d.args()...)
 }
 
-// Naabu memindai port terbuka (TCP connect scan — tanpa libpcap runtime).
+// Naabu scans for open ports (TCP connect scan, no libpcap at runtime).
 type Naabu struct {
 	Binary string
-	rate   int // -rate (paket/dtk); 0 = default naabu
+	rate   int // -rate (packets/s); 0 = naabu's default
 }
 
 func (n *Naabu) bin() string {
@@ -78,7 +78,7 @@ func (n *Naabu) args() []string {
 	return a
 }
 
-// ScanPorts membaca host dari stdin dan mengembalikan "host:port" terbuka.
+// ScanPorts reads hosts from stdin and returns the open "host:port" pairs.
 func (n *Naabu) ScanPorts(ctx context.Context, hosts []string) ([]string, error) {
 	hosts = nonEmpty(hosts)
 	if len(hosts) == 0 {
@@ -87,7 +87,7 @@ func (n *Naabu) ScanPorts(ctx context.Context, hosts []string) ([]string, error)
 	return runLines(ctx, n.bin(), strings.Join(hosts, "\n"), nil, n.args()...)
 }
 
-// hostsFromURLs mengekstrak host unik dari daftar URL (mis. keluaran httpx).
+// hostsFromURLs extracts the unique hosts from a list of URLs (e.g. httpx output).
 func hostsFromURLs(urls []string) []string {
 	var out []string
 	seen := map[string]bool{}

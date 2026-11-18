@@ -9,67 +9,67 @@
   <dt>Type</dt><dd class="mono">{{.Type}}</dd>
   {{if .OWASP}}<dt>OWASP</dt><dd>{{.OWASP.Label}}</dd>{{end}}
   <dt>Target</dt><dd class="mono">{{.Target}}</dd>
-  <dt>Lokasi</dt><dd class="mono">{{if .Location.Method}}<b>{{.Location.Method}}</b> {{end}}{{.Location.URL}}{{if .Location.Parameter}} · param <b>{{.Location.Parameter}}</b>{{if .Location.ParamLocation}} ({{.Location.ParamLocation}}){{end}}{{end}}</dd>
+  <dt>Location</dt><dd class="mono">{{if .Location.Method}}<b>{{.Location.Method}}</b> {{end}}{{.Location.URL}}{{if .Location.Parameter}} · param <b>{{.Location.Parameter}}</b>{{if .Location.ParamLocation}} ({{.Location.ParamLocation}}){{end}}{{end}}</dd>
   <dt>Engine</dt><dd>{{.SourceEngine}}{{if .SourceTemplate}} · <span class="mono">{{.SourceTemplate}}</span>{{end}}</dd>
   <dt>Confidence</dt><dd>{{.Confidence}}</dd>
   {{if .CVSS}}<dt>CVSS</dt><dd class="mono">{{.CVSS.Score}} · {{.CVSS.Vector}}</dd>{{end}}
   {{if .CWE}}<dt>CWE</dt><dd class="mono">{{join .CWE ", "}}</dd>{{end}}
   {{if .Tags}}<dt>Tags</dt><dd>{{join .Tags ", "}}</dd>{{end}}
-  <dt>Dibuat</dt><dd class="mono">{{.CreatedAt.Time.Format "2006-01-02 15:04:05Z"}}</dd>
-  {{if .VerifiedBy}}<dt>Diverifikasi</dt><dd>{{.VerifiedBy}}</dd>{{end}}
+  <dt>Created</dt><dd class="mono">{{.CreatedAt.Time.Format "2006-01-02 15:04:05Z"}}</dd>
+  {{if .VerifiedBy}}<dt>Verified</dt><dd>{{.VerifiedBy}}</dd>{{end}}
 </dl>
 
 {{with .Evidence}}
-<h4>Bukti <span class="muted small">(secret tersensor)</span></h4>
+<h4>Evidence <span class="muted small">(secrets redacted)</span></h4>
 {{if .Request}}
-<div class="ev-head"><span class="ev-label">Request</span><button type="button" class="btn ghost small" onclick="bhCopy(this)">Salin request</button></div>
+<div class="ev-head"><span class="ev-label">Request</span><button type="button" class="btn ghost small" onclick="bhCopy(this)">Copy request</button></div>
 <pre class="ev mono">{{.Request}}</pre>
-<p class="muted small">Tempel ke <b>Burp Repeater</b> (Ctrl+R) untuk verifikasi manual — request sudah lengkap (method, header, body). Report tetap draft, tanpa auto-submit.</p>
+<p class="muted small">Paste it into <b>Burp Repeater</b> (Ctrl+R) for manual verification; the request is complete (method, headers, body). The report stays a draft, with no auto-submit.</p>
 {{end}}
-{{if .ResponseExcerpt}}<div class="ev-head"><span class="ev-label">Response</span><button type="button" class="btn ghost small" onclick="bhCopy(this)">Salin</button></div><pre class="ev mono">{{.ResponseExcerpt}}</pre>{{end}}
+{{if .ResponseExcerpt}}<div class="ev-head"><span class="ev-label">Response</span><button type="button" class="btn ghost small" onclick="bhCopy(this)">Copy</button></div><pre class="ev mono">{{.ResponseExcerpt}}</pre>{{end}}
 {{if .Payload}}<div class="ev-label">Payload</div><pre class="ev mono">{{.Payload}}</pre>{{end}}
 {{if .Matched}}<div class="ev-label">Matched</div><pre class="ev mono">{{.Matched}}</pre>{{end}}
 {{end}}
 
 {{if .References}}
-<h4>Referensi</h4>
+<h4>References</h4>
 <ul class="list">{{range .References}}<li class="mono truncate">{{.}}</li>{{end}}</ul>
 {{end}}
 
-<h4>Analisis AI <span class="muted small">(what-if · rencana validasi manual di Burp)</span></h4>
+<h4>AI analysis <span class="muted small">(what-if · a manual validation plan in Burp)</span></h4>
 <div id="ai-card-{{.ID}}" hx-get="/ai/finding/{{.ID}}" hx-trigger="load" hx-swap="innerHTML">
-  <div class="ai-card muted small">memuat analisis AI…</div>
+  <div class="ai-card muted small">loading the AI analysis…</div>
 </div>
 
-<h4>Lengkapi draft <span class="muted small">(untuk report; repro &amp; dampak)</span></h4>
+<h4>Complete the draft <span class="muted small">(for the report; repro &amp; impact)</span></h4>
 <form class="edit" hx-post="/findings/{{.ID}}/edit" hx-target="#detail" hx-swap="innerHTML">
-  <label class="fld">Deskripsi
-    <textarea name="description" rows="3" placeholder="ringkasan isu">{{.Description}}</textarea>
+  <label class="fld">Description
+    <textarea name="description" rows="3" placeholder="a summary of the issue">{{.Description}}</textarea>
   </label>
-  <label class="fld">Langkah reproduksi <span class="muted small">(satu per baris)</span>
-    <textarea name="reproduction" rows="4" placeholder="satu langkah per baris">{{range .Reproduction}}{{.}}
+  <label class="fld">Reproduction steps <span class="muted small">(one per line)</span>
+    <textarea name="reproduction" rows="4" placeholder="one step per line">{{range .Reproduction}}{{.}}
 {{end}}</textarea>
   </label>
-  <label class="fld">Dampak
-    <textarea name="impact" rows="3" placeholder="dampak konkret: data terekspos / aksi penyerang">{{.Impact}}</textarea>
+  <label class="fld">Impact
+    <textarea name="impact" rows="3" placeholder="concrete impact: data exposed / attacker action">{{.Impact}}</textarea>
   </label>
-  <button class="btn" type="submit">Simpan draft</button>
+  <button class="btn" type="submit">Save draft</button>
 </form>
 
-<h4>Triase</h4>
+<h4>Triage</h4>
 <form class="triage" hx-post="/findings/{{.ID}}/status" hx-target="#detail" hx-swap="innerHTML">
-  <input type="text" name="verified_by" placeholder="nama (opsional)" value="{{.VerifiedBy}}" autocomplete="off">
+  <input type="text" name="verified_by" placeholder="name (optional)" value="{{.VerifiedBy}}" autocomplete="off">
   <div class="actions">
-    <button class="btn good" name="status" value="confirmed">Konfirmasi</button>
+    <button class="btn good" name="status" value="confirmed">Confirm</button>
     <button class="btn" name="status" value="false_positive">False positive</button>
-    <button class="btn" name="status" value="ignored">Abaikan</button>
+    <button class="btn" name="status" value="ignored">Ignore</button>
     <button class="btn ghost" name="status" value="new">Reset</button>
   </div>
 </form>
 
 {{if eq .Status "confirmed"}}
-<a class="btn primary" href="/report?program={{.Program}}">Lihat draft report →</a>
+<a class="btn primary" href="/report?program={{.Program}}">View the draft report →</a>
 {{else}}
-<button class="btn" disabled title="Konfirmasi dulu agar masuk ke draft report (report selalu draft; tanpa auto-submit)">Masuk report (perlu konfirmasi)</button>
+<button class="btn" disabled title="Confirm it first so it enters the draft report (the report is always a draft; no auto-submit)">Add to report (confirm first)</button>
 {{end}}
 {{end}}

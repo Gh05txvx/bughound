@@ -38,7 +38,7 @@ func TestRedactCreds(t *testing.T) {
 	}
 	for in, want := range cases {
 		if got := redactCreds(in); got != want {
-			t.Errorf("redactCreds(%q) = %q, mau %q", in, got, want)
+			t.Errorf("redactCreds(%q) = %q, want %q", in, got, want)
 		}
 	}
 	if strings.Contains(redactCreds("dial socks5://u:p@h:9050: timeout"), "p@") {
@@ -55,7 +55,7 @@ func TestExtractClientIP(t *testing.T) {
 	}
 	for body, want := range cases {
 		if got := ExtractClientIP(body); got != want {
-			t.Errorf("ExtractClientIP(%q) = %q, mau %q", body, got, want)
+			t.Errorf("ExtractClientIP(%q) = %q, want %q", body, got, want)
 		}
 	}
 }

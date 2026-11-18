@@ -74,7 +74,7 @@ func TestAudit_IPAllowedPolicy(t *testing.T) {
 	}
 	for ipStr, want := range cases {
 		if got := p.ipAllowed(netip.MustParseAddr(ipStr), "80"); got != want {
-			t.Errorf("ipAllowed(%s)=%v, ingin %v", ipStr, got, want)
+			t.Errorf("ipAllowed(%s)=%v, want %v", ipStr, got, want)
 		}
 	}
 }
@@ -200,7 +200,7 @@ func TestAudit_ProxyBlocksNameResolvingToExcludedIP(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusBadGateway {
-		t.Errorf("status = %d, ingin 502", resp.StatusCode)
+		t.Errorf("status = %d, want 502", resp.StatusCode)
 	}
 	if n := dials.Load(); n != 0 {
 		t.Errorf("%d dial sampai ke IP yang dikecualikan", n)
@@ -231,7 +231,7 @@ func TestAudit_ProxyEnforcesDefaultPortExclusion(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("status=%d, ingin 403", resp.StatusCode)
+		t.Errorf("status=%d, want 403", resp.StatusCode)
 	}
 }
 
@@ -257,7 +257,7 @@ func TestAudit_IPAllowedHonoursPort(t *testing.T) {
 	}
 	for _, c := range cases {
 		if got := p.ipAllowed(netip.MustParseAddr(c.ip), c.port); got != c.want {
-			t.Errorf("ipAllowed(%s, %s) = %v, ingin %v", c.ip, c.port, got, c.want)
+			t.Errorf("ipAllowed(%s, %s) = %v, want %v", c.ip, c.port, got, c.want)
 		}
 	}
 }
@@ -292,10 +292,10 @@ func TestAudit_InScopePortEntryReachesPrivateIP(t *testing.T) {
 
 	c := proxyClient(t, startProxy(t, New(guardWith(t, []string{backend.URL + "/"}, nil), nil)))
 	if st := statusOf(t, c, backend.URL+"/x"); st != http.StatusOK {
-		t.Errorf("status = %d, ingin 200", st)
+		t.Errorf("status = %d, want 200", st)
 	}
 	if hits.Load() != 1 {
-		t.Errorf("hits = %d, ingin 1", hits.Load())
+		t.Errorf("hits = %d, want 1", hits.Load())
 	}
 }
 
@@ -308,9 +308,9 @@ func TestAudit_PathEntryIsNotAPermitForPrivateIP(t *testing.T) {
 
 	c := proxyClient(t, startProxy(t, New(guardWith(t, []string{backend.URL + "/public"}, nil), nil)))
 	if st := statusOf(t, c, backend.URL+"/public/x"); st != http.StatusBadGateway {
-		t.Errorf("status = %d, ingin 502", st)
+		t.Errorf("status = %d, want 502", st)
 	}
 	if hits.Load() != 0 {
-		t.Errorf("hits = %d, ingin 0", hits.Load())
+		t.Errorf("hits = %d, want 0", hits.Load())
 	}
 }

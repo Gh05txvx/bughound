@@ -1,5 +1,5 @@
-"""Config SPK: bobot + mapping. Dimuat dari weights.yaml (fallback ke default di
-sini). Validasi: Σ weights == 1.0 dan setiap kriteria punya tipe benefit/cost."""
+"""Decision-support config: weights + mappings. Loaded from weights.yaml (fallback
+to the defaults here). Validation: Σ weights == 1.0 and each criterion has a benefit/cost type."""
 from __future__ import annotations
 
 import os
@@ -9,10 +9,10 @@ from typing import Dict
 
 try:
     import yaml  # pyyaml
-except ImportError:  # scaffold tetap bisa diimpor tanpa pyyaml (pakai default)
+except ImportError:  # the scaffold is still importable without pyyaml (use defaults)
     yaml = None
 
-# Mapping enum → angka (skema finding BugHound).
+# Map enum -> number (BugHound finding schema).
 CONF_NUM: Dict[str, int] = {"low": 1, "medium": 2, "high": 3}
 SEV_NUM: Dict[str, int] = {"info": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
 
@@ -38,9 +38,9 @@ _DEFAULTS = {
         "reflected": 1, "xss": 1, "sqli": 2, "injection": 2, "idor": 2,
         "access": 2, "blind": 3, "second-order": 3, "ssrf": 3, "_default": 2,
     },
-    # Sinyal payout (C2 signal) per kelas kerentanan — substring match (lowercase).
-    # high→1.0 (eksploitatif/berbayar), noise→0.1 (hygiene/header, nyaris won't-pay),
-    # selain itu 0.5. Inilah lever anti-"header noise".
+    # Payout signal (C2 signal) per vulnerability class, substring match (lowercase).
+    # high->1.0 (exploitable/paid), noise->0.1 (hygiene/header, almost won't-pay),
+    # otherwise 0.5. This is the anti-"header noise" lever.
     "signal_patterns": {
         "high": [
             "sqli", "sql-injection", "sql injection", "nosql",
@@ -58,7 +58,7 @@ _DEFAULTS = {
             "secret", "api-key", "apikey", "access-key", "private-key",
             "credential", "token-leak", "hardcoded",
             "takeover", "subdomain-takeover", "unrestricted-upload", "file-upload",
-            # path-juicy (dicocokkan juga atas URL path via signal extra):
+            # juicy paths (also matched against the URL path via the signal extra):
             "backup", ".sql", ".bak", ".svn", "wp-admin", "phpmyadmin", "actuator",
         ],
         "noise": [
@@ -74,18 +74,18 @@ _DEFAULTS = {
             "tls-version", "deprecated-tls", "weak-cipher", "ssl-certificate",
             "self-signed", "private-ip-disclosure", "internal-ip", "viewstate",
         ],
-        # path "membosankan": file standar (bukan kerentanan) — menurunkan
-        # exposed-path NETRAL ke noise agar endpoint nyata naik di atas file statis.
+        # "boring" paths: standard files (not vulnerabilities), which drop a NEUTRAL
+        # exposed-path to noise so a real endpoint rises above static files.
         "boring": [
             "robots.txt", "sitemap", "favicon", ".well-known", "security.txt",
             "humans.txt", "healthz", "health", "manifest.json", "service-worker",
             "crossdomain.xml", "ads.txt",
         ],
     },
-    # Prior heuristik (tunable).
+    # Heuristic priors (tunable).
     "heuristics": {
-        "ffuf_flood_threshold": 8,   # >=N exposed-path ffuf per host -> kemungkinan soft-404/wildcard
-        "ffuf_flood_fp": 0.6,        # fp_likelihood minimal yang dipaksakan saat flood
+        "ffuf_flood_threshold": 8,   # >=N ffuf exposed-paths per host -> probably soft-404/wildcard
+        "ffuf_flood_fp": 0.6,        # the minimum fp_likelihood forced during a flood
     },
 }
 
@@ -104,11 +104,11 @@ class Config:
     def validate(self) -> None:
         s = sum(self.weights.values())
         if abs(s - 1.0) > 1e-6:
-            raise ValueError(f"Σ weights = {s:.4f}, wajib 1.0 — perbaiki weights.yaml")
+            raise ValueError(f"Σ weights = {s:.4f}, must be 1.0, fix weights.yaml")
         for c in self.weights:
             t = self.types.get(c)
             if t not in ("benefit", "cost"):
-                raise ValueError(f"kriteria {c!r} butuh type benefit/cost, dapat {t!r}")
+                raise ValueError(f"criterion {c!r} needs a benefit/cost type, got {t!r}")
 
     def engine_f(self, engine: str) -> float:
         return self.engine_factor.get(engine, self.engine_factor["_default"])
@@ -124,8 +124,8 @@ class Config:
         return self.effort_by_type["_default"]
 
     def _signal_re(self, kind: str):
-        """Regex ter-cache: pola dicocokkan pada BATAS token (lookaround) agar tak
-        nyangkut sebagai substring (mis. 'rce' di 'resource')."""
+        """Cached regex: patterns match at token BOUNDARIES (lookaround) so they do not
+        catch as a substring (e.g. 'rce' inside 'resource')."""
         attr = f"_re_{kind}"
         rx = getattr(self, attr, None)
         if rx is None:
@@ -134,19 +134,19 @@ class Config:
                 joined = "|".join(re.escape(p) for p in pats)
                 rx = re.compile(rf"(?<![a-z0-9])(?:{joined})(?![a-z0-9])")
             else:
-                rx = re.compile(r"(?!)")  # tak pernah cocok
+                rx = re.compile(r"(?!)")  # never matches
             object.__setattr__(self, attr, rx)
         return rx
 
     def is_boring_path(self, path: str) -> bool:
-        """True bila path = file standar membosankan (robots.txt, /.well-known, …)."""
+        """True when the path is a boring standard file (robots.txt, /.well-known, …)."""
         return bool(path) and self._signal_re("boring").search(path.lower()) is not None
 
     def signal(self, text: str, extra: str = "") -> float:
-        """Sinyal payout per kelas: 0.1 hygiene-noise, 1.0 eksploitatif, 0.5 netral.
-        Noise dicek DULU dari `text` (tipe temuan) saja — 'x-xss-protection' (header)
-        tak boleh ter-high via 'xss'. `extra` (mis. URL path) hanya boleh MEMPROMOSIKAN
-        ke high (mis. exposed-path → /.git), tak pernah menurunkan ke noise."""
+        """Payout signal per class: 0.1 hygiene-noise, 1.0 exploitable, 0.5 neutral.
+        Noise is checked FIRST from `text` (the finding type) only: 'x-xss-protection' (a header)
+        must not go high via 'xss'. `extra` (e.g. the URL path) may only PROMOTE
+        to high (e.g. exposed-path -> /.git), never drop to noise."""
         t = (text or "").lower()
         if self._signal_re("noise").search(t):
             return 0.1
@@ -156,7 +156,7 @@ class Config:
 
 
 def load(path: str | None = None) -> Config:
-    """Muat config dari weights.yaml bila ada; selain itu pakai default."""
+    """Load config from weights.yaml when present; otherwise use the defaults."""
     path = path or os.path.join(os.path.dirname(os.path.dirname(__file__)), "weights.yaml")
     cfg = Config()
     if yaml and os.path.exists(path):

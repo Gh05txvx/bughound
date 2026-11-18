@@ -28,17 +28,17 @@ func TestSQLiteSaveAndGet(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 	if res.ID == "" || res.Deduplicated {
-		t.Fatalf("hasil Save tak terduga: %+v", res)
+		t.Fatalf("unexpected Save result: %+v", res)
 	}
 	got, err := s.Get(ctx, res.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
 	if got.Type != "ssrf" || got.Severity != finding.SeverityCritical || got.DedupKey == "" {
-		t.Errorf("temuan tersimpan tak sesuai: %+v", got)
+		t.Errorf("the stored finding does not match: %+v", got)
 	}
-	if _, err := s.Get(ctx, "tidak-ada"); err != ErrNotFound {
-		t.Errorf("id tak ada harus ErrNotFound, dapat %v", err)
+	if _, err := s.Get(ctx, "missing"); err != ErrNotFound {
+		t.Errorf("a missing id must be ErrNotFound, got %v", err)
 	}
 }
 
@@ -50,10 +50,10 @@ func TestSQLiteDedup(t *testing.T) {
 	ra, _ := s.Save(ctx, a)
 	rb, _ := s.Save(ctx, b)
 	if ra.Deduplicated {
-		t.Fatal("a harus jadi primary")
+		t.Fatal("a must become the primary")
 	}
 	if !rb.Deduplicated || rb.PrimaryID != ra.ID {
-		t.Fatalf("b harus duplikat dari a: %+v", rb)
+		t.Fatalf("b must be a duplicate of a: %+v", rb)
 	}
 	got, _ := s.Get(ctx, rb.ID)
 	if got.Status != finding.StatusDuplicate || got.DuplicateOf != ra.ID {
@@ -67,7 +67,7 @@ func TestSQLiteDedupPerProgram(t *testing.T) {
 	ra, _ := s.Save(ctx, mkFinding("prog-a", "r", "ssrf", "https://acme.io", "https://acme.io/x", "p", finding.SeverityLow))
 	rb, _ := s.Save(ctx, mkFinding("prog-b", "r", "ssrf", "https://acme.io", "https://acme.io/x", "p", finding.SeverityLow))
 	if ra.Deduplicated || rb.Deduplicated {
-		t.Error("dedup_key sama di program berbeda tak boleh saling duplikat")
+		t.Error("the same dedup_key in different programs must not duplicate each other")
 	}
 }
 
@@ -80,13 +80,13 @@ func TestSQLiteListFilterAndSort(t *testing.T) {
 
 	all, _ := s.List(ctx, Query{Program: "acme"})
 	if len(all) != 3 || all[0].Severity != finding.SeverityCritical || all[2].Severity != finding.SeverityLow {
-		t.Fatalf("urutan severity salah: %d temuan", len(all))
+		t.Fatalf("wrong severity order: %d findings", len(all))
 	}
 	if r, _ := s.List(ctx, Query{Program: "acme", RunID: "r2"}); len(r) != 1 {
-		t.Errorf("filter run_id salah: %d", len(r))
+		t.Errorf("wrong run_id filter: %d", len(r))
 	}
 	if r, _ := s.List(ctx, Query{Program: "acme", Types: []string{"ssrf"}}); len(r) != 1 {
-		t.Errorf("filter type salah: %d", len(r))
+		t.Errorf("wrong type filter: %d", len(r))
 	}
 }
 
@@ -97,10 +97,10 @@ func TestSQLiteListExcludesDuplicates(t *testing.T) {
 	s.Save(ctx, mkFinding("acme", "r", "xss", "https://acme.io", "https://acme.io/s", "q", finding.SeverityHigh))
 
 	if def, _ := s.List(ctx, Query{Program: "acme"}); len(def) != 1 {
-		t.Fatalf("default harus sembunyikan duplikat: %d", len(def))
+		t.Fatalf("the default must hide duplicates: %d", len(def))
 	}
 	if all, _ := s.List(ctx, Query{Program: "acme", IncludeDuplicates: true}); len(all) != 2 {
-		t.Fatalf("IncludeDuplicates harus tampilkan semua: %d", len(all))
+		t.Fatalf("IncludeDuplicates must show everything: %d", len(all))
 	}
 }
 
@@ -113,7 +113,7 @@ func TestSQLiteSetStatus(t *testing.T) {
 	}
 	got, _ := s.Get(ctx, res.ID)
 	if got.Status != finding.StatusConfirmed || got.VerifiedBy != "gh05t" || got.UpdatedAt == nil {
-		t.Errorf("triase tak tersimpan: %+v", got)
+		t.Errorf("the triage was not saved: %+v", got)
 	}
 }
 
@@ -121,13 +121,13 @@ func TestSQLiteUpdateContent(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()
 	res, _ := s.Save(ctx, mkFinding("acme", "r", "ssrf", "https://acme.io", "https://acme.io/x", "p", finding.SeverityHigh))
-	if err := s.UpdateContent(ctx, res.ID, "desk", "dampak nyata", []string{"langkah 1", "langkah 2"}); err != nil {
+	if err := s.UpdateContent(ctx, res.ID, "desc", "real impact", []string{"step 1", "step 2"}); err != nil {
 		t.Fatalf("UpdateContent: %v", err)
 	}
-	// Dibaca ulang dari doc JSON -> membuktikan impact/reproduction bertahan lewat serialisasi.
+	// Read back from the JSON doc -> shows that impact/reproduction survive serialization.
 	got, _ := s.Get(ctx, res.ID)
-	if got.Impact != "dampak nyata" || got.Description != "desk" || len(got.Reproduction) != 2 {
-		t.Errorf("konten tak tersimpan lewat doc JSON: %+v", got)
+	if got.Impact != "real impact" || got.Description != "desc" || len(got.Reproduction) != 2 {
+		t.Errorf("the content was not saved through the JSON doc: %+v", got)
 	}
 }
 
@@ -155,13 +155,13 @@ func TestSQLitePersistenceAcrossReopen(t *testing.T) {
 
 	got, err := s2.Get(ctx, res.ID)
 	if err != nil {
-		t.Fatalf("Get setelah reopen: %v", err)
+		t.Fatalf("Get after reopen: %v", err)
 	}
 	if got.Type != "ssrf" {
-		t.Errorf("data tak bertahan lintas-restart: %+v", got)
+		t.Errorf("the data did not survive a restart: %+v", got)
 	}
 	if lst, _ := s2.List(ctx, Query{Program: "acme"}); len(lst) != 1 {
-		t.Errorf("List setelah reopen: %d", len(lst))
+		t.Errorf("List after reopen: %d", len(lst))
 	}
 }
 
@@ -185,10 +185,10 @@ func TestSQLiteProgramCRUDPersists(t *testing.T) {
 	defer s2.Close()
 	got, err := s2.GetProgram(ctx, "demo")
 	if err != nil {
-		t.Fatalf("GetProgram setelah reopen: %v", err)
+		t.Fatalf("GetProgram after reopen: %v", err)
 	}
 	if len(got.InScope) != 2 || got.OutScope[0] != "admin.demo.test" {
-		t.Errorf("scope tak bertahan lintas-restart: %+v", got)
+		t.Errorf("the scope did not survive a restart: %+v", got)
 	}
 }
 
@@ -233,19 +233,19 @@ func TestSQLiteProgramPresetPersists(t *testing.T) {
 		t.Fatalf("GetProgram: %v", err)
 	}
 	if !presetEqual(got.Preset, want) {
-		t.Errorf("preset tak bertahan lintas-restart: got %+v want %+v", got.Preset, want)
+		t.Errorf("the preset did not survive a restart: got %+v want %+v", got.Preset, want)
 	}
 }
 
-// TestSQLiteProgramPresetMigratesOldDB: DB yang dibuat sebelum kolom preset ada
-// (skema programs 4-kolom, seperti bughound.db primary) harus dimigrasi additif
-// saat dibuka — baris lama tetap terbaca (preset kosong) dan preset baru bisa
-// disimpan di kolom hasil migrasi.
+// TestSQLiteProgramPresetMigratesOldDB: a DB created before the preset column
+// existed (the 4-column programs schema, like the primary's bughound.db) must be
+// migrated additively when it is opened. Old rows stay readable (empty preset)
+// and a new preset can be saved in the migrated column.
 func TestSQLiteProgramPresetMigratesOldDB(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "old.db")
 
-	// Bangun tabel programs skema LAMA (tanpa preset) + satu baris, lewat driver mentah.
+	// Build an OLD-schema programs table (no preset) + one row through the raw driver.
 	raw, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -259,33 +259,33 @@ func TestSQLiteProgramPresetMigratesOldDB(t *testing.T) {
 	}
 	raw.Close()
 
-	// OpenSQLite menjalankan init() → migrasi menambah kolom preset (idempoten).
+	// OpenSQLite runs init() → the migration adds the preset column (idempotent).
 	s, err := OpenSQLite(path)
 	if err != nil {
-		t.Fatalf("OpenSQLite (migrasi): %v", err)
+		t.Fatalf("OpenSQLite (migration): %v", err)
 	}
 	defer s.Close()
 
 	got, err := s.GetProgram(ctx, "legacy")
 	if err != nil {
-		t.Fatalf("GetProgram baris lama setelah migrasi: %v", err)
+		t.Fatalf("GetProgram of the old row after migration: %v", err)
 	}
 	if len(got.Preset.Tags) != 0 || len(got.Preset.Severity) != 0 || got.Preset.Stealth {
-		t.Errorf("baris lama harus punya preset kosong, dapat %+v", got.Preset)
+		t.Errorf("the old row must have an empty preset, got %+v", got.Preset)
 	}
 	if err := s.SaveProgram(ctx, Program{Name: "legacy", InScope: []string{"a.io"}, Preset: ScanPreset{Tags: []string{"misconfig"}}}); err != nil {
-		t.Fatalf("SaveProgram preset pasca-migrasi: %v", err)
+		t.Fatalf("SaveProgram preset after migration: %v", err)
 	}
 	got2, _ := s.GetProgram(ctx, "legacy")
 	if len(got2.Preset.Tags) != 1 || got2.Preset.Tags[0] != "misconfig" {
-		t.Errorf("preset pasca-migrasi tak tersimpan: %+v", got2.Preset)
+		t.Errorf("the preset was not saved after migration: %+v", got2.Preset)
 	}
 }
 
 func TestSQLiteDeleteProgramKeepsFindings(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()
-	// Program dengan definisi scope + satu temuan.
+	// A program with a scope definition + one finding.
 	if err := s.SaveProgram(ctx, Program{Name: "demo", InScope: []string{"demo.test"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -294,23 +294,23 @@ func TestSQLiteDeleteProgramKeepsFindings(t *testing.T) {
 	if err := s.DeleteProgram(ctx, "demo"); err != nil {
 		t.Fatalf("DeleteProgram: %v", err)
 	}
-	// Definisi hilang...
+	// The definition is gone...
 	if _, err := s.GetProgram(ctx, "demo"); err != ErrNotFound {
-		t.Errorf("definisi program harus hilang (ErrNotFound), dapat %v", err)
+		t.Errorf("the program definition must be gone (ErrNotFound), got %v", err)
 	}
 	if ps, _ := s.ListPrograms(ctx); len(ps) != 0 {
-		t.Errorf("ListPrograms harus kosong setelah hapus, dapat %+v", ps)
+		t.Errorf("ListPrograms must be empty after the delete, got %+v", ps)
 	}
-	// ...tapi temuan TETAP (hasil kerja; audit/temuan tak ikut terhapus).
+	// ...but the finding STAYS (it is work product; the audit/findings are not deleted with it).
 	if fs, _ := s.List(ctx, Query{Program: "demo"}); len(fs) != 1 {
-		t.Errorf("temuan harus tetap tersimpan setelah program dihapus, dapat %d", len(fs))
+		t.Errorf("the finding must still be stored after the program is deleted, got %d", len(fs))
 	}
 	if ps, _ := s.Programs(ctx); len(ps) != 1 || ps[0] != "demo" {
-		t.Errorf("Programs() (dari temuan) harus tetap memuat demo, dapat %v", ps)
+		t.Errorf("Programs() (from findings) must still contain demo, got %v", ps)
 	}
-	// Idempoten: hapus lagi → ErrNotFound.
+	// Idempotent: deleting again → ErrNotFound.
 	if err := s.DeleteProgram(ctx, "demo"); err != ErrNotFound {
-		t.Errorf("hapus ulang harus ErrNotFound, dapat %v", err)
+		t.Errorf("deleting again must be ErrNotFound, got %v", err)
 	}
 }
 
@@ -324,24 +324,24 @@ func TestSQLiteDeleteFindingsByProgram(t *testing.T) {
 
 	n, err := s.DeleteFindingsByProgram(ctx, "A")
 	if err != nil || n != 2 {
-		t.Fatalf("delete = %d,%v; ingin 2,nil", n, err)
+		t.Fatalf("delete = %d,%v; want 2,nil", n, err)
 	}
 	if fs, _ := s.List(ctx, Query{Program: "A"}); len(fs) != 0 {
-		t.Errorf("temuan A harus habis, sisa %d", len(fs))
+		t.Errorf("findings of A must be gone, %d left", len(fs))
 	}
 	if fs, _ := s.List(ctx, Query{Program: "B"}); len(fs) != 1 {
-		t.Errorf("temuan B harus tetap, dapat %d", len(fs))
+		t.Errorf("findings of B must stay, got %d", len(fs))
 	}
 	if _, err := s.GetProgram(ctx, "A"); err != nil {
-		t.Errorf("definisi scope A harus tetap: %v", err)
+		t.Errorf("the scope definition of A must stay: %v", err)
 	}
-	// Dedup ter-reset (baris findings = state dedup di SQLite).
+	// Dedup is reset (the findings rows = the dedup state in SQLite).
 	res, _ := s.Save(ctx, mkFinding("A", "r2", "ssrf", "https://a.io", "https://a.io/x", "p", finding.SeverityHigh))
 	if res.Deduplicated {
-		t.Error("dedup_key lama harus jadi primary lagi setelah hapus")
+		t.Error("the old dedup_key must become a primary again after the delete")
 	}
-	if n, _ := s.DeleteFindingsByProgram(ctx, "kosong"); n != 0 {
-		t.Errorf("hapus program tanpa temuan = %d; ingin 0", n)
+	if n, _ := s.DeleteFindingsByProgram(ctx, "empty"); n != 0 {
+		t.Errorf("deleting a program without findings = %d; want 0", n)
 	}
 }
 
@@ -356,6 +356,6 @@ func TestSQLitePrograms(t *testing.T) {
 		t.Fatalf("Programs: %v", err)
 	}
 	if len(ps) != 2 || ps[0] != "alpha" || ps[1] != "beta" {
-		t.Errorf("programs harus unik & terurut: %v", ps)
+		t.Errorf("programs must be unique and sorted: %v", ps)
 	}
 }

@@ -8,22 +8,22 @@ import (
 	"bughound/internal/finding"
 )
 
-// Mock adalah engine nuclei palsu untuk M0: ia mengembalikan output sampel yang
-// sudah direkam, tanpa pernah menyentuh jaringan. Ini membuat alur ujung-ke-ujung
-// (dan E2E) mustahil memicu scan nyata.
+// Mock is a fake nuclei engine for M0: it returns recorded sample output without
+// ever touching the network. This makes the end-to-end flow (and E2E) unable to
+// trigger a real scan.
 type Mock struct{}
 
-// Name memenuhi engine.Engine.
+// Name satisfies engine.Engine.
 func (Mock) Name() string { return "nuclei (mock)" }
 
-// Scan memenuhi engine.Engine: mengembalikan temuan dari output sampel.
-// target/ctx sengaja diabaikan karena tak ada koneksi nyata.
+// Scan satisfies engine.Engine: it returns findings from the sample output.
+// target/ctx are intentionally ignored because there is no real connection.
 func (Mock) Scan(_ context.Context, _ string, program, runID string) ([]*finding.Finding, error) {
 	return Parse(bytes.NewReader(sampleJSONL), program, runID)
 }
 
-// sampleJSONL dibangun dari struct agar newline di request/response ter-escape
-// dengan benar (satu event = satu baris), tanpa file eksternal.
+// sampleJSONL is built from structs so newlines in request/response are escaped
+// correctly (one event = one line), without an external file.
 var sampleJSONL = buildSample()
 
 func buildSample() []byte {
@@ -43,7 +43,7 @@ func buildSample() []byte {
 			Response: "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nami-id\nami-launch-index",
 			Info: nucleiInfo{
 				Name:        "SSRF via fetch parameter",
-				Description: "Endpoint mengambil URL dari parameter tanpa validasi, memungkinkan permintaan ke jaringan internal.",
+				Description: "The endpoint takes a URL from a parameter without validation, allowing requests to the internal network.",
 				Severity:    "critical",
 				Tags:        stringList{"ssrf", "cloud-metadata"},
 				Reference:   stringList{"https://owasp.org/www-community/attacks/Server_Side_Request_Forgery"},
@@ -65,7 +65,7 @@ func buildSample() []byte {
 			Response:      "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nAPP_ENV=production",
 			Info: nucleiInfo{
 				Name:           "Exposed .env configuration file",
-				Description:    "File .env dapat diakses publik.",
+				Description:    "The .env file is publicly accessible.",
 				Severity:       "medium",
 				Tags:           stringList{"exposure", "config"},
 				Classification: nucleiClass{CWEID: stringList{"CWE-200"}},
@@ -77,7 +77,7 @@ func buildSample() []byte {
 	for _, e := range events {
 		b, err := json.Marshal(e)
 		if err != nil {
-			panic("nuclei: gagal membangun sampel: " + err.Error())
+			panic("nuclei: failed to build sample: " + err.Error())
 		}
 		buf.Write(b)
 		buf.WriteByte('\n')

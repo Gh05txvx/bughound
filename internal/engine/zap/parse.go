@@ -1,6 +1,6 @@
-// Package zap menormalkan laporan OWASP ZAP (DAST) ke Skema Temuan Seragam
-// (BH-SPEC-FINDING). Menyediakan Mock (tanpa jaringan) dan Runner nyata
-// (subprocess zap.sh quickscan), membuktikan pola "tambah engine = tambah satu
+// Package zap normalizes an OWASP ZAP (DAST) report to the Uniform Finding Schema
+// (BH-SPEC-FINDING). It provides a Mock (no network) and a real Runner
+// (zap.sh quickscan subprocess), proving the pattern "add an engine = add one
 // adapter".
 package zap
 
@@ -42,12 +42,12 @@ type zapInstance struct {
 	Evidence string `json:"evidence"`
 }
 
-// Parse membaca laporan JSON ZAP dan mengembalikan temuan ternormalkan: satu
-// temuan per instance (per URI/param), atau satu per alert bila tanpa instance.
+// Parse reads a ZAP JSON report and returns normalized findings: one
+// finding per instance (per URI/param), or one per alert when there is no instance.
 func Parse(r io.Reader, program, runID string) ([]*finding.Finding, error) {
 	var rep zapReport
 	if err := json.NewDecoder(r).Decode(&rep); err != nil {
-		return nil, fmt.Errorf("zap: output bukan JSON valid: %w", err)
+		return nil, fmt.Errorf("zap: output is not valid JSON: %w", err)
 	}
 	var out []*finding.Finding
 	for _, site := range rep.Site {
@@ -103,7 +103,7 @@ func cloneFinding(f *finding.Finding) *finding.Finding {
 	return &c
 }
 
-// mapRisk memetakan riskcode ZAP (0 info .. 3 high) ke severity.
+// mapRisk maps the ZAP riskcode (0 info .. 3 high) to severity.
 func mapRisk(code string) finding.Severity {
 	switch strings.TrimSpace(code) {
 	case "3":
@@ -117,7 +117,7 @@ func mapRisk(code string) finding.Severity {
 	}
 }
 
-// mapConfidence memetakan confidence ZAP (0 FP .. 4 confirmed) ke confidence.
+// mapConfidence maps ZAP confidence (0 FP .. 4 confirmed) to confidence.
 func mapConfidence(code string) finding.Confidence {
 	switch strings.TrimSpace(code) {
 	case "4", "3":

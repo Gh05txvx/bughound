@@ -1,14 +1,15 @@
-// Package geoip melakukan lookup negara & ASN sebuah IP dari database MaxMind
-// GeoLite2 LOKAL (.mmdb) — sepenuhnya OFFLINE, nol koneksi keluar.
+// Package geoip looks up the country and ASN of an IP in a LOCAL MaxMind
+// GeoLite2 database (.mmdb). It is fully OFFLINE and makes no outbound
+// connections.
 //
-// Ini menjaga prinsip egress-isolation BugHound (Prinsip #2): tak pernah ada
-// panggilan ke layanan geolokasi pihak ketiga (ipinfo.io, ip-api.com, dll) yang
-// akan berarti egress ke aset out-of-scope. Satu-satunya sumber data adalah file
-// .mmdb yang operator sediakan sendiri.
+// This keeps BugHound's egress isolation principle (Principle #2): there is
+// never a call to a third-party geolocation service (ipinfo.io, ip-api.com,
+// etc.), which would be egress to an out-of-scope asset. The only data source
+// is the .mmdb file the operator supplies.
 //
-// Fitur ini OPSIONAL dan DEGRADASI MULUS: bila DB tak dimuat, Resolve
-// mengembalikan Info kosong dan Loaded()==false — pemanggil cukup menyembunyikan
-// kolom negara. Database tak pernah diperlukan agar BugHound berjalan.
+// The feature is OPTIONAL and DEGRADES CLEANLY: when no DB is loaded, Resolve
+// returns an empty Info and Loaded()==false, and the caller only has to hide
+// the country column. BugHound never needs the database to run.
 package geoip
 
 import (
@@ -19,21 +20,21 @@ import (
 	geoip2 "github.com/oschwald/geoip2-golang"
 )
 
-// Info adalah hasil lookup satu IP. Field kosong berarti tak diketahui.
+// Info is the lookup result for one IP. An empty field means unknown.
 type Info struct {
 	CountryCode string // ISO-3166 alpha-2, mis. "NL"
-	Country     string // nama bahasa Inggris, mis. "Netherlands"
-	ASN         uint   // nomor Autonomous System, 0 bila tak diketahui
-	ASNOrg      string // organisasi AS, mis. "DigitalOcean, LLC"
+	Country     string // English name, e.g. "Netherlands"
+	ASN         uint   // Autonomous System number, 0 when unknown
+	ASNOrg      string // AS organization, e.g. "DigitalOcean, LLC"
 }
 
-// Empty melaporkan bahwa lookup tak menghasilkan apa pun.
+// Empty reports that the lookup returned nothing.
 func (i Info) Empty() bool {
 	return i.CountryCode == "" && i.Country == "" && i.ASN == 0 && i.ASNOrg == ""
 }
 
-// Flag mengembalikan emoji bendera dari CountryCode (dua Regional Indicator),
-// atau "" bila kode tak valid. Murni turunan kode — tanpa data tambahan.
+// Flag returns the flag emoji for CountryCode (two Regional Indicators), or ""
+// when the code is invalid. It is derived from the code alone, with no extra data.
 func (i Info) Flag() string {
 	cc := strings.ToUpper(strings.TrimSpace(i.CountryCode))
 	if len(cc) != 2 || cc[0] < 'A' || cc[0] > 'Z' || cc[1] < 'A' || cc[1] > 'Z' {
@@ -42,8 +43,8 @@ func (i Info) Flag() string {
 	return string(rune(0x1F1E6+int(cc[0]-'A'))) + string(rune(0x1F1E6+int(cc[1]-'A')))
 }
 
-// Label menggabungkan nama & kode negara untuk tampilan: "Netherlands (NL)",
-// atau salah satunya, atau "" bila negara tak diketahui.
+// Label joins the country name and code for display: "Netherlands (NL)", or
+// whichever one is set, or "" when the country is unknown.
 func (i Info) Label() string {
 	switch {
 	case i.Country != "" && i.CountryCode != "":
@@ -55,8 +56,8 @@ func (i Info) Label() string {
 	}
 }
 
-// Display menggabungkan bendera, negara & ASN jadi satu string tampilan ringkas,
-// mis. "🇳🇱 Netherlands (NL) · AS205100 — DigitalOcean, LLC". "" bila kosong.
+// Display joins the flag, country and ASN into one short display string, e.g.
+// "🇳🇱 Netherlands (NL) · AS205100 — DigitalOcean, LLC". "" when empty.
 func (i Info) Display() string {
 	var parts []string
 	if loc := strings.TrimSpace(i.Flag() + " " + i.Label()); loc != "" {
@@ -68,8 +69,8 @@ func (i Info) Display() string {
 	return strings.Join(parts, " · ")
 }
 
-// ASNLabel memformat AS untuk tampilan: "AS205100 — DigitalOcean, LLC", atau ""
-// bila AS tak diketahui.
+// ASNLabel formats the AS for display: "AS205100 — DigitalOcean, LLC", or ""
+// when the AS is unknown.
 func (i Info) ASNLabel() string {
 	if i.ASN == 0 && i.ASNOrg == "" {
 		return ""
@@ -84,33 +85,33 @@ func (i Info) ASNLabel() string {
 	return s
 }
 
-// Resolver memetakan IP → Info. Implementasi WAJIB offline.
+// Resolver maps IP → Info. Implementations MUST be offline.
 type Resolver interface {
-	// Resolve mengembalikan Info untuk sebuah IP (apa adanya, best-effort).
-	// IP kosong/tak valid → Info kosong, tak pernah panic.
+	// Resolve returns the Info for an IP (as is, best effort).
+	// An empty or invalid IP → an empty Info; it never panics.
 	Resolve(ip string) Info
-	// Loaded melaporkan apakah setidaknya satu database termuat.
+	// Loaded reports whether at least one database is loaded.
 	Loaded() bool
 }
 
-// Nop adalah Resolver nonaktif: selalu Info kosong, Loaded()==false. Dipakai saat
-// tak ada DB dikonfigurasi, agar pemanggil tak perlu nil-check.
+// Nop is the disabled Resolver: always an empty Info, Loaded()==false. It is
+// used when no DB is configured, so callers need no nil check.
 type Nop struct{}
 
 func (Nop) Resolve(string) Info { return Info{} }
 func (Nop) Loaded() bool        { return false }
 
-// DB adalah Resolver berbasis file GeoLite2 lokal. Reader maxminddb aman dibaca
-// konkuren, jadi DB boleh dipakai banyak goroutine tanpa penguncian.
+// DB is a Resolver backed by local GeoLite2 files. A maxminddb reader is safe
+// for concurrent reads, so many goroutines can share a DB without locking.
 type DB struct {
 	country *geoip2.Reader
 	asn     *geoip2.Reader
 }
 
-// Open memuat database GeoLite2 Country dan/atau ASN dari path yang diberikan.
-// Path kosong = lewati DB itu. Bila KEDUA path kosong, mengembalikan (nil, nil):
-// pemanggil memakai Nop. Error hanya untuk path terisi yang gagal dibuka, agar
-// salah konfigurasi terlihat; pemanggil boleh tetap jalan dengan Nop.
+// Open loads the GeoLite2 Country and/or ASN database from the given paths. An
+// empty path skips that DB. When BOTH paths are empty it returns (nil, nil) and
+// the caller uses Nop. It errors only for a non-empty path that fails to open,
+// so a misconfiguration is visible; the caller may still carry on with Nop.
 func Open(countryPath, asnPath string) (*DB, error) {
 	countryPath = strings.TrimSpace(countryPath)
 	asnPath = strings.TrimSpace(asnPath)
@@ -121,7 +122,7 @@ func Open(countryPath, asnPath string) (*DB, error) {
 	if countryPath != "" {
 		r, err := geoip2.Open(countryPath)
 		if err != nil {
-			return nil, fmt.Errorf("buka GeoIP Country %q: %w", countryPath, err)
+			return nil, fmt.Errorf("open GeoIP Country %q: %w", countryPath, err)
 		}
 		db.country = r
 	}
@@ -129,18 +130,18 @@ func Open(countryPath, asnPath string) (*DB, error) {
 		r, err := geoip2.Open(asnPath)
 		if err != nil {
 			db.Close()
-			return nil, fmt.Errorf("buka GeoIP ASN %q: %w", asnPath, err)
+			return nil, fmt.Errorf("open GeoIP ASN %q: %w", asnPath, err)
 		}
 		db.asn = r
 	}
 	return db, nil
 }
 
-// Loaded melaporkan apakah setidaknya satu database termuat.
+// Loaded reports whether at least one database is loaded.
 func (db *DB) Loaded() bool { return db != nil && (db.country != nil || db.asn != nil) }
 
-// Resolve mencari negara & ASN sebuah IP. Kesalahan lookup diabaikan (field tetap
-// kosong): diagnostik tak boleh gagal hanya karena satu IP tak terdaftar.
+// Resolve looks up the country and ASN of an IP. Lookup errors are ignored (the
+// fields stay empty): diagnostics must not fail because one IP is not listed.
 func (db *DB) Resolve(ip string) Info {
 	var info Info
 	if db == nil {
@@ -165,7 +166,7 @@ func (db *DB) Resolve(ip string) Info {
 	return info
 }
 
-// Close menutup kedua reader (idempoten).
+// Close closes both readers (idempotent).
 func (db *DB) Close() error {
 	if db == nil {
 		return nil

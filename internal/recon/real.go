@@ -13,29 +13,31 @@ import (
 	"bughound/internal/engine"
 )
 
-// RealPipeline menjalankan recon NYATA via subprocess: subfinder (pasif, OSINT)
-// → httpx (probe host hidup) → katana (crawl). httpx & katana MENYENTUH target,
-// jadi keduanya diarahkan ke proxy egress (ProxyAware) agar scope ditegakkan
-// per koneksi. subfinder PASIF (mengontak sumber OSINT, bukan target) sehingga
-// TIDAK lewat proxy — ini perilaku yang benar.
+// RealPipeline runs REAL recon through subprocesses: subfinder (passive, OSINT)
+// → httpx (probe live hosts) → katana (crawl). httpx and katana TOUCH the
+// target, so both are pointed at the egress proxy (ProxyAware) and scope is
+// enforced per connection. subfinder is PASSIVE (it contacts OSINT sources, not
+// the target), so it does NOT go through the proxy, which is the correct
+// behaviour.
 //
-// Building block opt-in: hanya dipakai dengan `-engine real`, dan hanya terhadap
-// target yang sah. Tidak dijalankan di lingkungan dev/test (CLAUDE.md).
+// An opt-in building block: it is used only with `-engine real`, and only
+// against authorized targets. It is not run in dev/test environments.
 type RealPipeline struct {
 	Subfinder Subfinder
 	Httpx     *Httpx
 	Katana    *Katana
-	// Tambahan opsional (nil = dilewati). Gau pasif; Dnsx query resolver; Naabu
-	// port scan aktif yang hanya menyentuh host in-scope (lihat Discover).
+	// Optional extras (nil = skipped). Gau is passive; Dnsx queries resolvers;
+	// Naabu is an active port scan that only touches in-scope hosts (see Discover).
 	Gau   *Gau
 	Dnsx  *Dnsx
 	Naabu *Naabu
 }
 
-// NewRealPipelineRate membuat pipeline dengan tool default (binary di PATH) dan
-// menjepit laju request tahap AKTIF (httpx, katana, naabu) ke rate req/dtk
-// (0 = default tool, tanpa batas laju tambahan). Tahap pasif (subfinder, gau)
-// dan query DNS (dnsx) tidak menyentuh target sehingga tidak ikut dijepit.
+// NewRealPipelineRate creates a pipeline with the default tools (binaries on
+// PATH) and clamps the request rate of the ACTIVE stages (httpx, katana, naabu)
+// to rate req/s (0 = the tool's default, no extra rate limit). The passive
+// stages (subfinder, gau) and DNS queries (dnsx) do not touch the target, so
+// they are not clamped.
 func NewRealPipelineRate(rate int) *RealPipeline {
 	return &RealPipeline{
 		Httpx:  &Httpx{rate: rate},
@@ -50,29 +52,29 @@ func (p *RealPipeline) Name() string {
 	return "recon (subfinder/gau→dnsx→httpx→naabu/katana)"
 }
 
-// UseProxy memenuhi engine.ProxyAware: hanya tahap aktif (httpx, katana) yang
-// diarahkan ke proxy; subfinder pasif dibiarkan.
+// UseProxy satisfies engine.ProxyAware: only the active stages (httpx, katana)
+// are pointed at the proxy; passive subfinder is left alone.
 func (p *RealPipeline) UseProxy(addr string) {
 	p.Httpx.proxyAddr = addr
 	p.Katana.proxyAddr = addr
 }
 
-// UseAuthHeaders memenuhi engine.AuthAware: tahap aktif (httpx probe, katana
-// crawl) menyertakan header auth (-H) agar recon menjangkau konten di balik
-// login (Lever 1). subfinder/naabu (pasif/TCP) tak relevan.
+// UseAuthHeaders satisfies engine.AuthAware: the active stages (httpx probe,
+// katana crawl) send the auth headers (-H) so recon reaches content behind the
+// login (Lever 1). It does not apply to subfinder/naabu (passive/TCP).
 func (p *RealPipeline) UseAuthHeaders(h []string) {
 	p.Httpx.authHeaders = h
 	p.Katana.authHeaders = h
 }
 
-// Discover menjalankan pipeline untuk seluruh seed. Urutan menjaga prinsip
-// "tak menyentuh out-of-scope": tahap aktif-HTTP (httpx, katana) lewat proxy
-// egress, dan naabu (TCP mentah, tak bisa diproxy) hanya dijalankan pada host
-// yang SUDAH terbukti in-scope dari keluaran httpx.
+// Discover runs the pipeline for every seed. The order keeps the "never touch
+// out-of-scope" principle: the active HTTP stages (httpx, katana) go through
+// the egress proxy, and naabu (raw TCP, cannot be proxied) only runs against
+// hosts ALREADY proven in scope by httpx output.
 func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, error) {
 	var assets []Asset
 
-	// 1. subfinder (pasif) → host (subdomain + seed).
+	// 1. subfinder (passive) → hosts (subdomains + seed).
 	var hosts []string
 	for _, d := range seeds {
 		d = strings.TrimSpace(d)
@@ -89,7 +91,7 @@ func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, e
 		assets = append(assets, Asset{Value: h, Source: "subfinder"})
 	}
 
-	// 2. gau (pasif) → URL historis dari arsip web.
+	// 2. gau (passive) → historical URLs from web archives.
 	if p.Gau != nil {
 		urls, err := p.Gau.Collect(ctx, seeds)
 		if err != nil {
@@ -100,7 +102,7 @@ func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, e
 		}
 	}
 
-	// 3. dnsx (query resolver) → host yang resolve; dipakai sebagai kandidat probe.
+	// 3. dnsx (resolver queries) → hosts that resolve; used as probe candidates.
 	probeHosts := hosts
 	if p.Dnsx != nil {
 		resolved, err := p.Dnsx.Resolve(ctx, hosts)
@@ -115,7 +117,7 @@ func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, e
 		}
 	}
 
-	// 4. httpx (aktif, via proxy egress) → URL hidup yang PASTI in-scope.
+	// 4. httpx (active, via the egress proxy) → live URLs that are CERTAINLY in scope.
 	live, err := p.Httpx.Probe(ctx, probeHosts)
 	if err != nil {
 		return nil, err
@@ -124,7 +126,7 @@ func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, e
 		assets = append(assets, Asset{Value: u, Source: "httpx"})
 	}
 
-	// 5. naabu (aktif, TCP mentah, TAK diproxy) — hanya pada host in-scope hasil httpx.
+	// 5. naabu (active, raw TCP, NOT proxied): only against in-scope hosts from httpx.
 	if p.Naabu != nil {
 		ports, err := p.Naabu.ScanPorts(ctx, hostsFromURLs(live))
 		if err != nil {
@@ -135,7 +137,7 @@ func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, e
 		}
 	}
 
-	// 6. katana (aktif, via proxy egress) → crawling URL hidup.
+	// 6. katana (active, via the egress proxy) → crawl the live URLs.
 	crawled, err := p.Katana.Crawl(ctx, live)
 	if err != nil {
 		return nil, err
@@ -146,7 +148,7 @@ func (p *RealPipeline) Discover(ctx context.Context, seeds []string) ([]Asset, e
 	return assets, nil
 }
 
-// Subfinder: enumerasi subdomain pasif.
+// Subfinder: passive subdomain enumeration.
 type Subfinder struct{ Binary string }
 
 func (s Subfinder) bin() string {
@@ -162,15 +164,15 @@ func (s Subfinder) Enumerate(ctx context.Context, domain string) ([]string, erro
 	if domain == "" {
 		return nil, nil
 	}
-	return runLines(ctx, s.bin(), "", nil, s.args(domain)...) // pasif: tanpa proxy
+	return runLines(ctx, s.bin(), "", nil, s.args(domain)...) // passive: no proxy
 }
 
-// Httpx: probe host hidup (aktif → lewat proxy egress).
+// Httpx: probes live hosts (active → goes through the egress proxy).
 type Httpx struct {
 	Binary      string
 	rate        int // -rate-limit (req/dtk); 0 = default httpx
 	proxyAddr   string
-	authHeaders []string // Lever 1: header auth disuntik via -H
+	authHeaders []string // Lever 1: auth headers injected with -H
 }
 
 func (h *Httpx) bin() string {
@@ -188,7 +190,7 @@ func (h *Httpx) args() []string {
 	if h.rate > 0 {
 		a = append(a, "-rate-limit", strconv.Itoa(h.rate))
 	}
-	for _, hd := range h.authHeaders { // Lever 1: probe di balik login
+	for _, hd := range h.authHeaders { // Lever 1: probe behind the login
 		if strings.TrimSpace(hd) != "" {
 			a = append(a, "-H", hd)
 		}
@@ -210,12 +212,12 @@ func (h *Httpx) proxyEnvOrNil() []string {
 	return egress.ProxyEnv(os.Environ(), "http://"+h.proxyAddr)
 }
 
-// Katana: crawling (aktif → lewat proxy egress).
+// Katana: crawling (active → goes through the egress proxy).
 type Katana struct {
 	Binary      string
 	rate        int // -rate-limit (req/dtk); 0 = default katana
 	proxyAddr   string
-	authHeaders []string // Lever 1: header auth disuntik via -H
+	authHeaders []string // Lever 1: auth headers injected with -H
 }
 
 func (k *Katana) bin() string {
@@ -226,12 +228,13 @@ func (k *Katana) bin() string {
 }
 
 func (k *Katana) args() []string {
-	// -jc: crawl JS — ekstrak endpoint dari bundel JS (route/endpoint API SPA yang
-	// tak terlihat di HTML statis). Statis, TANPA headless/browser. -d 3: depth
-	// eksplisit (deterministik lintas-versi, konservatif). Permukaan hasil recon ini
-	// memberi makan SEMUA engine non-crawling (nuclei/ffuf/zap/dalfox) lewat
-	// orchestrator, jadi crawl yang dangkal mengecilkan recall seluruh roster.
-	// Tetap unauth + lewat proxy egress/scope guard/rate limiter (lihat Crawl).
+	// -jc: crawl JS, i.e. extract endpoints from JS bundles (SPA routes and API
+	// endpoints that do not show up in static HTML). Static, with NO headless
+	// browser. -d 3: an explicit depth (deterministic across versions,
+	// conservative). The surface this recon finds feeds EVERY non-crawling engine
+	// (nuclei/ffuf/zap/dalfox) through the orchestrator, so a shallow crawl
+	// shrinks the recall of the whole roster. It stays unauthenticated and goes
+	// through the egress proxy/scope guard/rate limiter (see Crawl).
 	a := []string{"-silent", "-jc", "-d", "3"}
 	if k.proxyAddr != "" {
 		a = append(a, "-proxy", "http://"+k.proxyAddr)
@@ -240,13 +243,13 @@ func (k *Katana) args() []string {
 		a = append(a, "-rate-limit", strconv.Itoa(k.rate))
 	}
 	auth := false
-	for _, hd := range k.authHeaders { // Lever 1: crawl di balik login (bila ada)
+	for _, hd := range k.authHeaders { // Lever 1: crawl behind the login (when set)
 		if strings.TrimSpace(hd) != "" {
 			a = append(a, "-H", hd)
 			auth = true
 		}
 	}
-	if auth { // jangan ikuti link logout: satu GET mematikan sesi login (live 2026-11-16)
+	if auth { // do not follow logout links: one GET kills the login session (seen live 2026-11-16)
 		a = append(a, "-cos", engine.LogoutPattern)
 	}
 	return a
@@ -263,8 +266,8 @@ func (k *Katana) Crawl(ctx context.Context, urls []string) ([]string, error) {
 	return runLines(ctx, k.bin(), strings.Join(urls, "\n"), env, k.args()...)
 }
 
-// runLines menjalankan tool berbasis baris (stdin opsional) dan mengembalikan
-// baris stdout yang tidak kosong.
+// runLines runs a line-based tool (stdin optional) and returns the non-empty
+// stdout lines.
 func runLines(ctx context.Context, bin, stdin string, env []string, args ...string) ([]string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	if stdin != "" {
@@ -277,7 +280,7 @@ func runLines(ctx context.Context, bin, stdin string, env []string, args ...stri
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("recon %s gagal: %w (%s)", bin, err, strings.TrimSpace(errb.String()))
+		return nil, fmt.Errorf("recon %s failed: %w (%s)", bin, err, strings.TrimSpace(errb.String()))
 	}
 	var lines []string
 	for _, ln := range strings.Split(out.String(), "\n") {

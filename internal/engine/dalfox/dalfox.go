@@ -1,15 +1,15 @@
-// Package dalfox membungkus dalfox (hahwul/dalfox) sebagai engine DAST AKTIF
-// khusus XSS di balik kontrak engine seragam. Ia mengirim payload XSS ke
-// parameter target lalu menormalkan PoC yang ditemukan ke Skema Temuan Seragam
-// (BH-SPEC-FINDING), seperti engine lain.
+// Package dalfox wraps dalfox (hahwul/dalfox) as an ACTIVE DAST engine
+// specialized in XSS behind the uniform engine contract. It sends XSS payloads to
+// target parameters, then normalizes the PoC it finds to the Uniform Finding Schema
+// (BH-SPEC-FINDING), like the other engines.
 //
-// Keamanan (area sensitif): SEMUA request lewat proxy egress scope-enforced —
-// dalfox dijalankan dengan --proxy menunjuk proxy bughound, sehingga tiap
-// koneksi keluar diperiksa scope guard (payload hanya mengubah NILAI parameter;
-// host tetap in-scope; blind/OAST ke pihak-3 diblok proxy). Fail-safe: tanpa
-// proxy, TIDAK ada koneksi apa pun. Volume dibatasi worker + delay (stealth).
-// Non-destruktif: dalfox menguji refleksi/eksekusi XSS, tak melakukan aksi
-// merusak. Temuan = KANDIDAT (draft→verify manual), selaras filosofi bughound.
+// Security (sensitive area): EVERY request goes through the scope-enforced egress proxy —
+// dalfox runs with --proxy pointing at bughound's proxy, so each outbound
+// connection is checked by the scope guard (a payload only changes a parameter VALUE;
+// the host stays in-scope; blind/OAST to a third party is blocked by the proxy). Fail-safe: without a
+// proxy, there is NO connection at all. Volume is capped by workers + delay (stealth).
+// Non-destructive: dalfox tests XSS reflection/execution, it performs no
+// destructive action. A finding = a CANDIDATE (draft→manual verify), in line with bughound's philosophy.
 package dalfox
 
 import (
@@ -25,36 +25,36 @@ import (
 	"bughound/internal/finding"
 )
 
-// Runner adalah adapter dalfox nyata (OPT-IN; butuh binary dalfox di PATH).
+// Runner is the real dalfox adapter (OPT-IN; needs the dalfox binary on PATH).
 type Runner struct {
 	Binary      string // default "dalfox"
-	RateLimit   int    // perkiraan laju → dipetakan ke --delay (ms) bila > 0
-	Stealth     bool   // low-and-slow: worker lebih sedikit + delay
+	RateLimit   int    // approximate rate → mapped to --delay (ms) when > 0
+	Stealth     bool   // low-and-slow: fewer workers + delay
 	proxyAddr   string
-	authHeaders []string // Lever 1: header auth disuntik via -H (lihat UseAuthHeaders)
+	authHeaders []string // Lever 1: auth headers injected via -H (see UseAuthHeaders)
 }
 
-// Name memenuhi engine.Engine.
+// Name satisfies engine.Engine.
 func (r *Runner) Name() string { return "dalfox" }
 
-// UseProxy memenuhi engine.ProxyAware: seluruh request dalfox lewat proxy egress.
+// UseProxy satisfies engine.ProxyAware: every dalfox request goes through the egress proxy.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
 
-// UseAuthHeaders memenuhi engine.AuthAware: menyuntik header auth (-H) ke tiap
-// request dalfox agar uji XSS di balik login (Lever 1).
+// UseAuthHeaders satisfies engine.AuthAware: injects auth headers (-H) into every
+// dalfox request so XSS is tested behind a login (Lever 1).
 func (r *Runner) UseAuthHeaders(h []string) { r.authHeaders = h }
 
-// Scan memenuhi engine.Engine: jalankan dalfox atas target lalu normalkan PoC.
+// Scan satisfies engine.Engine: run dalfox against the target, then normalize the PoC.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
-	// Fail-safe: tanpa proxy egress, JANGAN buat koneksi apa pun (selaras prinsip
-	// "tidak pernah memicu koneksi yang memintas scope guard").
+	// Fail-safe: without the egress proxy, make NO connection at all (in line with the
+	// principle "never trigger a connection that bypasses the scope guard").
 	if r.proxyAddr == "" {
 		return nil, nil
 	}
 
 	outFile, err := os.CreateTemp("", "dalfox-*.json")
 	if err != nil {
-		return nil, fmt.Errorf("dalfox: berkas output: %w", err)
+		return nil, fmt.Errorf("dalfox: output file: %w", err)
 	}
 	outPath := outFile.Name()
 	_ = outFile.Close()
@@ -70,33 +70,33 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
 
-	// Baca hasil dari berkas output lebih dulu: dalfox menulis PoC ke sana
-	// terlepas dari kode keluar. Bila ada temuan, kembalikan meski exit non-zero
-	// (toleran pada kuirk exit dalfox); bila kosong & ada error, laporkan error.
+	// Read the result from the output file first: dalfox writes the PoC there
+	// regardless of the exit code. If there are findings, return them even on a non-zero exit
+	// (tolerant of dalfox's exit quirk); if empty & there is an error, report the error.
 	data, _ := os.ReadFile(outPath)
 	fs, perr := Parse(bytes.NewReader(data), target, program, runID)
 	if perr != nil {
 		if runErr != nil {
-			return nil, fmt.Errorf("dalfox: eksekusi gagal: %w (%s)", runErr, strings.TrimSpace(stderr.String()))
+			return nil, fmt.Errorf("dalfox: execution failed: %w (%s)", runErr, strings.TrimSpace(stderr.String()))
 		}
 		return nil, fmt.Errorf("dalfox: parse: %w", perr)
 	}
 	if len(fs) == 0 && runErr != nil {
-		return nil, fmt.Errorf("dalfox: eksekusi gagal: %w (%s)", runErr, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("dalfox: execution failed: %w (%s)", runErr, strings.TrimSpace(stderr.String()))
 	}
 	return fs, nil
 }
 
-// args menyusun argumen dalfox (dipisah agar bisa diuji tanpa mengeksekusi).
-// Output JSON ditulis ke berkas (parse bersih, lepas dari noise stdout); seluruh
-// request diarahkan ke proxy egress; worker/delay membatasi volume.
+// args assembles the dalfox arguments (separated so they can be tested without executing).
+// JSON output is written to a file (a clean parse, free of stdout noise); every
+// request is routed to the egress proxy; workers/delay cap the volume.
 func (r *Runner) args(target, outPath string) []string {
 	a := []string{
 		"url", target,
 		"--format", "json",
 		"--output", outPath,
-		"--output-request",  // sertakan HTTP request mentah → Evidence.Request (siap-Burp)
-		"--output-response", // sertakan HTTP response mentah → Evidence.ResponseExcerpt
+		"--output-request",  // include the raw HTTP request → Evidence.Request (Burp-ready)
+		"--output-response", // include the raw HTTP response → Evidence.ResponseExcerpt
 		"--silence",
 		"--no-spinner",
 		"--no-color",
@@ -107,7 +107,7 @@ func (r *Runner) args(target, outPath string) []string {
 	if d := r.delayMS(); d > 0 {
 		a = append(a, "--delay", strconv.Itoa(d))
 	}
-	for _, h := range r.authHeaders { // Lever 1: header auth (bila ada)
+	for _, h := range r.authHeaders { // Lever 1: auth headers (if any)
 		if strings.TrimSpace(h) != "" {
 			a = append(a, "-H", h)
 		}
@@ -115,7 +115,7 @@ func (r *Runner) args(target, outPath string) []string {
 	return a
 }
 
-// workers menentukan konkruensi dalfox: lebih rendah saat stealth (jejak minimal).
+// workers sets dalfox concurrency: lower under stealth (minimal footprint).
 func (r *Runner) workers() int {
 	if r.Stealth {
 		return 10
@@ -123,8 +123,8 @@ func (r *Runner) workers() int {
 	return 40
 }
 
-// delayMS menentukan jeda antar-request (ms): dari RateLimit bila diset, lalu
-// jeda stealth bawaan, selain itu 0 (tanpa jeda tambahan).
+// delayMS sets the gap between requests (ms): from RateLimit when set, then
+// the default stealth gap, otherwise 0 (no extra gap).
 func (r *Runner) delayMS() int {
 	if r.RateLimit > 0 {
 		ms := 1000 / r.RateLimit

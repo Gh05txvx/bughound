@@ -32,14 +32,14 @@ func TestParseFindSecBugs(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(fs) != 1 {
-		t.Fatalf("mau 1, dapat %d", len(fs))
+		t.Fatalf("want 1, got %d", len(fs))
 	}
 	f := fs[0]
 	if f.Type != "SQL_INJECTION_JDBC" {
 		t.Errorf("type: %s", f.Type)
 	}
 	if f.Severity != finding.SeverityHigh {
-		t.Errorf("severity: mau high, dapat %s", f.Severity)
+		t.Errorf("severity: want high, got %s", f.Severity)
 	}
 	if f.Location.URL != "com/example/Dao.java:88" {
 		t.Errorf("location: %s", f.Location.URL)
@@ -49,15 +49,15 @@ func TestParseFindSecBugs(t *testing.T) {
 	}
 	for _, want := range []string{"java", "sast", "findsecbugs"} {
 		if !hasTag(f.Tags, want) {
-			t.Errorf("tag %q hilang dari %v", want, f.Tags)
+			t.Errorf("tag %q is missing from %v", want, f.Tags)
 		}
 	}
 }
 
 func TestDiscoverJVMTargets(t *testing.T) {
 	root := t.TempDir()
-	// Buat: sub/app.jar, classes/com/Foo.class + classes/com/Bar.class (satu dir),
-	// src/Main.java (diabaikan).
+	// Create: sub/app.jar, classes/com/Foo.class + classes/com/Bar.class (one dir),
+	// src/Main.java (ignored).
 	must := func(p string) {
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -75,12 +75,12 @@ func TestDiscoverJVMTargets(t *testing.T) {
 	wantJar := filepath.Join(root, "sub", "app.jar")
 	wantClassDir := filepath.Join(root, "classes", "com")
 	if !slices.Contains(got, wantJar) {
-		t.Errorf("jar tak ditemukan: %v", got)
+		t.Errorf("jar not found: %v", got)
 	}
 	if !slices.Contains(got, wantClassDir) {
-		t.Errorf("dir kelas tak ditemukan: %v", got)
+		t.Errorf("class dir not found: %v", got)
 	}
-	// Dir kelas hanya sekali walau ada 2 .class.
+	// The class dir appears only once even with 2 .class files.
 	n := 0
 	for _, p := range got {
 		if p == wantClassDir {
@@ -88,12 +88,12 @@ func TestDiscoverJVMTargets(t *testing.T) {
 		}
 	}
 	if n != 1 {
-		t.Errorf("dir kelas harus didedup, muncul %d kali", n)
+		t.Errorf("the class dir must be deduped, it appears %d times", n)
 	}
-	// .java tak dianggap target.
+	// .java does not count as a target.
 	for _, p := range got {
 		if filepath.Ext(p) == ".java" {
-			t.Errorf(".java tak boleh jadi target: %s", p)
+			t.Errorf(".java must not become a target: %s", p)
 		}
 	}
 }
@@ -102,12 +102,12 @@ func TestDiscoverJVMTargetsEmpty(t *testing.T) {
 	root := t.TempDir()
 	_ = os.WriteFile(filepath.Join(root, "readme.txt"), []byte("x"), 0o644)
 	if got := discoverJVMTargets(root, 200); len(got) != 0 {
-		t.Errorf("tanpa bytecode harus 0 target, dapat %v", got)
+		t.Errorf("without bytecode there must be 0 targets, got %v", got)
 	}
 }
 
 func TestFindSecBugsRegistered(t *testing.T) {
 	if _, ok := Lookup("findsecbugs"); !ok {
-		t.Error("adapter findsecbugs tak terdaftar")
+		t.Error("the findsecbugs adapter is not registered")
 	}
 }

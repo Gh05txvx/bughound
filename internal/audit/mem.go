@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// MemLog adalah Log in-memory (test / ephemeral).
+// MemLog is an in-memory Log (tests / ephemeral).
 type MemLog struct {
 	key    []byte
 	now    func() time.Time
@@ -14,7 +14,7 @@ type MemLog struct {
 	events []Event
 }
 
-// NewMemLog membuat log in-memory dengan kunci HMAC key.
+// NewMemLog creates an in-memory log with the HMAC key.
 func NewMemLog(key []byte) *MemLog {
 	return &MemLog{key: key, now: time.Now}
 }

@@ -14,7 +14,7 @@ func TestClassifyOWASP_FromCWE(t *testing.T) {
 		"CWE-540": A01, // source code / source map exposure
 		"CWE-22":  A01, // path traversal
 		"CWE-611": A05, // XXE
-		"CWE-614": A05, // sensitive cookie tanpa Secure
+		"CWE-614": A05, // sensitive cookie without Secure
 		"CWE-319": A02, // cleartext transmission
 		"CWE-327": A02, // broken crypto
 		"CWE-502": A08, // deserialization
@@ -53,33 +53,33 @@ func TestClassifyOWASP_FromKeywords(t *testing.T) {
 }
 
 func TestClassifyOWASP_CWEBeatsKeyword(t *testing.T) {
-	// CWE lebih kuat dari kata kunci: SQLi (CWE-89) menang walau ada tag "exposure".
+	// CWE is stronger than keywords: SQLi (CWE-89) wins even with an "exposure" tag.
 	f := &Finding{CWE: []string{"CWE-89"}, Tags: []string{"exposure"}, Type: "x"}
 	if got := ClassifyOWASP(f); got != A03 {
-		t.Errorf("CWE harus menang atas keyword: got %s want A03", got)
+		t.Errorf("CWE must win over keywords: got %s want A03", got)
 	}
 }
 
 func TestOWASPLabelValid(t *testing.T) {
 	if A05.Label() != "A05:2021 Security Misconfiguration" {
-		t.Errorf("label salah: %q", A05.Label())
+		t.Errorf("wrong label: %q", A05.Label())
 	}
 	if OWASPNone.Label() != "" {
-		t.Error("OWASPNone.Label() harus kosong")
+		t.Error("OWASPNone.Label() must be empty")
 	}
 	if !A01.Valid() || !OWASPNone.Valid() || OWASP("Z99").Valid() {
-		t.Error("Valid() salah")
+		t.Error("Valid() is wrong")
 	}
 }
 
 func TestFinalizeSetsOWASP(t *testing.T) {
-	// validFinding bertipe "ssrf" -> terklasifikasi A10 saat Finalize (dipanggil di helper).
+	// validFinding has type "ssrf" -> classified as A10 at Finalize (called in the helper).
 	f := validFinding()
 	if f.OWASP != A10 {
-		t.Errorf("type ssrf harus -> A10; got %s", f.OWASP)
+		t.Errorf("type ssrf must -> A10; got %s", f.OWASP)
 	}
 
-	// Finalize tak menimpa OWASP yang sudah diisi (mis. oleh verifikator/adapter).
+	// Finalize does not overwrite an OWASP that is already set (e.g. by the verifier/adapter).
 	f2 := &Finding{
 		ID: "x", Program: "p", RunID: "r", Target: "https://a.io", Type: "sqli",
 		Title: "t", Severity: SeverityHigh, Confidence: ConfidenceLow, Status: StatusNew,
@@ -89,6 +89,6 @@ func TestFinalizeSetsOWASP(t *testing.T) {
 		t.Fatal(err)
 	}
 	if f2.OWASP != A05 {
-		t.Errorf("Finalize tak boleh menimpa OWASP preset; got %s", f2.OWASP)
+		t.Errorf("Finalize must not overwrite a preset OWASP; got %s", f2.OWASP)
 	}
 }

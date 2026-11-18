@@ -1,15 +1,17 @@
-// Package triage menyusun peringkat "prioritas verifikasi" temuan memakai
-// Simple Additive Weighting (SAW/SPK) — deterministik, tanpa LLM.
+// Package triage ranks findings by "verification priority" with Simple
+// Additive Weighting (SAW/SPK). It is deterministic and uses no LLM.
 //
-// Ini port SETIA dari algoritma SPK app Analyst (bughound/analyst, modul
-// saw.py + analyst.py + config.py) ke Go, supaya web UI bisa menampilkan
-// peringkat yang SAMA dengan tool MCP `rank` tanpa menautkan runtime Python
-// ke aplikasi. Konstanta (bobot, engine factor, pola sinyal, heuristik) dijaga
-// identik dengan default di analyst/bughound_analyst/config.py: bila satu sisi
-// di-tune, sisi lain WAJIB diselaraskan (uji di triage_test.go mengunci nilai).
+// It is a FAITHFUL port to Go of the SPK algorithm in the Analyst app
+// (bughound/analyst, modules saw.py + analyst.py + config.py), so the web UI
+// can show the SAME ranking as the MCP `rank` tool without linking a Python
+// runtime into the application. The constants (weights, engine factors,
+// signal patterns, heuristics) are kept identical to the defaults in
+// analyst/bughound_analyst/config.py: when one side is tuned, the other MUST
+// follow (the tests in triage_test.go pin the values).
 //
-// Paket ini murni baca: ia tak menyentuh target, tak mengubah store, tak
-// memanggil jaringan — hanya menghitung skor atas temuan yang sudah ada.
+// The package is read-only: it does not touch targets, does not change the
+// store and makes no network calls. It only computes scores for findings that
+// already exist.
 package triage
 
 import (
@@ -22,10 +24,10 @@ import (
 	"bughound/internal/finding"
 )
 
-// ---- Konstanta SPK (mirror analyst/bughound_analyst/config.py _DEFAULTS) ----
+// ---- SPK constants (mirror analyst/bughound_analyst/config.py _DEFAULTS) ----
 
-// crits: urutan tetap (= insertion order weights di config.py) agar normalisasi
-// dan iterasi deterministik.
+// crits: a fixed order (= the insertion order of weights in config.py) so
+// normalization and iteration are deterministic.
 var crits = []string{
 	"exploitability", "signal", "bounty", "severity",
 	"fp_likelihood", "effort", "owasp", "freshness",
@@ -36,7 +38,7 @@ var weights = map[string]float64{
 	"fp_likelihood": 0.12, "effort": 0.06, "owasp": 0.04, "freshness": 0.02,
 }
 
-// critType: "benefit" (makin besar makin baik) atau "cost" (makin kecil makin baik).
+// critType: "benefit" (higher is better) or "cost" (lower is better).
 var critType = map[string]string{
 	"exploitability": "benefit", "signal": "benefit", "bounty": "benefit",
 	"severity": "benefit", "fp_likelihood": "cost", "effort": "cost",
@@ -66,9 +68,9 @@ var owaspPriority = map[finding.OWASP]int{
 
 const owaspPriorityDefault = 2
 
-// effortByType: substring match pada type (fallback title), lowercase; urutan
-// diperiksa seperti config.py (first match wins — mis. "blind-sqli" → sqli=2
-// karena "sqli" lebih dulu dari "blind").
+// effortByType: substring match on type (falling back to title), lowercase;
+// checked in the same order as config.py (first match wins, e.g. "blind-sqli"
+// → sqli=2 because "sqli" comes before "blind").
 var effortByType = []struct {
 	key string
 	val int
@@ -79,8 +81,8 @@ var effortByType = []struct {
 
 const effortDefault = 2
 
-// Sinyal payout (lever anti "header noise"): high→1.0 (eksploitatif/berbayar),
-// noise→0.1 (hygiene/header, nyaris won't-pay), selain itu 0.5.
+// Payout signal (the lever against "header noise"): high→1.0 (exploitable,
+// pays out), noise→0.1 (hygiene/header, close to won't-pay), otherwise 0.5.
 var signalHigh = []string{
 	"sqli", "sql-injection", "sql injection", "nosql",
 	"xss", "cross-site-scripting", "cross site scripting",
@@ -114,8 +116,8 @@ var signalNoise = []string{
 	"self-signed", "private-ip-disclosure", "internal-ip", "viewstate",
 }
 
-// boringPaths: file standar (bukan kerentanan) — menurunkan exposed-path NETRAL
-// ke noise agar endpoint nyata naik di atas file statis.
+// boringPaths: standard files (not vulnerabilities). They push a NEUTRAL
+// exposed-path down to noise so real endpoints rank above static files.
 var boringPaths = []string{
 	"robots.txt", "sitemap", "favicon", ".well-known", "security.txt",
 	"humans.txt", "healthz", "health", "manifest.json", "service-worker",
@@ -123,12 +125,12 @@ var boringPaths = []string{
 }
 
 const (
-	ffufFloodThreshold = 8   // >=N exposed-path ffuf per host → kemungkinan soft-404/wildcard
-	ffufFloodFP        = 0.6 // fp_likelihood minimal yang dipaksakan saat flood
+	ffufFloodThreshold = 8   // >=N ffuf exposed-paths per host → likely soft-404/wildcard
+	ffufFloodFP        = 0.6 // minimum fp_likelihood forced during a flood
 )
 
-// spaMarkers: penanda shell SPA — bila muncul di body, respons ffuf besar
-// kemungkinan app-shell (soft-200), bukan path nyata.
+// spaMarkers: SPA shell markers. When one appears in the body, a large ffuf
+// response is probably the app shell (soft-200) and not a real path.
 var spaMarkers = []string{
 	`<div id="root"`, `<div id="app"`, "<app-root", "ng-version", "data-reactroot",
 	"window.__", "__next_data__", "__nuxt__", "__initial_state__",
@@ -141,9 +143,9 @@ var dropStatus = map[finding.Status]bool{
 	finding.StatusIgnored:       true,
 }
 
-// ---- Hasil ----
+// ---- Results ----
 
-// Factor adalah kontribusi satu kriteria ke skor akhir (untuk penjelasan UI).
+// Factor is one criterion's contribution to the final score (for the UI explanation).
 type Factor struct {
 	Name         string
 	Label        string
@@ -151,26 +153,26 @@ type Factor struct {
 }
 
 var critLabel = map[string]string{
-	"exploitability": "Exploitability", "signal": "Sinyal payout", "bounty": "Bounty",
-	"severity": "Severity", "fp_likelihood": "Risiko FP", "effort": "Usaha",
-	"owasp": "OWASP", "freshness": "Kebaruan",
+	"exploitability": "Exploitability", "signal": "Payout signal", "bounty": "Bounty",
+	"severity": "Severity", "fp_likelihood": "FP risk", "effort": "Effort",
+	"owasp": "OWASP", "freshness": "Freshness",
 }
 
-// Scored adalah satu temuan dengan skor SAW dan rincian kriteria.
+// Scored is one finding with its SAW score and per-criterion breakdown.
 type Scored struct {
 	Finding   *finding.Finding
 	Rank      int
 	Score     float64
-	Breakdown map[string]float64 // kontribusi w·r per kriteria
-	Raw       map[string]float64 // nilai mentah per kriteria (sebelum normalisasi)
+	Breakdown map[string]float64 // w·r contribution per criterion
+	Raw       map[string]float64 // raw value per criterion (before normalization)
 }
 
-// Pct mengembalikan skor sebagai persen bulat (0..100) untuk lebar bar visual.
+// Pct returns the score as a whole percentage (0..100) for the width of the visual bar.
 func (s Scored) Pct() int { return int(math.Round(s.Score * 100)) }
 
-// TopFactors mengembalikan hingga n kriteria pendorong skor terbesar (desc),
-// untuk menjelaskan "kenapa ini di atas". Kriteria cost (fp/effort) tak
-// dimasukkan sebagai pendorong positif.
+// TopFactors returns up to n criteria that push the score up the most (desc),
+// to explain "why is this on top". Cost criteria (fp/effort) are not counted
+// as positive drivers.
 func (s Scored) TopFactors(n int) []Factor {
 	out := make([]Factor, 0, len(s.Breakdown))
 	for _, c := range crits {
@@ -186,10 +188,11 @@ func (s Scored) TopFactors(n int) []Factor {
 	return out
 }
 
-// Rank mengembalikan temuan ter-ranking (skor desc) hasil SAW/SPK, setelah
-// prefilter (buang status duplikat/FP/ignored + severity info, lalu satu wakil
-// per klaster = severity tertinggi). Setara tool MCP `rank` pada default (tanpa
-// scope CSV): `bounty` memakai severity temuan sebagai proxy.
+// Rank returns the findings ranked by SAW/SPK score (desc), after the
+// prefilter (drop duplicate/FP/ignored statuses and info severity, then keep
+// one representative per cluster = the highest severity). It matches the MCP
+// `rank` tool at its defaults (no scope CSV): `bounty` uses the finding's
+// severity as a proxy.
 func Rank(findings []*finding.Finding) []Scored {
 	kept := prefilter(findings)
 	if len(kept) == 0 {
@@ -207,13 +210,13 @@ func Rank(findings []*finding.Finding) []Scored {
 		p := pathOf(f.Location.URL)
 		sig := signal(signalText(f), p)
 		if sig == 0.5 && isBoringPath(p) {
-			sig = 0.1 // path membosankan (robots/sitemap/.well-known) turun ke noise
+			sig = 0.1 // a boring path (robots/sitemap/.well-known) drops to noise
 		}
 		sev := float64(sevNumOf(f.Severity))
 		rows[i] = map[string]float64{
 			"exploitability": exploitability(f),
 			"signal":         sig,
-			"bounty":         sev, // tanpa scope CSV: proxy = severity (sama dgn MCP default)
+			"bounty":         sev, // no scope CSV: proxy = severity (same as the MCP default)
 			"severity":       sev,
 			"fp_likelihood":  fp,
 			"effort":         float64(effortOf(firstNonEmpty(f.Type, f.Title))),
@@ -222,7 +225,7 @@ func Rank(findings []*finding.Finding) []Scored {
 		}
 	}
 
-	// Normalisasi per kolom (batch-relative), lalu jumlah berbobot.
+	// Normalize per column (batch-relative), then take the weighted sum.
 	norm := make(map[string][]float64, len(crits))
 	for _, c := range crits {
 		col := make([]float64, len(rows))
@@ -252,7 +255,7 @@ func Rank(findings []*finding.Finding) []Scored {
 	return scored
 }
 
-// ---- Prefilter + klaster ----
+// ---- Prefilter + clusters ----
 
 func clusterKey(f *finding.Finding) string {
 	if f.DedupKey != "" {
@@ -261,9 +264,10 @@ func clusterKey(f *finding.Finding) string {
 	return host(f.Location.URL) + "|" + f.Type + "|" + f.Location.Parameter
 }
 
-// prefilter membuang status duplikat/FP/ignored + severity info, lalu memilih
-// satu wakil per klaster (severity tertinggi). Urutan wakil = urutan kemunculan
-// klaster (stabil), sama seperti analyst.prefilter.
+// prefilter drops duplicate/FP/ignored statuses and info severity, then picks
+// one representative per cluster (the highest severity). Representatives keep
+// the order in which their clusters first appear (stable), like
+// analyst.prefilter.
 func prefilter(findings []*finding.Finding) []*finding.Finding {
 	rep := make(map[string]*finding.Finding)
 	var order []string
@@ -289,7 +293,7 @@ func prefilter(findings []*finding.Finding) []*finding.Finding {
 	return out
 }
 
-// ---- Metrik turunan ----
+// ---- Derived metrics ----
 
 func signalText(f *finding.Finding) string {
 	parts := make([]string, 0, 2+len(f.Tags))
@@ -355,8 +359,9 @@ func ffufFloodHosts(findings []*finding.Finding) map[string]bool {
 	return out
 }
 
-// freshnessMap: kebaruan relatif ke temuan TERBARU di batch (bukan jam
-// sekarang) → ranking ekspor lama tetap stabil. ≤1h 5 / ≤7h 4 / ≤30h 3 / else 2.
+// freshnessMap: freshness relative to the NEWEST finding in the batch (not the
+// current time), so the ranking of an old export stays stable. ≤1h 5 / ≤7h 4 /
+// ≤30h 3 / else 2.
 func freshnessMap(findings []*finding.Finding) map[string]int {
 	var newest time.Time
 	any := false
@@ -374,7 +379,7 @@ func freshnessMap(findings []*finding.Finding) map[string]int {
 	for _, f := range findings {
 		t := f.CreatedAt.Time
 		if !any || t.IsZero() {
-			out[f.ID] = 3 // netral bila tak ada waktu terbaca
+			out[f.ID] = 3 // neutral when no time can be read
 			continue
 		}
 		gapDays := newest.Sub(t).Hours() / 24.0
@@ -396,7 +401,7 @@ func freshnessBucket(gapDays float64) int {
 	}
 }
 
-// ---- SAW murni ----
+// ---- Plain SAW ----
 
 // normalize: benefit r=x/max ; cost r=min/x (0 cost = ideal → r=1).
 func normalize(vals []float64, ctype string) []float64 {
@@ -437,14 +442,14 @@ func normalize(vals []float64, ctype string) []float64 {
 	return out
 }
 
-// ---- Helper kecil ----
+// ---- Small helpers ----
 
 func signal(text, extra string) float64 {
 	t := strings.ToLower(text)
-	if anyTokenMatch(t, signalNoise) { // noise dicek DULU (header 'x-xss-protection' tak ter-high via 'xss')
+	if anyTokenMatch(t, signalNoise) { // noise is checked FIRST (the 'x-xss-protection' header must not go high through 'xss')
 		return 0.1
 	}
-	if anyTokenMatch(t+" "+strings.ToLower(extra), signalHigh) { // path (extra) hanya boleh MEMPROMOSIKAN
+	if anyTokenMatch(t+" "+strings.ToLower(extra), signalHigh) { // the path (extra) may only PROMOTE
 		return 1.0
 	}
 	return 0.5
@@ -454,11 +459,11 @@ func isBoringPath(p string) bool {
 	return p != "" && anyTokenMatch(strings.ToLower(p), boringPaths)
 }
 
-// anyTokenMatch: true bila ADA pola yang muncul pada BATAS token di text
-// (char sebelum & sesudah bukan [a-z0-9]). Menggantikan lookaround regex Python
-// `(?<![a-z0-9])…(?![a-z0-9])` yang tak didukung RE2 — scan per-pola ini setara
-// semantik eksistensialnya (dan tanpa kebingungan backtracking alternasi).
-// text & patterns diasumsikan lowercase.
+// anyTokenMatch: true when ANY pattern appears at a token BOUNDARY in text (the
+// characters before and after are not [a-z0-9]). It replaces the Python regex
+// lookarounds `(?<![a-z0-9])…(?![a-z0-9])`, which RE2 does not support; this
+// per-pattern scan has the same existential semantics (and none of the
+// alternation backtracking confusion). text and patterns are assumed lowercase.
 func anyTokenMatch(text string, patterns []string) bool {
 	for _, p := range patterns {
 		for from := 0; ; {
@@ -483,7 +488,7 @@ func isAlnum(b byte) bool {
 
 var schemeRe = regexp.MustCompile(`^[a-zA-Z][\w+.\-]*://`)
 
-// host: host(+port) dari URL, tanpa skema/path/query (untuk klaster & flood).
+// host: the host(+port) of a URL, without scheme/path/query (for clusters and flood detection).
 func host(u string) string {
 	u = schemeRe.ReplaceAllString(u, "")
 	if i := strings.IndexByte(u, '/'); i >= 0 {
@@ -495,7 +500,7 @@ func host(u string) string {
 	return u
 }
 
-// pathOf: path+file dari URL (tanpa skema/host/query/fragment), lowercase.
+// pathOf: the path+file of a URL (without scheme/host/query/fragment), lowercase.
 func pathOf(u string) string {
 	u = schemeRe.ReplaceAllString(u, "")
 	slash := strings.IndexByte(u, '/')

@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-// mustGuard membangun Guard dan gagal bila ada entri yang tak terurai.
+// mustGuard builds a Guard and fails if any entry does not parse.
 func mustGuard(t *testing.T, in, out []string) *Guard {
 	t.Helper()
 	g, errs := New(in, out)
 	if len(errs) > 0 {
-		t.Fatalf("New punya error tak terduga: %v", errs)
+		t.Fatalf("New has an unexpected error: %v", errs)
 	}
 	return g
 }
@@ -19,7 +19,7 @@ func mustGuard(t *testing.T, in, out []string) *Guard {
 func wantAllow(t *testing.T, g *Guard, target string) {
 	t.Helper()
 	if r := g.Evaluate(target); !r.Allowed {
-		t.Errorf("Evaluate(%q) = tolak (%s), ingin izin", target, r.Reason)
+		t.Errorf("Evaluate(%q) = deny (%s), want allow", target, r.Reason)
 	}
 }
 
@@ -27,11 +27,11 @@ func wantDeny(t *testing.T, g *Guard, target string, reason Reason) {
 	t.Helper()
 	r := g.Evaluate(target)
 	if r.Allowed {
-		t.Errorf("Evaluate(%q) = izin, ingin tolak", target)
+		t.Errorf("Evaluate(%q) = allow, want deny", target)
 		return
 	}
 	if reason != "" && r.Reason != reason {
-		t.Errorf("Evaluate(%q) reason = %q, ingin %q", target, r.Reason, reason)
+		t.Errorf("Evaluate(%q) reason = %q, want %q", target, r.Reason, reason)
 	}
 }
 
@@ -44,9 +44,9 @@ func TestDefaultDeny(t *testing.T) {
 func TestHostExact_NotSubstring(t *testing.T) {
 	g := mustGuard(t, []string{"acme.io"}, nil)
 	wantAllow(t, g, "acme.io")
-	wantDeny(t, g, "notacme.io", ReasonNotInScope)     // bukan substring
-	wantDeny(t, g, "acme.io.evil.com", ReasonNotInScope) // suffix palsu
-	wantDeny(t, g, "app.acme.io", ReasonNotInScope)      // host eksak != subdomain
+	wantDeny(t, g, "notacme.io", ReasonNotInScope)     // not a substring
+	wantDeny(t, g, "acme.io.evil.com", ReasonNotInScope) // fake suffix
+	wantDeny(t, g, "app.acme.io", ReasonNotInScope)      // exact host != subdomain
 }
 
 func TestCaseAndTrailingDot(t *testing.T) {
@@ -66,14 +66,14 @@ func TestWildcard(t *testing.T) {
 	g := mustGuard(t, []string{"*.acme.io"}, nil)
 	wantAllow(t, g, "app.acme.io")
 	wantAllow(t, g, "a.b.acme.io")        // multi-level
-	wantDeny(t, g, "acme.io", ReasonNotInScope) // apex tak tercakup wildcard
+	wantDeny(t, g, "acme.io", ReasonNotInScope) // apex not covered by the wildcard
 	wantDeny(t, g, "acme.io.evil.com", ReasonNotInScope)
 	wantDeny(t, g, "notacme.io", ReasonNotInScope)
 }
 
 func TestWildcardPlusApex(t *testing.T) {
 	g := mustGuard(t, []string{"*.acme.io", "acme.io"}, nil)
-	wantAllow(t, g, "acme.io")     // apex didaftarkan terpisah
+	wantAllow(t, g, "acme.io")     // the apex is listed separately
 	wantAllow(t, g, "app.acme.io") // subdomain via wildcard
 }
 
@@ -82,36 +82,36 @@ func TestOutOfScopeWins(t *testing.T) {
 	wantAllow(t, g, "app.acme.io")
 	r := g.Evaluate("admin.acme.io")
 	if r.Allowed || r.Reason != ReasonOutOfScope {
-		t.Errorf("admin.acme.io: %+v, ingin tolak out-of-scope", r)
+		t.Errorf("admin.acme.io: %+v, want out-of-scope deny", r)
 	}
 	if r.MatchedEntry != "admin.acme.io" {
-		t.Errorf("MatchedEntry = %q, ingin admin.acme.io", r.MatchedEntry)
+		t.Errorf("MatchedEntry = %q, want admin.acme.io", r.MatchedEntry)
 	}
 }
 
 func TestHomoglyphRejected(t *testing.T) {
 	g := mustGuard(t, []string{"acme.io"}, nil)
-	// 'а' di depan adalah Cyrillic U+0430, bukan Latin 'a'.
-	wantDeny(t, g, "аcme.io", "") // ditolak (parse-error atau tidak cocok)
+	// the leading 'а' is Cyrillic U+0430, not Latin 'a'.
+	wantDeny(t, g, "аcme.io", "") // denied (parse-error or no match)
 }
 
 func TestMisleadingIPNotResolved(t *testing.T) {
-	// Loopback eksplisit in-scope, tapi bentuk hex menyesatkan tak boleh lolos:
-	// guard tidak pernah menafsirkannya sebagai 127.0.0.1.
+	// Loopback is explicitly in-scope, but a misleading hex form must not pass:
+	// the guard never reads it as 127.0.0.1.
 	g := mustGuard(t, []string{"127.0.0.0/8"}, nil)
 	wantAllow(t, g, "127.0.0.1")
 	wantDeny(t, g, "0x7f.0.0.1", "")
-	wantDeny(t, g, "2130706433", "") // 127.0.0.1 dalam desimal
+	wantDeny(t, g, "2130706433", "") // 127.0.0.1 in decimal
 }
 
 func TestPrivateAndMetadataDeniedUnlessExplicit(t *testing.T) {
-	// Hanya host wildcard di scope: IP privat/metadata harus ditolak.
+	// Only a wildcard host in scope: private/metadata IPs must be denied.
 	g := mustGuard(t, []string{"*.acme.io"}, nil)
 	wantDeny(t, g, "169.254.169.254", ReasonNotInScope) // metadata cloud
 	wantDeny(t, g, "10.1.2.3", ReasonNotInScope)
 	wantDeny(t, g, "192.168.0.1", ReasonNotInScope)
 
-	// Eksplisit in-scope lewat CIDR/IP => diizinkan.
+	// Explicitly in-scope through CIDR/IP => allowed.
 	g2 := mustGuard(t, []string{"169.254.169.254", "10.0.0.0/8"}, nil)
 	wantAllow(t, g2, "169.254.169.254")
 	wantAllow(t, g2, "10.1.2.3")
@@ -122,8 +122,8 @@ func TestCIDRNumericMembership(t *testing.T) {
 	g := mustGuard(t, []string{"203.0.113.0/24"}, []string{"203.0.113.5"})
 	wantAllow(t, g, "203.0.113.10")
 	wantAllow(t, g, "203.0.113.255")
-	wantDeny(t, g, "203.0.114.1", ReasonNotInScope) // di luar rentang
-	wantDeny(t, g, "203.0.113.5", ReasonOutOfScope)  // out-of-scope menang
+	wantDeny(t, g, "203.0.114.1", ReasonNotInScope) // outside the range
+	wantDeny(t, g, "203.0.113.5", ReasonOutOfScope)  // out-of-scope wins
 }
 
 func TestIPv6(t *testing.T) {
@@ -134,24 +134,24 @@ func TestIPv6(t *testing.T) {
 }
 
 func TestPortPolicy(t *testing.T) {
-	// Tanpa port eksplisit: semua port tercakup.
+	// Without an explicit port: all ports are covered.
 	g := mustGuard(t, []string{"acme.io"}, nil)
 	wantAllow(t, g, "acme.io")
 	wantAllow(t, g, "acme.io:8443")
 	wantAllow(t, g, "https://acme.io:8443/x")
 
-	// Dengan port eksplisit: hanya port itu.
+	// With an explicit port: only that port.
 	g2 := mustGuard(t, []string{"acme.io:443"}, nil)
 	wantAllow(t, g2, "acme.io:443")
 	wantDeny(t, g2, "acme.io:8443", ReasonNotInScope)
-	wantDeny(t, g2, "acme.io", ReasonNotInScope) // tanpa port != port 443
+	wantDeny(t, g2, "acme.io", ReasonNotInScope) // without a port != port 443
 }
 
 func TestURLPrefixSegmentBoundary(t *testing.T) {
 	g := mustGuard(t, []string{"https://acme.io/api/"}, nil)
 	wantAllow(t, g, "https://acme.io/api")
 	wantAllow(t, g, "https://acme.io/api/v1/users")
-	wantAllow(t, g, "https://acme.io/api/../api/x") // path dinormalkan dulu
+	wantAllow(t, g, "https://acme.io/api/../api/x") // the path is normalized first
 	wantDeny(t, g, "https://acme.io/apixyz", ReasonNotInScope)
 	wantDeny(t, g, "https://acme.io/", ReasonNotInScope)
 	wantDeny(t, g, "https://other.io/api", ReasonNotInScope)
@@ -159,7 +159,7 @@ func TestURLPrefixSegmentBoundary(t *testing.T) {
 
 func TestURLPrefixTraversalCannotEscape(t *testing.T) {
 	g := mustGuard(t, []string{"https://acme.io/api/"}, nil)
-	// ".." tak boleh keluar dari prefix untuk menyentuh /admin.
+	// ".." must not leave the prefix to reach /admin.
 	wantDeny(t, g, "https://acme.io/api/../admin", ReasonNotInScope)
 }
 
@@ -173,18 +173,18 @@ func TestFailClosedOnBadTarget(t *testing.T) {
 func TestNewReportsUnparseableEntries(t *testing.T) {
 	_, errs := New([]string{"a.*.io", "", "acme.io"}, []string{"***"})
 	if len(errs) != 3 {
-		t.Fatalf("ingin 3 error (a.*.io, entri kosong, ***), dapat %d: %v", len(errs), errs)
+		t.Fatalf("want 3 errors (a.*.io, empty entry, ***), got %d: %v", len(errs), errs)
 	}
 }
 
 func TestUnparseableOutOfScopeSurfaced(t *testing.T) {
-	// Entri out-of-scope yang gagal urai WAJIB muncul sebagai error (under-block berbahaya).
+	// An out-of-scope entry that fails to parse MUST surface as an error (under-block is dangerous).
 	_, errs := New([]string{"acme.io"}, []string{"a.*.io"})
 	if len(errs) == 0 {
-		t.Fatal("entri out-of-scope tak terurai harus memunculkan error")
+		t.Fatal("an unparsed out-of-scope entry must surface an error")
 	}
 	if !strings.Contains(errs[0].Error(), "out-of-scope") {
-		t.Errorf("error harus menandai sisi out-of-scope: %v", errs[0])
+		t.Errorf("the error must mark the out-of-scope side: %v", errs[0])
 	}
 }
 
@@ -192,7 +192,7 @@ func TestResultTargetNormalized(t *testing.T) {
 	g := mustGuard(t, []string{"acme.io"}, nil)
 	r := g.Evaluate("https://user:pass@ACME.io.:443/a/../b")
 	if r.Target != "acme.io:443/b" {
-		t.Errorf("Target ternormalkan = %q, ingin acme.io:443/b", r.Target)
+		t.Errorf("normalized Target = %q, want acme.io:443/b", r.Target)
 	}
 }
 
@@ -201,10 +201,10 @@ func TestURLPrefixOnIPHost(t *testing.T) {
 	wantAllow(t, g, "http://203.0.113.10/app/x")
 	wantDeny(t, g, "http://203.0.113.10/other", ReasonNotInScope)
 	wantDeny(t, g, "http://203.0.113.11/app", ReasonNotInScope)
-	wantDeny(t, g, "203.0.113.10", ReasonNotInScope) // path "/" bukan di bawah /app
+	wantDeny(t, g, "203.0.113.10", ReasonNotInScope) // path "/" is not under /app
 }
 
-// Port efektif dihitung dari skema; izin tetap butuh bukti bila tak diketahui.
+// The effective port is computed from the scheme; an allow still needs evidence when unknown.
 func TestEffectivePortFromScheme(t *testing.T) {
 	g := mustGuard(t, []string{"https://acme.io:443/"}, nil)
 	wantAllow(t, g, "https://acme.io/x")
@@ -215,7 +215,7 @@ func TestEffectivePortFromScheme(t *testing.T) {
 
 	r := g.Evaluate("https://acme.io/x")
 	if r.Target != "acme.io/x" {
-		t.Errorf("Target = %q: port efektif tak boleh mengubah bentuk audit", r.Target)
+		t.Errorf("Target = %q: the effective port must not change the audit form", r.Target)
 	}
 }
 
@@ -224,33 +224,33 @@ func TestPathScoped(t *testing.T) {
 		[]string{"https://app.acme.io/admin", "shop.acme.io/cart", "https://port.acme.io:8443/x", "http://203.0.113.10/admin",
 			"root.acme.io", "https://slash.acme.io/", "off.acme.io:8080", "*.dev.acme.io"})
 	cases := map[string]bool{
-		"app.acme.io:443":   true,  // eksklusi ber-path berskema
-		"app.acme.io:8443":  true,  // entri tanpa port berlaku di semua port
-		"APP.acme.io:443":   true,  // host dinormalkan
-		"shop.acme.io:443":  true,  // bentuk tanpa skema, keluaran importer
-		"port.acme.io:8443": true,  // port cocok
-		"port.acme.io:443":  false, // eksklusi hanya untuk port lain
-		"port.acme.io":      true,  // port tak diketahui: ragu berarti buka
+		"app.acme.io:443":   true,  // path-based exclusion with a scheme
+		"app.acme.io:8443":  true,  // an entry without a port applies to all ports
+		"APP.acme.io:443":   true,  // host normalized
+		"shop.acme.io:443":  true,  // schemeless form, the importer output
+		"port.acme.io:8443": true,  // port matches
+		"port.acme.io:443":  false, // the exclusion is only for another port
+		"port.acme.io":      true,  // unknown port: in doubt means open
 		"203.0.113.10:443":  true,  // host IP
-		"203.0.113.11:443":  false, // IP lain
-		"acme.io:443":       false, // host lain, tak ada eksklusi ber-path
-		"root.acme.io:443":  false, // eksklusi host tanpa path sudah cukup di CONNECT
-		"slash.acme.io:443": false, // path akar setara seluruh host
-		"off.acme.io:80":    false, // eksklusi berport tanpa path
-		"x.dev.acme.io:443": false, // wildcard tak punya path
-		"api.acme.io:443":   false, // entri in-scope ber-path bukan eksklusi
-		"acme.io:notaport":  true,  // tak terurai: ragu berarti buka
+		"203.0.113.11:443":  false, // another IP
+		"acme.io:443":       false, // another host, no path-based exclusion
+		"root.acme.io:443":  false, // a host exclusion without a path is enough at CONNECT
+		"slash.acme.io:443": false, // a root path equals the whole host
+		"off.acme.io:80":    false, // a ported exclusion without a path
+		"x.dev.acme.io:443": false, // a wildcard has no path
+		"api.acme.io:443":   false, // an in-scope path entry is not an exclusion
+		"acme.io:notaport":  true,  // unparsed: in doubt means open
 		"":                  true,
 	}
 	for target, want := range cases {
 		if got := g.PathScoped(target); got != want {
-			t.Errorf("PathScoped(%q) = %v, ingin %v", target, got, want)
+			t.Errorf("PathScoped(%q) = %v, want %v", target, got, want)
 		}
 	}
 }
 
-// Invarian penutup celah: URL yang ditolak guard tak boleh punya host:port yang
-// lolos CONNECT tanpa dibuka, karena tunnel buta tak bisa menghadangnya.
+// The gap-closing invariant: a URL the guard denies must not have a host:port that
+// passes CONNECT without being opened, because a blind tunnel cannot block it.
 func TestPathScopedCoversEveryDenial(t *testing.T) {
 	ins := [][]string{{"acme.io"}, {"*.acme.io", "acme.io"}, {"203.0.113.10"}, {"203.0.113.0/24"}, {"https://acme.io/"}, {"acme.io:443"}}
 	outs := [][]string{
@@ -265,7 +265,7 @@ func TestPathScopedCoversEveryDenial(t *testing.T) {
 			g := mustGuard(t, in, out)
 			for _, a := range authorities {
 				if !g.Evaluate(a).Allowed {
-					continue // CONNECT sendiri sudah ditolak
+					continue // CONNECT itself is already denied
 				}
 				for _, scheme := range []string{"http", "https"} {
 					for _, p := range paths {
@@ -273,7 +273,7 @@ func TestPathScopedCoversEveryDenial(t *testing.T) {
 						if r := g.Evaluate(u); !r.Allowed && r.Reason == ReasonOutOfScope {
 							checked++
 							if !g.PathScoped(a) {
-								t.Errorf("in=%v out=%v: %s ditolak tapi %s tak dibuka", in, out, u, a)
+								t.Errorf("in=%v out=%v: %s denied but %s not opened", in, out, u, a)
 							}
 						}
 					}
@@ -282,6 +282,6 @@ func TestPathScopedCoversEveryDenial(t *testing.T) {
 		}
 	}
 	if checked == 0 {
-		t.Fatal("tak ada kombinasi teruji")
+		t.Fatal("no combination tested")
 	}
 }

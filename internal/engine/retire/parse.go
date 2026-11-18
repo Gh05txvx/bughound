@@ -9,9 +9,9 @@ import (
 	"bughound/internal/finding"
 )
 
-// Bentuk output `retire --outputformat json`: objek dengan array "data"; tiap
-// entri satu berkas JS yang dipindai, berisi "results" (komponen terdeteksi) dan
-// tiap komponen punya "vulnerabilities".
+// The output form of `retire --outputformat json`: an object with a "data" array; each
+// entry is one scanned JS file, holding "results" (detected components) and
+// each component has "vulnerabilities".
 type retireOutput struct {
 	Data []retireFile `json:"data"`
 }
@@ -28,7 +28,7 @@ type retireResult struct {
 }
 
 type retireVuln struct {
-	Info        []string          `json:"info"` // URL referensi advisory
+	Info        []string          `json:"info"` // advisory reference URL
 	Severity    string            `json:"severity"`
 	Identifiers retireIdentifiers `json:"identifiers"`
 }
@@ -38,18 +38,18 @@ type retireIdentifiers struct {
 	CVE     []string `json:"CVE"`
 }
 
-// Parse menormalkan output JSON retire.js ke Skema Temuan Seragam. fileToURL
-// memetakan basename berkas JS sementara (mis. "000.js") ke URL asalnya, agar
-// temuan menunjuk ke aset nyata yang disajikan target, bukan path sementara.
-// Seperti adapter lain, Parse tak memanggil Finalize — store yang mengisi
-// id/dedup_key/created_at/schema_version saat menyimpan.
+// Parse normalizes retire.js JSON output to the Uniform Finding Schema. fileToURL
+// maps a temp JS file's basename (e.g. "000.js") to its origin URL, so a
+// finding points to the real asset the target serves, not a temp path.
+// Like the other adapters, Parse does not call Finalize — the store fills
+// id/dedup_key/created_at/schema_version on save.
 func Parse(out []byte, fileToURL map[string]string, target, program, runID string) ([]*finding.Finding, error) {
 	if len(strings.TrimSpace(string(out))) == 0 {
 		return nil, nil
 	}
 	var ro retireOutput
 	if err := json.Unmarshal(out, &ro); err != nil {
-		return nil, fmt.Errorf("retire: output bukan JSON valid: %w", err)
+		return nil, fmt.Errorf("retire: output is not valid JSON: %w", err)
 	}
 	var findings []*finding.Finding
 	for _, fe := range ro.Data {
@@ -82,15 +82,15 @@ func mapVuln(res retireResult, v retireVuln, locURL, target, program, runID stri
 
 	matched := strings.TrimSpace(v.Identifiers.Summary)
 	if matched == "" {
-		matched = "library dengan kerentanan diketahui"
+		matched = "a library with a known vulnerability"
 	}
 
 	cveSuffix := ""
 	if len(cves) > 0 {
 		cveSuffix = " (" + strings.Join(cves, ", ") + ")"
 	}
-	desc := fmt.Sprintf("retire.js mendeteksi %s dengan kerentanan diketahui%s, dimuat dari %s. "+
-		"Verifikasi manual apakah jalur/fungsi yang rentan benar-benar terpakai sebelum melaporkan.",
+	desc := fmt.Sprintf("retire.js detected %s with a known vulnerability%s, loaded from %s. "+
+		"Manually verify whether the vulnerable path/function is actually used before reporting.",
 		label, cveSuffix, locURL)
 
 	raw, _ := json.Marshal(struct {
@@ -106,10 +106,10 @@ func mapVuln(res retireResult, v retireVuln, locURL, target, program, runID stri
 		RunID:        runID,
 		Target:       target,
 		Type:         "vulnerable-dependency",
-		Title:        "Library JS rentan: " + label,
+		Title:        "Vulnerable JS library: " + label,
 		Description:  desc,
 		Severity:     mapSeverity(v.Severity),
-		Confidence:   finding.ConfidenceMedium, // cocok-versi; verifikasi manual pemakaian nyata
+		Confidence:   finding.ConfidenceMedium, // version match; manually verify real usage
 		CWE:          nil,
 		Tags:         []string{"dependency", "outdated", "sca"},
 		Location:     finding.Location{URL: locURL},
@@ -121,9 +121,9 @@ func mapVuln(res retireResult, v retireVuln, locURL, target, program, runID stri
 	}
 }
 
-// mapSeverity memetakan severity retire.js ke enum skema. retire.js hanya
-// menandai library yang BENAR-BENAR punya advisory, jadi severity tak dikenal
-// tetap bermakna: default ke medium (bukan diturunkan jadi info).
+// mapSeverity maps retire.js severity to the schema enum. retire.js only
+// flags a library that REALLY has an advisory, so an unknown severity
+// still means something: default to medium (not downgraded to info).
 func mapSeverity(s string) finding.Severity {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "critical":
@@ -139,7 +139,7 @@ func mapSeverity(s string) finding.Severity {
 	}
 }
 
-// nonEmpty menyaring string kosong dari slice.
+// nonEmpty filters empty strings out of the slice.
 func nonEmpty(in []string) []string {
 	var out []string
 	for _, s := range in {
@@ -150,7 +150,7 @@ func nonEmpty(in []string) []string {
 	return out
 }
 
-// httpRefs menyaring entri info menjadi hanya URL http(s) untuk References.
+// httpRefs filters info entries down to only http(s) URLs for References.
 func httpRefs(in []string) []string {
 	var out []string
 	for _, s := range in {

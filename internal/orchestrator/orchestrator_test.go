@@ -24,18 +24,18 @@ func newGuard(t *testing.T, in, out []string) *scope.Guard {
 	t.Helper()
 	g, errs := scope.New(in, out)
 	if len(errs) > 0 {
-		t.Fatalf("scope.New errs tak terduga: %v", errs)
+		t.Fatalf("unexpected scope.New errs: %v", errs)
 	}
 	return g
 }
 
-// testLimiter: burst besar supaya test tak melambat (laju efektif dijepit ke maks).
+// testLimiter: a large burst so tests do not slow down (the effective rate is clamped to the max).
 func testLimiter() *ratelimit.Limiter {
 	return ratelimit.New(ratelimit.Config{RequestsPerSecond: 1000, Burst: 1000})
 }
 
-// TestRunScanGate membuktikan gate M0 masih berlaku: satu temuan mengalir scan
-// -> normalisasi -> store; target luar scope ditolak; secret tak bocor.
+// TestRunScanGate shows the M0 gate still holds: one finding flows scan ->
+// normalization -> store; an out-of-scope target is denied; no secret leaks.
 func TestRunScanGate(t *testing.T) {
 	g := newGuard(t, []string{"demo.test", "*.demo.test"}, nil)
 	st := store.NewMem()
@@ -49,10 +49,10 @@ func TestRunScanGate(t *testing.T) {
 		t.Fatalf("RunScan error: %v", err)
 	}
 	if res.FindingsSaved != 2 || res.Duplicates != 0 {
-		t.Errorf("ingin 2 tersimpan / 0 duplikat; dapat saved=%d dup=%d", res.FindingsSaved, res.Duplicates)
+		t.Errorf("want 2 saved / 0 duplicates; got saved=%d dup=%d", res.FindingsSaved, res.Duplicates)
 	}
 	if len(res.Scanned) != 1 || res.Scanned[0] != "demo.test" {
-		t.Errorf("hanya demo.test yang discan; dapat %v", res.Scanned)
+		t.Errorf("only demo.test should be scanned; got %v", res.Scanned)
 	}
 	var deniedEvil *AuditEvent
 	for i := range res.Denied {
@@ -61,19 +61,19 @@ func TestRunScanGate(t *testing.T) {
 		}
 	}
 	if deniedEvil == nil || deniedEvil.Layer != LayerInput || deniedEvil.Reason != scope.ReasonNotInScope {
-		t.Errorf("evil.test harus ditolak di lapis input (not-in-scope); dapat %+v", res.Denied)
+		t.Errorf("evil.test must be denied at the input layer (not-in-scope); got %+v", res.Denied)
 	}
 	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
 	if len(fs) != 2 || fs[0].Severity != finding.SeverityCritical {
-		t.Fatalf("store tidak sesuai: %d temuan", len(fs))
+		t.Fatalf("unexpected store content: %d findings", len(fs))
 	}
 	for _, f := range fs {
 		if f.Evidence != nil && strings.Contains(f.Evidence.Request, "SECRET-abc123") {
-			t.Error("secret bocor ke store")
+			t.Error("a secret leaked into the store")
 		}
 	}
 	if len(audit) == 0 {
-		t.Error("audit trail kosong")
+		t.Error("the audit trail is empty")
 	}
 }
 
@@ -91,11 +91,11 @@ func TestRunScanDedupSecondRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res2.FindingsSaved != 0 || res2.Duplicates != 2 {
-		t.Errorf("run kedua harus semua duplikat; dapat saved=%d dup=%d", res2.FindingsSaved, res2.Duplicates)
+		t.Errorf("the second run must be all duplicates; got saved=%d dup=%d", res2.FindingsSaved, res2.Duplicates)
 	}
 	fs, _ := st.List(ctx, store.Query{Program: "demo"})
 	if len(fs) != 2 {
-		t.Errorf("harus tetap 2 temuan utama; dapat %d", len(fs))
+		t.Errorf("there must still be 2 main findings; got %d", len(fs))
 	}
 }
 
@@ -113,18 +113,18 @@ func (f fakeEngine) Scan(_ context.Context, _ string, program, runID string) ([]
 	return out, nil
 }
 
-// errEngine selalu gagal — untuk membuktikan kegagalan satu engine tak
-// membatalkan run.
+// errEngine always fails. It shows that one engine failing does not abort the
+// run.
 type errEngine struct{}
 
 func (errEngine) Name() string { return "boom" }
 func (errEngine) Scan(_ context.Context, _, _, _ string) ([]*finding.Finding, error) {
-	return nil, errors.New("engine meledak")
+	return nil, errors.New("engine blew up")
 }
 
-// TestRunScanEngineErrorNonFatal: engine yang gagal pada satu target TIDAK boleh
-// membatalkan run — engine lain tetap menyimpan temuan, RunScan sukses, dan
-// kegagalan tercatat di EngineErrors.
+// TestRunScanEngineErrorNonFatal: an engine that fails on one target must NOT
+// abort the run. The other engine still saves its finding, RunScan succeeds and
+// the failure is recorded in EngineErrors.
 func TestRunScanEngineErrorNonFatal(t *testing.T) {
 	g := newGuard(t, []string{"demo.test"}, nil)
 	st := store.NewMem()
@@ -134,23 +134,23 @@ func TestRunScanEngineErrorNonFatal(t *testing.T) {
 		Status: finding.StatusNew, SourceEngine: "fake",
 		Location: finding.Location{URL: "https://demo.test/a"},
 	}}}
-	o := New(g, errEngine{}, st, testLimiter(), nil) // engine pertama gagal
-	o.AddEngine(good)                                // engine kedua sukses
+	o := New(g, errEngine{}, st, testLimiter(), nil) // the first engine fails
+	o.AddEngine(good)                                // the second engine succeeds
 
 	res, err := o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r", Targets: []string{"demo.test"}})
 	if err != nil {
-		t.Fatalf("kegagalan engine tak boleh membuat RunScan error: %v", err)
+		t.Fatalf("an engine failure must not make RunScan error: %v", err)
 	}
 	if res.FindingsSaved != 1 {
-		t.Errorf("engine kedua harus tetap menyimpan 1 temuan; dapat saved=%d", res.FindingsSaved)
+		t.Errorf("the second engine must still save 1 finding; got saved=%d", res.FindingsSaved)
 	}
 	if len(res.EngineErrors) != 1 || res.EngineErrors[0].Engine != "boom" {
-		t.Errorf("kegagalan engine harus tercatat di EngineErrors; dapat %+v", res.EngineErrors)
+		t.Errorf("the engine failure must be recorded in EngineErrors; got %+v", res.EngineErrors)
 	}
 }
 
-// TestRunScanEgressBlocks membuktikan penegakan lapis kedua: temuan pada lokasi
-// di luar scope dihadang walau target awal in-scope.
+// TestRunScanEgressBlocks shows the second enforcement layer: a finding at an
+// out-of-scope location is blocked even though the initial target is in scope.
 func TestRunScanEgressBlocks(t *testing.T) {
 	g := newGuard(t, []string{"demo.test"}, nil)
 	st := store.NewMem()
@@ -168,29 +168,30 @@ func TestRunScanEgressBlocks(t *testing.T) {
 		t.Fatalf("RunScan error: %v", err)
 	}
 	if res.FindingsSaved != 0 {
-		t.Errorf("temuan di luar scope tak boleh tersimpan; saved=%d", res.FindingsSaved)
+		t.Errorf("an out-of-scope finding must not be saved; saved=%d", res.FindingsSaved)
 	}
 	if fs, _ := st.List(context.Background(), store.Query{Program: "demo"}); len(fs) != 0 {
-		t.Errorf("store harus kosong; dapat %d", len(fs))
+		t.Errorf("the store must be empty; got %d", len(fs))
 	}
-	// Temuan dinilai sesudah engine selesai, jadi tak boleh tercatat sebagai
-	// koneksi yang diblok: lapis egress hanya untuk penolakan sebelum koneksi.
+	// The finding is judged after the engine finishes, so it must not be recorded
+	// as a blocked connection: the egress layer is only for denials before a
+	// connection.
 	var findingDeny bool
 	for _, e := range audit {
 		if !e.Allowed && e.Layer == LayerFinding {
 			findingDeny = true
 		}
 		if !e.Allowed && e.Layer == LayerEgress {
-			t.Errorf("temuan tercatat sebagai penolakan koneksi: %+v", e)
+			t.Errorf("the finding was recorded as a connection denial: %+v", e)
 		}
 	}
 	if !findingDeny {
-		t.Error("harus ada audit penolakan temuan di luar scope")
+		t.Error("there must be an audit entry for the denied out-of-scope finding")
 	}
 }
 
-// TestRunScanWithRecon membuktikan alur recon → scope guard → DAST: aset recon
-// yang in-scope discan; yang out-of-scope/di luar scope ditolak.
+// TestRunScanWithRecon shows the recon → scope guard → DAST flow: in-scope
+// recon assets are scanned; out-of-scope ones are denied.
 func TestRunScanWithRecon(t *testing.T) {
 	g := newGuard(t, []string{"demo.test", "*.demo.test"}, []string{"admin.demo.test"})
 	st := store.NewMem()
@@ -204,13 +205,13 @@ func TestRunScanWithRecon(t *testing.T) {
 		t.Fatalf("RunScan: %v", err)
 	}
 	if res.Discovered == 0 {
-		t.Error("recon harus menemukan aset")
+		t.Error("recon must find assets")
 	}
 	if len(res.Scanned) == 0 {
-		t.Error("harus ada target in-scope yang discan")
+		t.Error("an in-scope target must be scanned")
 	}
 	if res.FindingsSaved != 2 {
-		t.Errorf("mock DAST => 2 temuan utama; dapat %d", res.FindingsSaved)
+		t.Errorf("mock DAST => 2 main findings; got %d", res.FindingsSaved)
 	}
 
 	denied := map[string]scope.Reason{}
@@ -218,21 +219,21 @@ func TestRunScanWithRecon(t *testing.T) {
 		denied[e.Target] = e.Reason
 	}
 	if denied["admin.demo.test"] != scope.ReasonOutOfScope {
-		t.Errorf("admin.demo.test harus ditolak out-of-scope; dapat %q", denied["admin.demo.test"])
+		t.Errorf("admin.demo.test must be denied as out-of-scope; got %q", denied["admin.demo.test"])
 	}
 	if _, ok := denied["exfil.evil.test"]; !ok {
-		t.Error("exfil.evil.test (di luar scope) harus ditolak")
+		t.Error("exfil.evil.test (out of scope) must be denied")
 	}
 
 	all, _ := st.List(context.Background(), store.Query{Program: "demo", IncludeDuplicates: true})
 	for _, f := range all {
 		if strings.Contains(f.Target, "evil.test") {
-			t.Error("temuan di luar scope tak boleh tersimpan")
+			t.Error("an out-of-scope finding must not be saved")
 		}
 	}
 }
 
-// TestRunScanMultiEngine membuktikan >1 engine menulis ke skema yang sama.
+// TestRunScanMultiEngine shows that more than one engine writes to the same schema.
 func TestRunScanMultiEngine(t *testing.T) {
 	g := newGuard(t, []string{"demo.test"}, nil)
 	st := store.NewMem()
@@ -243,9 +244,9 @@ func TestRunScanMultiEngine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunScan: %v", err)
 	}
-	// 2 nuclei + 4 ffuf, semua dedup_key berbeda.
+	// 2 nuclei + 4 ffuf, all with different dedup_keys.
 	if res.FindingsSaved != 6 {
-		t.Errorf("ingin 6 temuan (2 nuclei + 4 ffuf), dapat %d", res.FindingsSaved)
+		t.Errorf("want 6 findings (2 nuclei + 4 ffuf), got %d", res.FindingsSaved)
 	}
 	all, _ := st.List(context.Background(), store.Query{Program: "demo"})
 	var hasNuclei, hasFfuf bool
@@ -258,13 +259,13 @@ func TestRunScanMultiEngine(t *testing.T) {
 		}
 	}
 	if !hasNuclei || !hasFfuf {
-		t.Error("nuclei dan ffuf harus sama-sama menyumbang ke skema yang sama")
+		t.Error("nuclei and ffuf must both contribute to the same schema")
 	}
 }
 
-// probeEngine adalah engine eksternal palsu yang MEMBUAT request HTTP nyata
-// lewat proxy egress yang diberikan — untuk membuktikan proxy menegakkan scope
-// pada koneksi engine sungguhan (tanpa butuh nuclei asli).
+// probeEngine is a fake external engine that MAKES real HTTP requests through
+// the egress proxy it is given. It shows the proxy enforces scope on a real
+// engine connection (without needing real nuclei).
 type probeEngine struct {
 	proxyAddr string
 	urls      []string
@@ -295,9 +296,9 @@ func (p *probeEngine) Scan(_ context.Context, _, program, runID string) ([]*find
 	return out, nil
 }
 
-// TestRunScanEgressProxyEnforcesScope membuktikan mekanisme pilihan pengguna:
-// orchestrator menyalakan proxy egress untuk engine ProxyAware, dan koneksi
-// engine ke host di luar scope DIBLOK sebelum terjadi.
+// TestRunScanEgressProxyEnforcesScope shows the mechanism the user chose: the
+// orchestrator starts the egress proxy for ProxyAware engines, and an engine
+// connection to an out-of-scope host is BLOCKED before it happens.
 func TestRunScanEgressProxyEnforcesScope(t *testing.T) {
 	var hits int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -307,7 +308,7 @@ func TestRunScanEgressProxyEnforcesScope(t *testing.T) {
 	defer backend.Close()
 	bu, _ := url.Parse(backend.URL)
 
-	g := newGuard(t, []string{bu.Hostname()}, nil) // hanya host backend in-scope
+	g := newGuard(t, []string{bu.Hostname()}, nil) // only the backend host is in scope
 	st := store.NewMem()
 	eng := &probeEngine{urls: []string{backend.URL, "http://evil.test/x"}}
 	o := New(g, eng, st, testLimiter(), nil)
@@ -318,10 +319,10 @@ func TestRunScanEgressProxyEnforcesScope(t *testing.T) {
 	}
 
 	if res.FindingsSaved != 1 {
-		t.Errorf("hanya probe in-scope yang berhasil => 1 temuan; dapat %d", res.FindingsSaved)
+		t.Errorf("only the in-scope probe succeeds => 1 finding; got %d", res.FindingsSaved)
 	}
 	if atomic.LoadInt32(&hits) != 1 {
-		t.Errorf("backend in-scope harus kena tepat 1x; dapat %d", hits)
+		t.Errorf("the in-scope backend must be hit exactly once; got %d", hits)
 	}
 	var blockedEvil bool
 	for _, d := range res.Denied {
@@ -330,23 +331,23 @@ func TestRunScanEgressProxyEnforcesScope(t *testing.T) {
 		}
 	}
 	if !blockedEvil {
-		t.Error("proxy egress harus menolak koneksi ke evil.test (lapis egress)")
+		t.Error("the egress proxy must deny the connection to evil.test (egress layer)")
 	}
 }
 
-// ProxyChain.String meredaksi kredensial proxy (Prinsip #5): host tetap
-// tampil, user:pass tidak pernah.
+// ProxyChain.String redacts proxy credentials (Principle #5): the host is still
+// shown, user:pass never is.
 func TestProxyChainStringRedactsCreds(t *testing.T) {
 	pc := ProxyChain{"http://user:s3cr3t@proxy.local:8080", "socks5://bob:p4ss@127.0.0.1:9050"}
 	s := pc.String()
 	for _, leak := range []string{"s3cr3t", "p4ss", "user", "bob"} {
 		if strings.Contains(s, leak) {
-			t.Errorf("ProxyChain.String membocorkan kredensial %q: %s", leak, s)
+			t.Errorf("ProxyChain.String leaks the credential %q: %s", leak, s)
 		}
 	}
 	for _, host := range []string{"proxy.local:8080", "127.0.0.1:9050"} {
 		if !strings.Contains(s, host) {
-			t.Errorf("host harus tetap tampil (%s): %s", host, s)
+			t.Errorf("the host must still be shown (%s): %s", host, s)
 		}
 	}
 }

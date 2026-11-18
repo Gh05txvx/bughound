@@ -1,7 +1,7 @@
-// Package openapi mem-parse spec OpenAPI 3 / Swagger 2 (JSON atau YAML) menjadi
-// daftar URL endpoint absolut. Dipakai untuk scan ter-arah spec: tiap endpoint
-// menjadi target yang TETAP melewati scope guard sebelum di-scan — jadi spec
-// hanya memperluas daftar target, tidak memintas batas keamanan.
+// Package openapi parses an OpenAPI 3 / Swagger 2 spec (JSON or YAML) into a
+// list of absolute endpoint URLs. It backs spec-directed scans: each endpoint
+// becomes a target that still passes the scope guard before it is scanned, so a
+// spec only extends the target list and cannot bypass the security boundary.
 package openapi
 
 import (
@@ -26,18 +26,18 @@ type doc struct {
 
 var pathParam = regexp.MustCompile(`\{[^}]+\}`)
 
-// Endpoints mengembalikan URL endpoint absolut unik dari spec. fallbackBase
-// (mis. target pertama) dipakai bila spec tak punya server absolut. Param path
-// {id} diganti "1" agar URL konkret.
+// Endpoints returns the unique absolute endpoint URLs in spec. fallbackBase
+// (e.g. the first target) is used when the spec has no absolute server. Path
+// params such as {id} are replaced with "1" to make the URL concrete.
 func Endpoints(spec []byte, fallbackBase string) ([]string, error) {
 	var d doc
 	if err := yaml.Unmarshal(spec, &d); err != nil {
 		if jerr := json.Unmarshal(spec, &d); jerr != nil {
-			return nil, fmt.Errorf("spec tak terurai sebagai YAML/JSON: %v", err)
+			return nil, fmt.Errorf("spec does not parse as YAML/JSON: %v", err)
 		}
 	}
 	if len(d.Paths) == 0 {
-		return nil, fmt.Errorf("tak ada 'paths' di spec")
+		return nil, fmt.Errorf("no 'paths' in spec")
 	}
 	base, err := baseURL(d, fallbackBase)
 	if err != nil {
@@ -48,7 +48,7 @@ func Endpoints(spec []byte, fallbackBase string) ([]string, error) {
 	var out []string
 	for p := range d.Paths {
 		if !strings.HasPrefix(p, "/") {
-			continue // lewati kunci non-path (mis. $ref, parameters)
+			continue // skip non-path keys (e.g. $ref, parameters)
 		}
 		u := strings.TrimRight(base, "/") + pathParam.ReplaceAllString(p, "1")
 		if !seen[u] {
@@ -57,14 +57,14 @@ func Endpoints(spec []byte, fallbackBase string) ([]string, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("tak ada path valid di spec")
+		return nil, fmt.Errorf("no valid path in spec")
 	}
 	sort.Strings(out)
 	return out, nil
 }
 
 func baseURL(d doc, fallback string) (string, error) {
-	// OpenAPI 3: servers[0].url (absolut atau relatif terhadap fallback).
+	// OpenAPI 3: servers[0].url (absolute, or relative to the fallback).
 	if len(d.Servers) > 0 && strings.TrimSpace(d.Servers[0].URL) != "" {
 		s := strings.TrimSpace(d.Servers[0].URL)
 		if isAbs(s) {
@@ -88,11 +88,11 @@ func baseURL(d doc, fallback string) (string, error) {
 		}
 		return scheme + "://" + strings.TrimRight(d.Host+d.BasePath, "/"), nil
 	}
-	// Fallback: target pengguna.
+	// Fallback: the user's target.
 	if strings.TrimSpace(fallback) != "" {
 		return normalize(fallback), nil
 	}
-	return "", fmt.Errorf("tak bisa menentukan base URL (tak ada servers/host di spec, dan target kosong)")
+	return "", fmt.Errorf("cannot determine the base URL (no servers/host in spec, and the target is empty)")
 }
 
 func isAbs(s string) bool {

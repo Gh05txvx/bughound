@@ -1,11 +1,11 @@
-// Package secret mengenkripsi secret saat disimpan dan mengelola kuncinya
-// (prinsip mengikat bughound: "secret terenkripsi dan terisolasi; tidak pernah
-// bocor ke log, respons, atau report, dan tidak pernah di-commit").
+// Package secret encrypts secrets at rest and manages their keys (binding
+// bughound principle: "secrets are encrypted and isolated; they never leak to
+// logs, responses or reports, and are never committed").
 //
-// Enkripsi: AES-256-GCM (authenticated). Setiap secret disimpan sebagai token
-// "v1:<key-id>:<base64(nonce|ciphertext)>"; key-id mengikat ciphertext ke kunci
-// (jadi rotasi bisa menyimpan kunci lama untuk dekripsi) dan dipakai sebagai AAD
-// agar perubahan key-id terdeteksi.
+// Encryption: AES-256-GCM (authenticated). Each secret is stored as a token
+// "v1:<key-id>:<base64(nonce|ciphertext)>"; the key-id binds the ciphertext to
+// a key (so rotation can keep old keys for decryption) and is used as AAD so a
+// changed key-id is detected.
 package secret
 
 import (
@@ -20,74 +20,74 @@ import (
 	"strings"
 )
 
-// KeySize adalah ukuran kunci (AES-256).
+// KeySize is the key size (AES-256).
 const KeySize = 32
 
-// ErrNoKey dikembalikan bila token merujuk key-id yang tak ada di keyring.
-var ErrNoKey = errors.New("secret: tidak ada kunci untuk key-id token (perlu kunci lama untuk dekripsi)")
+// ErrNoKey is returned when a token refers to a key-id that is not in the keyring.
+var ErrNoKey = errors.New("secret: no key for the token's key-id (the old key is needed to decrypt)")
 
-// Key adalah kunci simetris 32-byte beserta id turunannya (one-way, tidak
-// membocorkan kunci). Material dibungkus Secret; String/GoString meredaksi
-// (fmt melewati String() untuk field unexported, jadi guard dipasang di Key).
+// Key is a 32-byte symmetric key with its derived id (one-way, it does not leak
+// the key). The material is wrapped in a Secret; String/GoString redact (fmt
+// skips String() for unexported fields, so the guard is on Key itself).
 type Key struct {
 	id  string
 	mat Secret
 }
 
-// NewRandomKey membuat kunci acak.
+// NewRandomKey creates a random key.
 func NewRandomKey() (Key, error) {
 	b := make([]byte, KeySize)
 	if _, err := rand.Read(b); err != nil {
-		return Key{}, fmt.Errorf("secret: gagal membuat kunci: %w", err)
+		return Key{}, fmt.Errorf("secret: cannot create key: %w", err)
 	}
 	return KeyFromBytes(b)
 }
 
-// KeyFromBytes membungkus 32 byte menjadi Key.
+// KeyFromBytes wraps 32 bytes into a Key.
 func KeyFromBytes(b []byte) (Key, error) {
 	if len(b) != KeySize {
-		return Key{}, fmt.Errorf("secret: kunci harus %d byte, dapat %d", KeySize, len(b))
+		return Key{}, fmt.Errorf("secret: key must be %d bytes, got %d", KeySize, len(b))
 	}
 	sum := sha256.Sum256(b)
 	return Key{id: hex.EncodeToString(sum[:4]), mat: NewSecret(b)}, nil
 }
 
-// ID mengembalikan id kunci (8 hex, turunan hash — bukan kunci itu sendiri).
+// ID returns the key id (8 hex chars derived from a hash, not the key itself).
 func (k Key) ID() string { return k.id }
 
-// Base64 mengembalikan kunci ter-encode (untuk disimpan ke file kunci 0600).
+// Base64 returns the encoded key (to be stored in the 0600 key file).
 func (k Key) Base64() string { return base64.StdEncoding.EncodeToString(k.mat.Reveal()) }
 
-// String & GoString meredaksi: Key tak pernah mencetak byte kunci, hanya id.
+// String and GoString redact: a Key never prints its bytes, only its id.
 func (k Key) String() string   { return "Key(" + k.id + ")" }
 func (k Key) GoString() string { return "secret.Key(" + k.id + ")" }
 
-// Keyring menyimpan kunci aktif (untuk enkripsi) dan kunci lama (untuk dekripsi
-// saat rotasi).
+// Keyring holds the active key (for encryption) and old keys (for decryption
+// during rotation).
 type Keyring struct {
 	active Key
 	all    map[string]Key
 }
 
-// String & GoString meredaksi: Keyring tak pernah mencetak byte kunci.
+// String and GoString redact: a Keyring never prints key bytes.
 func (r *Keyring) String() string {
 	return fmt.Sprintf("Keyring(active=%s, keys=%d)", r.active.id, len(r.all))
 }
 func (r *Keyring) GoString() string { return r.String() }
 
-// NewKeyring membuat keyring dengan satu kunci aktif.
+// NewKeyring creates a keyring with one active key.
 func NewKeyring(active Key) *Keyring {
 	return &Keyring{active: active, all: map[string]Key{active.ID(): active}}
 }
 
-// ActiveID mengembalikan id kunci aktif.
+// ActiveID returns the id of the active key.
 func (r *Keyring) ActiveID() string { return r.active.ID() }
 
-// Active mengembalikan kunci aktif.
+// Active returns the active key.
 func (r *Keyring) Active() Key { return r.active }
 
-// AllKeys mengembalikan semua kunci (aktif lebih dulu) — untuk persistensi saat
-// rotasi agar kunci lama tetap tersimpan sampai re-enkripsi selesai.
+// AllKeys returns every key (active first). It is used for persistence during
+// rotation, so the old keys stay saved until re-encryption is done.
 func (r *Keyring) AllKeys() []Key {
 	out := []Key{r.active}
 	for id, k := range r.all {
@@ -98,18 +98,18 @@ func (r *Keyring) AllKeys() []Key {
 	return out
 }
 
-// AddRetired menambah kunci lama agar token lama tetap bisa didekripsi.
+// AddRetired adds an old key so old tokens can still be decrypted.
 func (r *Keyring) AddRetired(k Key) { r.all[k.ID()] = k }
 
-// Rotate menjadikan newActive kunci aktif; kunci lama tetap disimpan untuk
-// dekripsi token yang belum di-re-enkripsi.
+// Rotate makes newActive the active key; the old key is kept to decrypt tokens
+// that have not been re-encrypted yet.
 func (r *Keyring) Rotate(newActive Key) {
 	r.all[newActive.ID()] = newActive
 	r.active = newActive
 }
 
-// Subkey menurunkan kunci tujuan-khusus dari kunci aktif (mis. untuk HMAC audit
-// trail) tanpa mengekspos kunci master itu sendiri.
+// Subkey derives a purpose-specific key from the active key (e.g. for the audit
+// trail HMAC) without exposing the master key itself.
 func (r *Keyring) Subkey(label string) []byte {
 	h := sha256.New()
 	h.Write(r.active.mat.Reveal())
@@ -117,7 +117,7 @@ func (r *Keyring) Subkey(label string) []byte {
 	return h.Sum(nil)
 }
 
-// Encrypt mengenkripsi plaintext dengan kunci aktif.
+// Encrypt encrypts plaintext with the active key.
 func (r *Keyring) Encrypt(plaintext []byte) (string, error) {
 	gcm, err := newGCM(r.active)
 	if err != nil {
@@ -125,14 +125,14 @@ func (r *Keyring) Encrypt(plaintext []byte) (string, error) {
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return "", fmt.Errorf("secret: gagal nonce: %w", err)
+		return "", fmt.Errorf("secret: nonce failed: %w", err)
 	}
 	ct := gcm.Seal(nil, nonce, plaintext, []byte(r.active.ID()))
 	blob := append(append([]byte(nil), nonce...), ct...)
 	return "v1:" + r.active.ID() + ":" + base64.StdEncoding.EncodeToString(blob), nil
 }
 
-// Decrypt mendekripsi token, memilih kunci sesuai key-id di token.
+// Decrypt decrypts a token, picking the key by the key-id in the token.
 func (r *Keyring) Decrypt(token string) ([]byte, error) {
 	keyID, blob, err := parseToken(token)
 	if err != nil {
@@ -147,12 +147,12 @@ func (r *Keyring) Decrypt(token string) ([]byte, error) {
 		return nil, err
 	}
 	if len(blob) < gcm.NonceSize() {
-		return nil, errors.New("secret: ciphertext terlalu pendek")
+		return nil, errors.New("secret: ciphertext too short")
 	}
 	nonce, ct := blob[:gcm.NonceSize()], blob[gcm.NonceSize():]
 	pt, err := gcm.Open(nil, nonce, ct, []byte(keyID))
 	if err != nil {
-		return nil, fmt.Errorf("secret: dekripsi gagal (ciphertext/kunci tidak cocok atau diubah): %w", err)
+		return nil, fmt.Errorf("secret: decryption failed (ciphertext and key do not match, or it was altered): %w", err)
 	}
 	return pt, nil
 }
@@ -168,23 +168,23 @@ func newGCM(k Key) (cipher.AEAD, error) {
 func parseToken(token string) (keyID string, blob []byte, err error) {
 	parts := strings.SplitN(token, ":", 3)
 	if len(parts) != 3 || parts[0] != "v1" {
-		return "", nil, errors.New("secret: format token tak dikenal")
+		return "", nil, errors.New("secret: unknown token format")
 	}
 	blob, err = base64.StdEncoding.DecodeString(parts[2])
 	if err != nil {
-		return "", nil, fmt.Errorf("secret: base64 token rusak: %w", err)
+		return "", nil, fmt.Errorf("secret: token base64 is corrupt: %w", err)
 	}
 	return parts[1], blob, nil
 }
 
-// Secret membungkus nilai rahasia agar tak sengaja bocor ke log/JSON/format.
-// Nilai hanya bisa diambil lewat Reveal().
+// Secret wraps a secret value so it does not leak by accident into
+// logs/JSON/formatting. The value can only be read through Reveal().
 type Secret struct{ v []byte }
 
-// NewSecret membungkus nilai.
+// NewSecret wraps a value.
 func NewSecret(v []byte) Secret { return Secret{v: append([]byte(nil), v...)} }
 
-// Reveal mengembalikan nilai asli (pemanggil bertanggung jawab tak membocorkan).
+// Reveal returns the original value (the caller is responsible for not leaking it).
 func (s Secret) Reveal() []byte { return s.v }
 
 func (Secret) String() string               { return "[REDACTED]" }

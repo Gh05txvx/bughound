@@ -2,22 +2,22 @@
 {{with .Result}}
 <div class="result-summary">
   <span class="chip ok">run {{.RunID}}</span>
-  {{if .Discovered}}<span class="chip">{{.Discovered}} aset recon</span>{{end}}
-  <span class="chip">{{len .Scanned}} discan</span>
-  <span class="chip good">{{.Saved}} temuan baru</span>
-  <span class="chip">{{.Duplicates}} duplikat</span>
-  <span class="chip warn">{{len .Denials}} ditolak</span>
+  {{if .Discovered}}<span class="chip">{{.Discovered}} recon assets</span>{{end}}
+  <span class="chip">{{len .Scanned}} scanned</span>
+  <span class="chip good">{{.Saved}} new findings</span>
+  <span class="chip">{{.Duplicates}} duplicates</span>
+  <span class="chip warn">{{len .Denials}} denied</span>
 </div>
 
 {{if .Scanned}}
-<h3>Discan (in-scope)</h3>
+<h3>Scanned (in-scope)</h3>
 <ul class="list">{{range .Scanned}}<li class="mono">{{.}}</li>{{end}}</ul>
 {{end}}
 
 {{if .Denials}}
-<h3>Ditolak scope guard</h3>
+<h3>Denied by the scope guard</h3>
 <table class="tbl compact">
-  <thead><tr><th>Target</th><th>Alasan</th><th>Lapis</th><th>Entri</th></tr></thead>
+  <thead><tr><th>Target</th><th>Reason</th><th>Layer</th><th>Entry</th></tr></thead>
   <tbody>
   {{range .Denials}}
     <tr>
@@ -31,15 +31,15 @@
 </table>
 {{end}}
 
-<p class="muted small">{{.AuditCount}} keputusan tercatat di audit trail.</p>
-<a class="btn" href="/findings?program={{$.Program}}">Lihat findings →</a>
+<p class="muted small">{{.AuditCount}} decisions recorded in the audit trail.</p>
+<a class="btn" href="/findings?program={{$.Program}}">View findings →</a>
 {{end}}
 {{end}}
 
 {{define "scan_result_errors"}}
 <div class="errors">
-  <h3>Tidak dijalankan</h3>
+  <h3>Not run</h3>
   <ul>{{range .Errors}}<li>{{.}}</li>{{end}}</ul>
-  <p class="muted small">Scope guard fail-closed: perbaiki dulu sebelum scan berjalan.</p>
+  <p class="muted small">The scope guard is fail-closed: fix it first before a scan runs.</p>
 </div>
 {{end}}

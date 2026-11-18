@@ -11,11 +11,11 @@ import (
 
 var _ engine.AuthAware = (*Runner)(nil)
 
-// Lever 1: header auth jadi job replacer SEBELUM spider; baris rusak & nilai
-// kosong dilewati; tanpa header plan tak berubah.
+// Lever 1: auth headers become a replacer job BEFORE the spider; a broken line & empty
+// value are skipped; without headers the plan is unchanged.
 func TestPlanYAMLAuthHeaders(t *testing.T) {
 	if p := planYAML("https://demo.test", "/out", "report.json", false, nil); strings.Contains(p, "replacer") {
-		t.Errorf("tanpa header auth tak boleh ada job replacer:\n%s", p)
+		t.Errorf("without auth headers there must be no replacer job:\n%s", p)
 	}
 
 	r := &Runner{}
@@ -27,19 +27,19 @@ func TestPlanYAMLAuthHeaders(t *testing.T) {
 		`matchString: "Authorization"`, `replacementString: "Bearer xyz"`,
 	} {
 		if !strings.Contains(p, want) {
-			t.Errorf("plan harus memuat %q:\n%s", want, p)
+			t.Errorf("the plan must hold %q:\n%s", want, p)
 		}
 	}
 	if n := strings.Count(p, "matchType: req_header"); n != 2 {
-		t.Errorf("mau 2 aturan (baris rusak & nilai kosong dilewati), dapat %d:\n%s", n, p)
+		t.Errorf("want 2 rules (broken line & empty value skipped), got %d:\n%s", n, p)
 	}
 	if strings.Index(p, "type: replacer") > strings.Index(p, "type: spider") {
-		t.Error("replacer harus SEBELUM spider agar semua request membawa header")
+		t.Error("the replacer must be BEFORE the spider so every request carries the header")
 	}
 }
 
-// Nilai berisi karakter YAML-sensitif harus kembali utuh saat plan diurai, dan
-// tak bisa menyusupkan kunci/job baru (mis. activeScan di mode pasif).
+// A value with YAML-sensitive characters must round-trip intact when the plan is parsed, and
+// cannot inject a new key/job (e.g. activeScan in passive mode).
 func TestPlanYAMLAuthValueRoundTrip(t *testing.T) {
 	tricky := "s=\"a\"#b: c\\d'\t\n  - type: activeScan"
 	p := planYAML("https://demo.test", "/out", "report.json", false, []string{"Cookie: " + tricky})
@@ -54,24 +54,24 @@ func TestPlanYAMLAuthValueRoundTrip(t *testing.T) {
 		} `yaml:"jobs"`
 	}
 	if err := yaml.Unmarshal([]byte(p), &plan); err != nil {
-		t.Fatalf("plan bukan YAML sah: %v\n%s", err, p)
+		t.Fatalf("the plan is not valid YAML: %v\n%s", err, p)
 	}
 	if len(plan.Jobs) != 4 || plan.Jobs[0].Type != "replacer" {
-		t.Fatalf("mau 4 job (replacer, spider, passiveScan-wait, report), dapat %+v", plan.Jobs)
+		t.Fatalf("want 4 job (replacer, spider, passiveScan-wait, report), got %+v", plan.Jobs)
 	}
 	for _, j := range plan.Jobs {
 		if j.Type == "activeScan" {
-			t.Fatal("nilai header menyusupkan job activeScan ke plan pasif")
+			t.Fatal("the header value injected an activeScan job into the passive plan")
 		}
 	}
 	rule := plan.Jobs[0].Rules[0]
 	if rule.MatchString != "Cookie" || rule.ReplacementString != strings.TrimSpace(tricky) {
-		t.Errorf("nilai tak kembali utuh: %+v", rule)
+		t.Errorf("the value did not round-trip intact: %+v", rule)
 	}
 }
 
-// Scan berlogin: context ZAP mengecualikan route logout (spider mengikuti link
-// logout → sesi mati, live 2026-11-16); tanpa login context tak dibatasi.
+// Authenticated scan: the ZAP context excludes the logout route (the spider follows the
+// logout link → the session dies, live 2026-11-16); without login the context is not restricted.
 func TestPlanYAMLExcludesLogoutWhenAuth(t *testing.T) {
 	excl := func(p string) []string {
 		t.Helper()
@@ -83,15 +83,15 @@ func TestPlanYAMLExcludesLogoutWhenAuth(t *testing.T) {
 			} `yaml:"env"`
 		}
 		if err := yaml.Unmarshal([]byte(p), &plan); err != nil || len(plan.Env.Contexts) != 1 {
-			t.Fatalf("plan rusak (err=%v):\n%s", err, p)
+			t.Fatalf("broken plan (err=%v):\n%s", err, p)
 		}
 		return plan.Env.Contexts[0].ExcludePaths
 	}
 	if ex := excl(planYAML("https://demo.test", "/out", "report.json", false, nil)); len(ex) != 0 {
-		t.Errorf("tanpa auth context tak boleh dibatasi: %v", ex)
+		t.Errorf("without auth the context must not be restricted: %v", ex)
 	}
 	ex := excl(planYAML("https://demo.test", "/out", "report.json", true, []string{"Cookie: s=1"}))
 	if len(ex) != 1 || ex[0] != engine.LogoutPattern {
-		t.Errorf("dengan auth, excludePaths harus [%q]; dapat %v", engine.LogoutPattern, ex)
+		t.Errorf("with auth, excludePaths must be [%q]; got %v", engine.LogoutPattern, ex)
 	}
 }

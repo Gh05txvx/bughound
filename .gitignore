@@ -8,21 +8,21 @@
 /bin/
 /dist/
 
-# E2E (Playwright) artefak & dependensi
+# E2E (Playwright) artifacts & dependencies
 /e2e/node_modules/
 /e2e/test-results/
 /e2e/playwright-report/
 /e2e/playwright/.cache/
 
-# Database lokal (SQLite + WAL)
+# Local database (SQLite + WAL)
 *.db
 *.db-shm
 *.db-wal
 
-# Attestation audit (anchor head rantai) — data runtime, bukan sumber
+# Audit attestation (the chain head anchor), runtime data, not source
 *.anchor
 
-# Kunci master enkripsi secret — JANGAN PERNAH commit
+# Secret-encryption master key, NEVER commit
 *.key
 bughound.key
 
@@ -32,20 +32,20 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Gambar referensi UI (konsumsi internal sebagai acuan desain — jangan commit)
+# UI reference images (used internally as a design reference, do not commit)
 ref/
 
-# Hasil scan lokal (laporan kerja per target, bukan sumber — jangan commit ke repo publik)
+# Local scan output (per-target working reports, not source, do not commit to a public repo)
 hasil scan/
 
-# Claude Code: data sesi, memory, & settings lokal (transcript + settings.local.json) — jangan commit, apalagi ke repo publik
+# Claude Code: session data, memory, & local settings (transcript + settings.local.json), do not commit, least of all to a public repo
 .claude/
 
-# Plugin skills/agents (cache skill pihak ketiga + lock file) — artefak tooling, bukan kode produk; lokal saja
+# Plugin skills/agents (third-party skill cache + lock file), tooling artifacts, not product code; local only
 /.agents/
 /skills-lock.json
 
-# Dokumen internal — lokal saja, jangan commit ke repo publik (dipindah dari repo 2026-11-06)
+# Internal docs, local only, do not commit to a public repo (moved out of the repo 2026-11-06)
 /CLAUDE.md
 /docs/adr/
 /docs/audit/

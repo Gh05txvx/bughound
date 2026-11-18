@@ -7,7 +7,7 @@ import (
 	"bughound/internal/finding"
 )
 
-// Platform adalah platform bounty tujuan export (bentuk template submission).
+// Platform is the bounty platform an export targets (the shape of the submission template).
 type Platform string
 
 const (
@@ -15,10 +15,10 @@ const (
 	PlatformBugcrowd  Platform = "bugcrowd"
 )
 
-// Valid melaporkan apakah p didukung.
+// Valid reports whether p is supported.
 func (p Platform) Valid() bool { return p == PlatformHackerOne || p == PlatformBugcrowd }
 
-// Label mengembalikan nama tampil platform.
+// Label returns the platform's display name.
 func (p Platform) Label() string {
 	switch p {
 	case PlatformHackerOne:
@@ -29,12 +29,13 @@ func (p Platform) Label() string {
 	return string(p)
 }
 
-// draftNote ditanam di tiap export agar sifat draft & "tanpa auto-submit" jelas.
-const draftNote = "Draft BugHound — verifikasi & lengkapi, lalu submit MANUAL. Tanpa auto-submit."
+// draftNote is embedded in every export so its draft nature and "no auto-submit" are clear.
+const draftNote = "BugHound draft: verify and complete it, then submit MANUALLY. No auto-submit."
 
-// ExportFinding memformat SATU temuan ke template submission platform (Markdown).
-// Hanya menghasilkan teks; pengiriman tetap manual (prinsip tanpa auto-submit).
-// Evidence yang dipakai sudah tersensor di hulu (skema tak menyimpan secret mentah).
+// ExportFinding formats ONE finding into the platform's submission template
+// (Markdown). It only produces text; sending stays manual (the no-auto-submit
+// principle). The evidence it uses was already redacted upstream (the schema
+// does not store raw secrets).
 func ExportFinding(f *finding.Finding, p Platform) string {
 	if p == PlatformBugcrowd {
 		return exportBugcrowd(f)
@@ -42,18 +43,19 @@ func ExportFinding(f *finding.Finding, p Platform) string {
 	return exportHackerOne(f)
 }
 
-// ExportReport memformat SEMUA temuan terkonfirmasi di report ke template
-// platform, satu bagian per temuan (hunter men-submit tiap temuan terpisah).
+// ExportReport formats EVERY confirmed finding in the report into the
+// platform template, one section per finding (the hunter submits each finding
+// separately).
 func ExportReport(r Report, p Platform) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Export %s — %s\n\n", p.Label(), r.Program)
-	fmt.Fprintf(&b, "_%d temuan terkonfirmasi · %s_\n\n", len(r.Items), draftNote)
+	fmt.Fprintf(&b, "_%d confirmed findings · %s_\n\n", len(r.Items), draftNote)
 	if len(r.Items) == 0 {
-		b.WriteString("_Belum ada temuan terkonfirmasi untuk diekspor._\n")
+		b.WriteString("_No confirmed findings to export yet._\n")
 		return b.String()
 	}
 	for i, f := range r.Items {
-		fmt.Fprintf(&b, "<!-- Temuan %d/%d -->\n\n", i+1, len(r.Items))
+		fmt.Fprintf(&b, "<!-- Finding %d/%d -->\n\n", i+1, len(r.Items))
 		b.WriteString(ExportFinding(f, p))
 		b.WriteString("\n---\n\n")
 	}
@@ -67,7 +69,7 @@ func assetOf(f *finding.Finding) string {
 	return f.Target
 }
 
-// h1Rating memetakan severity internal ke rating kualitatif HackerOne.
+// h1Rating maps the internal severity to HackerOne's qualitative rating.
 func h1Rating(s finding.Severity) string {
 	switch s {
 	case finding.SeverityCritical:
@@ -83,7 +85,7 @@ func h1Rating(s finding.Severity) string {
 	}
 }
 
-// bugcrowdPriority memetakan severity internal ke prioritas P1–P5 Bugcrowd.
+// bugcrowdPriority maps the internal severity to Bugcrowd's P1 to P5 priority.
 func bugcrowdPriority(s finding.Severity) string {
 	switch s {
 	case finding.SeverityCritical:
@@ -106,20 +108,20 @@ func writeSteps(b *strings.Builder, f *finding.Finding) {
 		}
 		return
 	}
-	// Tanpa langkah eksplisit — beri kerangka dari lokasi + payload.
+	// No explicit steps: give a skeleton from the location + payload.
 	if f.Location.Method != "" {
-		fmt.Fprintf(b, "1. Kirim permintaan `%s` ke `%s`", f.Location.Method, assetOf(f))
+		fmt.Fprintf(b, "1. Send a `%s` request to `%s`", f.Location.Method, assetOf(f))
 	} else {
-		fmt.Fprintf(b, "1. Akses `%s`", assetOf(f))
+		fmt.Fprintf(b, "1. Open `%s`", assetOf(f))
 	}
 	if f.Location.Parameter != "" {
-		fmt.Fprintf(b, " melalui parameter `%s`", f.Location.Parameter)
+		fmt.Fprintf(b, " through the `%s` parameter", f.Location.Parameter)
 	}
 	b.WriteString(".\n")
 	if f.Evidence != nil && f.Evidence.Payload != "" {
-		fmt.Fprintf(b, "2. Gunakan payload: `%s`\n", f.Evidence.Payload)
+		fmt.Fprintf(b, "2. Use the payload: `%s`\n", f.Evidence.Payload)
 	}
-	b.WriteString("_(lengkapi langkah reproduksi sebelum submit)_\n")
+	b.WriteString("_(complete the reproduction steps before submitting)_\n")
 }
 
 func writeEvidence(b *strings.Builder, f *finding.Finding) {
@@ -146,7 +148,7 @@ func exportHackerOne(f *finding.Finding) string {
 	fmt.Fprintf(&b, "# %s\n\n", f.Title)
 	fmt.Fprintf(&b, "<!-- %s -->\n\n", draftNote)
 
-	b.WriteString("**Metadata (isi ke form HackerOne):**\n\n")
+	b.WriteString("**Metadata (enter into the HackerOne form):**\n\n")
 	fmt.Fprintf(&b, "- **Asset / URL:** %s\n", assetOf(f))
 	if len(f.CWE) > 0 {
 		fmt.Fprintf(&b, "- **Weakness (CWE):** %s\n", strings.Join(f.CWE, ", "))
@@ -164,7 +166,7 @@ func exportHackerOne(f *finding.Finding) string {
 	if f.Description != "" {
 		fmt.Fprintf(&b, "%s\n\n", f.Description)
 	} else {
-		fmt.Fprintf(&b, "%s pada `%s`.\n\n", f.Type, assetOf(f))
+		fmt.Fprintf(&b, "%s on `%s`.\n\n", f.Type, assetOf(f))
 	}
 
 	b.WriteString("## Steps To Reproduce\n\n")
@@ -180,7 +182,7 @@ func exportHackerOne(f *finding.Finding) string {
 	if strings.TrimSpace(f.Impact) != "" {
 		fmt.Fprintf(&b, "%s\n\n", f.Impact)
 	} else {
-		b.WriteString("_Jelaskan dampak konkret (data terekspos, aksi yang bisa dilakukan penyerang) sebelum submit._\n\n")
+		b.WriteString("_Describe the concrete impact (data exposed, what an attacker can do) before submitting._\n\n")
 	}
 
 	b.WriteString("## Remediation\n\n")
@@ -204,12 +206,12 @@ func exportBugcrowd(f *finding.Finding) string {
 	fmt.Fprintf(&b, "# %s\n\n", f.Title)
 	fmt.Fprintf(&b, "<!-- %s -->\n\n", draftNote)
 
-	b.WriteString("**Metadata (isi ke form Bugcrowd):**\n\n")
+	b.WriteString("**Metadata (enter into the Bugcrowd form):**\n\n")
 	fmt.Fprintf(&b, "- **Target:** %s\n", assetOf(f))
 	fmt.Fprintf(&b, "- **Priority:** %s\n", bugcrowdPriority(f.Severity))
 	fmt.Fprintf(&b, "- **Bug type:** %s\n", f.Type)
 	if vrt := bugcrowdVRT(f); vrt != "" {
-		fmt.Fprintf(&b, "- **VRT (kandidat — verifikasi ke taksonomi program):** `%s`\n", vrt)
+		fmt.Fprintf(&b, "- **VRT (candidate; check it against the program's taxonomy):** `%s`\n", vrt)
 	}
 	if f.OWASP != "" {
 		fmt.Fprintf(&b, "- **OWASP (2021):** %s\n", f.OWASP.Label())
@@ -226,7 +228,7 @@ func exportBugcrowd(f *finding.Finding) string {
 	if f.Description != "" {
 		fmt.Fprintf(&b, "%s\n\n", f.Description)
 	} else {
-		fmt.Fprintf(&b, "%s pada `%s`.\n\n", f.Type, assetOf(f))
+		fmt.Fprintf(&b, "%s on `%s`.\n\n", f.Type, assetOf(f))
 	}
 
 	b.WriteString("**Steps to Reproduce**\n\n")
@@ -242,7 +244,7 @@ func exportBugcrowd(f *finding.Finding) string {
 	if strings.TrimSpace(f.Impact) != "" {
 		fmt.Fprintf(&b, "%s\n\n", f.Impact)
 	} else {
-		b.WriteString("_Jelaskan dampak konkret sebelum submit._\n\n")
+		b.WriteString("_Describe the concrete impact before submitting._\n\n")
 	}
 
 	b.WriteString("**Remediation**\n\n")

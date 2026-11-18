@@ -18,92 +18,94 @@ import (
 	"bughound/internal/finding"
 )
 
-// DASTRunner adalah engine DAST AKTIF berbasis nuclei fuzzing (-dast): ia
-// MENGIRIM payload (SQLi/XSS/SSTI/dst.) ke parameter yang ditemukan pada target,
-// bukan sekadar mencocokkan pola pasif. Karena agresif, jalankan HANYA pada
-// target yang sah (lab/in-scope/izin eksplisit) — tak pernah di dev/test
-// sembarangan (lihat CLAUDE.md).
+// DASTRunner is the ACTIVE DAST engine built on nuclei fuzzing (-dast): it SENDS
+// payloads (SQLi/XSS/SSTI/etc.) to parameters found on the target, not just
+// matching passive patterns. Because it is aggressive, run it ONLY against a
+// legitimate target (a lab, in-scope, or with explicit permission), never
+// casually in dev/test (see CLAUDE.md).
 //
-// Alur: crawl target dgn katana (lewat proxy egress) → kumpulkan URL same-host
-// (yang berparameter diprioritaskan sbg titik fuzz) → `nuclei -dast -list` atas
-// URL itu (lewat proxy egress yang SAMA) → normalkan lewat Parse (output JSONL
-// nuclei DAST = format yang sama dgn nuclei pasif, jadi parser tak berubah).
+// Flow: crawl the target with katana (through the egress proxy), collect
+// same-host URLs (parameterized ones prioritized as fuzz points), run
+// `nuclei -dast -list` over those URLs (through the SAME egress proxy), normalize
+// through Parse (nuclei DAST JSONL output is the same format as passive nuclei,
+// so the parser does not change).
 //
-// Bila diberi spec OpenAPI/Swagger (UseOpenAPISpec), run juga melakukan pass
-// `nuclei -dast -input-mode openapi/swagger` SEKALI atas spec itu: membangkitkan
-// request lengkap termasuk BODY (mis. POST/PUT JSON), bukan hanya query — titik
-// injeksi yang tak tertangkap crawl URL. Pass ini tetap lewat proxy egress yang
-// sama & temuannya digabung.
+// When given an OpenAPI/Swagger spec (UseOpenAPISpec), the run also makes a
+// `nuclei -dast -input-mode openapi/swagger` pass ONCE over that spec: it
+// generates complete requests including the BODY (e.g. POST/PUT JSON), not just
+// the query, which are injection points the URL crawl misses. This pass still
+// goes through the same egress proxy and its findings are merged in.
 //
-// Keamanan (area sensitif): SEMUA request (crawl + fuzz) lewat proxy egress
-// scope-enforced; tiap request diperiksa scope guard sebelum dibuka (payload
-// mengubah NILAI parameter, host tetap in-scope; OAST/blind ke pihak-3 diblok
-// proxy). Volume dibatasi: rate limiter orchestrator + `-rate-limit` nuclei +
-// `-fuzz-aggression low` + cap URL. Fail-safe: tanpa proxy = tak ada koneksi.
+// Security (sensitive area): EVERY request (crawl + fuzz) goes through the
+// scope-enforced egress proxy; each request is checked by the scope guard before
+// it opens (a payload changes a parameter's VALUE, the host stays in-scope;
+// OAST/blind to a third party is blocked by the proxy). Volume is capped: the
+// orchestrator rate limiter + nuclei `-rate-limit` + `-fuzz-aggression low` + a
+// URL cap. Fail-safe: no proxy means no connection.
 //
-// Profil keamanan (Safety): non-destruktif SELALU aktif (tak kirim payload DoS,
-// tanpa callback blind/OAST — lihat safety.go) agar scan mencari kandidat bug
-// tanpa merusak/mengubah konfigurasi target; mode stealth (opsional) membuat
-// crawl+fuzz low-and-slow untuk jejak minimal pada target ber-SOC.
+// Safety profile (Safety): non-destructive is ALWAYS on (no DoS payloads, no
+// blind/OAST callbacks, see safety.go) so the scan looks for candidate bugs
+// without breaking or changing the target's configuration; stealth mode
+// (optional) makes crawl+fuzz low-and-slow for a minimal footprint on a target with a SOC.
 type DASTRunner struct {
 	Binary     string // default "nuclei"
 	Katana     string // default "katana"
-	RateLimit  int    // -rate-limit (req/dtk) utk crawl & fuzz
+	RateLimit  int    // -rate-limit (req/s) for crawl & fuzz
 	Aggression string // -fuzz-aggression (low|medium|high); default "low"
-	Safety     Safety // profil keamanan: non-destruktif (selalu) + stealth (opsional)
+	Safety     Safety // safety profile: non-destructive (always) + stealth (optional)
 	proxyAddr  string
 
-	authHeaders []string // Lever 1: header auth disuntik via -H ke crawl & fuzz
+	authHeaders []string // Lever 1: auth headers injected via -H into crawl & fuzz
 
-	specBytes []byte // spec OpenAPI/Swagger (opsional) utk fuzz body — lihat UseOpenAPISpec
-	specDone  bool   // penanda: pass OpenAPI sudah dijalankan sekali utk run ini
+	specBytes []byte // OpenAPI/Swagger spec (optional) for body fuzzing, see UseOpenAPISpec
+	specDone  bool   // marker: the OpenAPI pass has run once for this run
 }
 
-// UseOpenAPISpec memenuhi engine.OpenAPIAware: menyetel spec yang akan difuzz
-// via `nuclei -im openapi/swagger` (sekali per run), membangkitkan request
-// lengkap termasuk BODY. Instance DASTRunner dibuat baru per run, jadi pass ini
-// berjalan sekali pada pemanggilan Scan pertama.
+// UseOpenAPISpec satisfies engine.OpenAPIAware: sets the spec to be fuzzed via
+// `nuclei -im openapi/swagger` (once per run), generating complete requests
+// including the BODY. A DASTRunner instance is created fresh per run, so this
+// pass runs once on the first Scan call.
 func (r *DASTRunner) UseOpenAPISpec(spec []byte) { r.specBytes = spec }
 
-// Name memenuhi engine.Engine.
+// Name satisfies engine.Engine.
 func (r *DASTRunner) Name() string { return "nuclei-dast" }
 
-// UseProxy memenuhi engine.ProxyAware: crawl + fuzz diarahkan ke proxy egress.
+// UseProxy satisfies engine.ProxyAware: crawl + fuzz are pointed at the egress proxy.
 func (r *DASTRunner) UseProxy(addr string) { r.proxyAddr = addr }
 
-// UseAuthHeaders memenuhi engine.AuthAware: menyuntik header auth (-H) ke crawl
-// (katana) & fuzz (nuclei -dast) agar menjangkau endpoint di balik login (Lever 1).
+// UseAuthHeaders satisfies engine.AuthAware: injects the auth headers (-H) into
+// crawl (katana) & fuzz (nuclei -dast) to reach endpoints behind a login (Lever 1).
 func (r *DASTRunner) UseAuthHeaders(h []string) { r.authHeaders = h }
 
-const maxDASTURLs = 150 // batas URL yang difuzz per target (volume request terkendali)
+const maxDASTURLs = 150 // cap on URLs fuzzed per target (request volume under control)
 
-// Scan memenuhi engine.Engine.
+// Scan satisfies engine.Engine.
 func (r *DASTRunner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
-	// Fail-safe: tanpa proxy egress, JANGAN buat koneksi apa pun (selaras prinsip
-	// "tidak pernah memicu koneksi yang memintas scope guard").
+	// Fail-safe: without an egress proxy, make NO connection at all (in line with the
+	// principle "never trigger a connection that bypasses the scope guard").
 	if r.proxyAddr == "" {
 		return nil, nil
 	}
 
-	// Pass OpenAPI (sekali per run): fuzz request lengkap termasuk body dari spec.
-	// Best-effort — kegagalan di sini tak membatalkan fuzz berbasis URL di bawah.
+	// OpenAPI pass (once per run): fuzz complete requests including the body from the
+	// spec. Best-effort: a failure here does not cancel the URL-based fuzz below.
 	var extra []*finding.Finding
 	if len(r.specBytes) > 0 && !r.specDone {
 		r.specDone = true
 		extra = r.fuzzOpenAPI(ctx, program, runID)
 	}
 
-	// 1) Perluas target → daftar URL (crawl best-effort; target selalu disertakan).
+	// 1) Expand the target into a URL list (best-effort crawl; the target is always included).
 	urls := r.gatherURLs(ctx, target)
 
-	// 2) Tulis daftar URL ke berkas sementara utk `nuclei -list`.
+	// 2) Write the URL list to a temp file for `nuclei -list`.
 	listFile, cleanup, err := writeList(urls)
 	if err != nil {
-		return nil, fmt.Errorf("nuclei-dast: berkas daftar: %w", err)
+		return nil, fmt.Errorf("nuclei-dast: list file: %w", err)
 	}
 	defer cleanup()
 
-	// 3) Jalankan nuclei -dast atas daftar (lewat proxy egress).
+	// 3) Run nuclei -dast over the list (through the egress proxy).
 	bin := r.Binary
 	if bin == "" {
 		bin = "nuclei"
@@ -114,7 +116,7 @@ func (r *DASTRunner) Scan(ctx context.Context, target, program, runID string) ([
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("nuclei-dast: eksekusi gagal: %w (%s)", err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("nuclei-dast: execution failed: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	fromList, err := Parse(&stdout, program, runID)
 	if err != nil {
@@ -123,15 +125,16 @@ func (r *DASTRunner) Scan(ctx context.Context, target, program, runID string) ([
 	return append(extra, fromList...), nil
 }
 
-// fuzzOpenAPI menjalankan `nuclei -dast -im openapi/swagger` atas spec yang
-// disetel lewat UseOpenAPISpec — membangkitkan request lengkap (method + BODY)
-// untuk difuzz, melengkapi fuzz berbasis URL yang hanya menyentuh query. Semua
-// request tetap lewat proxy egress scope-enforced. Best-effort: gagal = nil.
+// fuzzOpenAPI runs `nuclei -dast -im openapi/swagger` over the spec set via
+// UseOpenAPISpec, generating complete requests (method + BODY) to fuzz, which
+// complements the URL-based fuzz that only touches the query. Every request still
+// goes through the scope-enforced egress proxy. Best-effort: a failure returns nil.
 func (r *DASTRunner) fuzzOpenAPI(ctx context.Context, program, runID string) []*finding.Finding {
-	spec, mode := r.specBytes, detectSpecMode(r.specBytes) // mode dari spec ASLI
+	spec, mode := r.specBytes, detectSpecMode(r.specBytes) // mode from the ORIGINAL spec
 	if len(headerArgs(r.authHeaders)) > 0 {
-		// Scan berlogin: operasi route logout di spec (mis. Petstore GET /user/logout)
-		// mematikan sesi → dibuang. Spec tak terurai = pass dilewati (fail-closed).
+		// Authenticated scan: logout route operations in the spec (e.g. Petstore GET
+		// /user/logout) kill the session, so they are dropped. An unparseable spec means
+		// the pass is skipped (fail-closed).
 		var err error
 		if spec, err = withoutLogoutPaths(spec); err != nil {
 			return nil
@@ -161,22 +164,22 @@ func (r *DASTRunner) fuzzOpenAPI(ctx context.Context, program, runID string) []*
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil // best-effort: spec bisa tak punya server in-scope / format tak lengkap
+		return nil // best-effort: the spec may have no in-scope server / an incomplete format
 	}
 	findings, _ := Parse(&stdout, program, runID)
 	return findings
 }
 
-// withoutLogoutPaths mengembalikan spec tanpa entri `paths` route logout
-// (engine.IsLogoutPath). Lewat yaml.Node (JSON ⊂ YAML) agar urutan & nilai lain
-// utuh; hasil berformat YAML.
+// withoutLogoutPaths returns the spec without logout route `paths` entries
+// (engine.IsLogoutPath). It goes through yaml.Node (JSON ⊂ YAML) so the order and
+// other values stay intact; the result is YAML.
 func withoutLogoutPaths(spec []byte) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(spec, &doc); err != nil {
 		return nil, err
 	}
 	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("spec bukan mapping")
+		return nil, fmt.Errorf("spec is not a mapping")
 	}
 	root := doc.Content[0]
 	for i := 0; i+1 < len(root.Content); i += 2 {
@@ -193,8 +196,8 @@ func withoutLogoutPaths(spec []byte) ([]byte, error) {
 	return yaml.Marshal(&doc)
 }
 
-// detectSpecMode menebak input-mode nuclei dari isi spec: "swagger" untuk
-// Swagger 2.0, selain itu "openapi" (OpenAPI 3.x).
+// detectSpecMode guesses nuclei's input-mode from the spec contents: "swagger" for
+// Swagger 2.0, otherwise "openapi" (OpenAPI 3.x).
 func detectSpecMode(spec []byte) string {
 	head := strings.ToLower(string(spec))
 	if len(head) > 4096 {
@@ -206,16 +209,16 @@ func detectSpecMode(spec []byte) string {
 	return "openapi"
 }
 
-// gatherURLs crawl target (best-effort, lewat proxy), menyaring ke same-host,
-// dedup, memprioritaskan URL berparameter, lalu membatasi jumlah. Target sendiri
-// SELALU disertakan agar fuzzing tetap jalan meski crawl kosong.
+// gatherURLs crawls the target (best-effort, through the proxy), filters to
+// same-host, dedupes, prioritizes parameterized URLs, then caps the count. The
+// target itself is ALWAYS included so fuzzing still runs even when the crawl is empty.
 func (r *DASTRunner) gatherURLs(ctx context.Context, target string) []string {
 	all := append([]string{target}, r.crawl(ctx, target)...)
 	return prioritizeURLs(sameHostURLs(target, all), r.Safety.maxURLs())
 }
 
-// crawl menjalankan katana atas target lewat proxy egress dan mengembalikan URL
-// yang ditemukan. Best-effort: gagal/absen = kembalikan nil (fuzz target saja).
+// crawl runs katana over the target through the egress proxy and returns the URLs
+// found. Best-effort: a failure or absence returns nil (fuzz the target only).
 func (r *DASTRunner) crawl(ctx context.Context, target string) []string {
 	bin := r.Katana
 	if bin == "" {
@@ -241,11 +244,11 @@ func (r *DASTRunner) crawl(ctx context.Context, target string) []string {
 }
 
 func (r *DASTRunner) katanaArgs(target string) []string {
-	// -jc: crawl JS (penting utk SPA yang mendaftarkan endpoint API di bundel JS).
-	// -d 2: batasi kedalaman agar crawl terbatas.
+	// -jc: crawl JS (important for an SPA that registers API endpoints in a JS bundle).
+	// -d 2: limit the depth to keep the crawl bounded.
 	a := []string{"-silent", "-u", target, "-d", "2", "-jc", "-proxy", "http://" + r.proxyAddr}
-	if h := headerArgs(r.authHeaders); len(h) > 0 { // Lever 1: crawl di balik login,
-		a = append(a, h...) // tanpa mengikuti link logout (sesi mati; live 2026-11-16)
+	if h := headerArgs(r.authHeaders); len(h) > 0 { // Lever 1: crawl behind a login,
+		a = append(a, h...) // without following a logout link (the session dies; live 2026-11-16)
 		a = append(a, "-cos", engine.LogoutPattern)
 	}
 	a = append(a, r.Safety.katanaExtraArgs()...)
@@ -255,19 +258,19 @@ func (r *DASTRunner) katanaArgs(target string) []string {
 	return a
 }
 
-// nucleiArgs membangun argumen fuzz berbasis daftar URL (mode "list").
+// nucleiArgs builds the fuzz arguments for a URL list (mode "list").
 func (r *DASTRunner) nucleiArgs(listFile string) []string {
 	return r.nucleiArgsMode(listFile, "")
 }
 
-// nucleiArgsMode membangun argumen `nuclei -dast`. inputMode kosong = daftar URL
-// biasa; "openapi"/"swagger" = baca inputFile sebagai spec & bangkitkan request
-// (termasuk body). Argumen keamanan (non-destruktif selalu + stealth) sama untuk
-// kedua mode.
+// nucleiArgsMode builds the `nuclei -dast` arguments. An empty inputMode means a
+// plain URL list; "openapi"/"swagger" means read inputFile as a spec and generate
+// requests (including the body). The safety arguments (non-destructive always +
+// stealth) are the same for both modes.
 func (r *DASTRunner) nucleiArgsMode(inputFile, inputMode string) []string {
 	agg := strings.TrimSpace(r.Aggression)
 	if agg == "" {
-		agg = "low" // paling sedikit payload; cukup utk kandidat draft→verify
+		agg = "low" // fewest payloads; enough for draft->verify candidates
 	}
 	a := []string{
 		"-dast", "-jsonl", "-silent", "-disable-update-check",
@@ -276,15 +279,15 @@ func (r *DASTRunner) nucleiArgsMode(inputFile, inputMode string) []string {
 		"-fuzz-aggression", agg,
 	}
 	if inputMode != "" {
-		// -skip-format-validation: toleran pada spec tak lengkap (best-effort).
+		// -skip-format-validation: tolerant of an incomplete spec (best-effort).
 		a = append(a, "-input-mode", inputMode, "-skip-format-validation")
 		if r.Safety.Stealth {
-			// Stealth: hanya field wajib → lebih sedikit request (jejak minimal).
+			// Stealth: required fields only -> fewer requests (minimal footprint).
 			a = append(a, "-required-only")
 		}
 	}
-	a = append(a, headerArgs(r.authHeaders)...) // Lever 1: fuzz request di balik login
-	// Argumen keamanan: non-destruktif (selalu) + stealth (bila aktif).
+	a = append(a, headerArgs(r.authHeaders)...) // Lever 1: fuzz requests behind a login
+	// Safety arguments: non-destructive (always) + stealth (when active).
 	a = append(a, r.Safety.nucleiExtraArgs()...)
 	if rl := r.Safety.rate(r.RateLimit); rl > 0 {
 		a = append(a, "-rate-limit", strconv.Itoa(rl))
@@ -292,9 +295,9 @@ func (r *DASTRunner) nucleiArgsMode(inputFile, inputMode string) []string {
 	return a
 }
 
-// sameHostURLs menyaring urls ke host yang sama dgn target (fuzzing hanya
-// menyentuh host target; proxy egress tetap gate tiap request sbg batas keras),
-// dedup, pertahankan urutan.
+// sameHostURLs filters urls to the same host as the target (fuzzing only touches
+// the target host; the egress proxy still gates every request as a hard
+// boundary), dedupes, keeps the order.
 func sameHostURLs(target string, urls []string) []string {
 	base, err := url.Parse(target)
 	if err != nil || base.Host == "" {
@@ -319,8 +322,8 @@ func sameHostURLs(target string, urls []string) []string {
 	return out
 }
 
-// prioritizeURLs menaruh URL berparameter (punya query) lebih dulu — titik fuzz
-// paling bernilai — lalu membatasi jumlah total ke limit.
+// prioritizeURLs puts parameterized URLs (with a query) first, the most valuable
+// fuzz points, then caps the total count at limit.
 func prioritizeURLs(urls []string, limit int) []string {
 	var withQ, rest []string
 	for _, u := range urls {
@@ -349,7 +352,7 @@ func dedupURLs(in []string) []string {
 	return out
 }
 
-// writeList menulis URL (satu per baris) ke berkas sementara utk `nuclei -list`.
+// writeList writes the URLs (one per line) to a temp file for `nuclei -list`.
 func writeList(urls []string) (string, func(), error) {
 	f, err := os.CreateTemp("", "nuclei-dast-*.txt")
 	if err != nil {

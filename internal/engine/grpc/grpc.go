@@ -1,13 +1,13 @@
-// Package grpc menormalkan hasil kerja terhadap endpoint gRPC (via grpcurl +
-// Server Reflection) ke Skema Temuan Seragam. Dua tingkat:
-//   - Scan  : ENUMERASI (reflection) — layanan/metode terekspos.
-//   - Fuzz  : enumerasi + INVOKASI metode read-only (payload kosong) untuk
-//     mendeteksi metode yang bisa dipanggil tanpa autentikasi (CWE-306).
+// Package grpc normalizes work against a gRPC endpoint (via grpcurl +
+// Server Reflection) to the Uniform Finding Schema. Two levels:
+//   - Scan  : ENUMERATION (reflection) — exposed services/methods.
+//   - Fuzz  : enumeration + INVOKING read-only methods (empty payload) to
+//     detect methods callable without authentication (CWE-306).
 //
-// Keamanan: Fuzz hanya menginvoke metode yang namanya terlihat read-only
-// (Get/List/Query/…) agar tak memicu efek samping (Create/Delete/…dilewati).
-// Target host:port sudah dipastikan in-scope di hulu (grpcurl tak bisa diproxy).
-// Mock tak menyentuh jaringan. Runner opt-in (butuh binary grpcurl).
+// Security: Fuzz only invokes a method whose name looks read-only
+// (Get/List/Query/…) so it does not trigger side effects (Create/Delete/… are skipped).
+// The host:port target is already confirmed in-scope upstream (grpcurl cannot be proxied).
+// Mock does not touch the network. Runner is opt-in (needs the grpcurl binary).
 package grpc
 
 import (
@@ -20,7 +20,7 @@ import (
 	"bughound/internal/finding"
 )
 
-// Scanner adalah engine gRPC: Scan (enumerasi) + Fuzz (enumerasi + invokasi).
+// Scanner is the gRPC engine: Scan (enumeration) + Fuzz (enumeration + invocation).
 type Scanner interface {
 	Name() string
 	Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error)
@@ -33,31 +33,31 @@ var mockMethods = map[string][]string{
 	"acme.OrderService": {"acme.OrderService.CreateOrder"},
 }
 
-// Mock adalah engine gRPC palsu (tanpa jaringan).
+// Mock is a fake gRPC engine (no network).
 type Mock struct{}
 
-// Name memenuhi Scanner.
+// Name satisfies Scanner.
 func (Mock) Name() string { return "grpc (mock)" }
 
-// Scan mengembalikan temuan enumerasi sampel.
+// Scan returns sample enumeration findings.
 func (Mock) Scan(_ context.Context, target, program, runID string) ([]*finding.Finding, error) {
 	return buildFindings(target, mockServices, mockMethods, true, program, runID), nil
 }
 
-// Fuzz mengembalikan enumerasi + contoh metode read-only yang callable tanpa auth.
+// Fuzz returns enumeration + a sample read-only method callable without auth.
 func (Mock) Fuzz(_ context.Context, target, program, runID string) ([]*finding.Finding, error) {
 	out := buildFindings(target, mockServices, mockMethods, true, program, runID)
 	out = append(out, fuzzFinding(target, "acme.UserService.ListUsers", "OK", program, runID)...)
 	return out, nil
 }
 
-// Runner adalah engine gRPC nyata via grpcurl (Server Reflection). Opt-in.
+// Runner is the real gRPC engine via grpcurl (Server Reflection). Opt-in.
 type Runner struct {
 	Bin       string // default "grpcurl"
-	Plaintext bool   // -plaintext (gRPC tanpa TLS / h2c)
+	Plaintext bool   // -plaintext (gRPC without TLS / h2c)
 }
 
-// Name memenuhi Scanner.
+// Name satisfies Scanner.
 func (r *Runner) Name() string { return "grpc" }
 
 func (r *Runner) bin() string {
@@ -84,15 +84,15 @@ func (r *Runner) invokeArgs(target, method string) []string {
 	return append(args, "-d", "{}", target, method)
 }
 
-// enumerate menjalankan reflection list (+ per-layanan). reflOK=false bila
-// server tak mendukung reflection (bukan error).
+// enumerate runs the reflection list (+ per-service). reflOK=false when the
+// server does not support reflection (not an error).
 func (r *Runner) enumerate(ctx context.Context, target string) (services []string, methods map[string][]string, reflOK bool, err error) {
 	out, lerr := runCmd(ctx, r.bin(), r.listArgs(target)...)
 	if lerr != nil {
 		if strings.Contains(strings.ToLower(out+lerr.Error()), "reflection") {
 			return nil, nil, false, nil
 		}
-		return nil, nil, false, fmt.Errorf("grpc: grpcurl list gagal: %w (%s)", lerr, strings.TrimSpace(out))
+		return nil, nil, false, fmt.Errorf("grpc: grpcurl list failed: %w (%s)", lerr, strings.TrimSpace(out))
 	}
 	services = appServices(parseList(out))
 	methods = map[string][]string{}
@@ -104,7 +104,7 @@ func (r *Runner) enumerate(ctx context.Context, target string) (services []strin
 	return services, methods, true, nil
 }
 
-// Scan: enumerasi saja.
+// Scan: enumeration only.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
 	services, methods, reflOK, err := r.enumerate(ctx, target)
 	if err != nil || !reflOK {
@@ -113,7 +113,7 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	return buildFindings(target, services, methods, true, program, runID), nil
 }
 
-// Fuzz: enumerasi + invokasi metode read-only dengan payload kosong.
+// Fuzz: enumeration + invoking read-only methods with an empty payload.
 func (r *Runner) Fuzz(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
 	services, methods, reflOK, err := r.enumerate(ctx, target)
 	if err != nil || !reflOK {
@@ -123,7 +123,7 @@ func (r *Runner) Fuzz(ctx context.Context, target, program, runID string) ([]*fi
 	for _, s := range services {
 		for _, m := range methods[s] {
 			if !readOnlyMethod(m) {
-				continue // lewati metode berpotensi mutasi (default aman)
+				continue // skip a potentially mutating method (safe default)
 			}
 			code := classifyInvoke(runCmd(ctx, r.bin(), r.invokeArgs(target, m)...))
 			out = append(out, fuzzFinding(target, m, code, program, runID)...)
@@ -154,7 +154,7 @@ func appServices(all []string) []string {
 	return out
 }
 
-// readOnlyMethod menebak metode read-only dari namanya (konservatif untuk fuzz).
+// readOnlyMethod guesses a read-only method from its name (conservative for fuzz).
 var readVerbs = []string{"get", "list", "query", "search", "describe", "fetch", "read", "watch", "check", "health", "lookup", "status", "info"}
 
 func readOnlyMethod(fq string) bool {
@@ -171,7 +171,7 @@ func readOnlyMethod(fq string) bool {
 	return false
 }
 
-// classifyInvoke menerjemahkan hasil grpcurl invoke → kode status gRPC.
+// classifyInvoke translates the grpcurl invoke result → gRPC status code.
 func classifyInvoke(out string, err error) string {
 	if err == nil {
 		return "OK"
@@ -190,37 +190,37 @@ func classifyInvoke(out string, err error) string {
 func buildFindings(target string, services []string, methods map[string][]string, reflectionOK bool, program, runID string) []*finding.Finding {
 	var out []*finding.Finding
 	if reflectionOK {
-		out = append(out, mk(target, "grpc-reflection-enabled", "gRPC server reflection aktif", finding.SeverityMedium,
-			"Server mengekspos gRPC Server Reflection; skema seluruh layanan/metode dapat dienumerasi tanpa .proto. Nonaktifkan di produksi bila tak diperlukan.",
+		out = append(out, mk(target, "grpc-reflection-enabled", "gRPC server reflection enabled", finding.SeverityMedium,
+			"The server exposes gRPC Server Reflection; the full service/method schema can be enumerated without a .proto. Disable it in production if not needed.",
 			"grpc://"+target, "", "CWE-200", program, runID))
 	}
 	for _, s := range services {
-		out = append(out, mk(target, "grpc-service-exposed", "Layanan gRPC terekspos: "+s, finding.SeverityInfo,
+		out = append(out, mk(target, "grpc-service-exposed", "Exposed gRPC service: "+s, finding.SeverityInfo,
 			"", "grpc://"+target+"/"+s, s, "", program, runID))
 		for _, m := range methods[s] {
-			out = append(out, mk(target, "grpc-method-exposed", "Metode gRPC terekspos: "+m, finding.SeverityInfo,
+			out = append(out, mk(target, "grpc-method-exposed", "Exposed gRPC method: "+m, finding.SeverityInfo,
 				"", "grpc://"+target+"/"+strings.ReplaceAll(m, ".", "/"), m, "", program, runID))
 		}
 	}
 	return out
 }
 
-// fuzzFinding membangun temuan dari hasil invokasi satu metode (atau nil bila
-// metode terproteksi: Unauthenticated/PermissionDenied).
+// fuzzFinding builds a finding from one method's invoke result (or nil when the
+// method is protected: Unauthenticated/PermissionDenied).
 func fuzzFinding(target, method, code, program, runID string) []*finding.Finding {
 	var sev finding.Severity
 	var typ, title, desc string
 	switch code {
 	case "OK":
 		sev, typ = finding.SeverityMedium, "grpc-method-callable-unauth"
-		title = "Metode gRPC dapat dipanggil tanpa autentikasi: " + method
-		desc = "Invokasi tanpa kredensial (payload kosong) mengembalikan respons sukses — metode tampaknya tak memeriksa autentikasi."
+		title = "A gRPC method can be called without authentication: " + method
+		desc = "Invoking without credentials (empty payload) returned a success response — the method appears not to check authentication."
 	case "InvalidArgument":
 		sev, typ = finding.SeverityLow, "grpc-method-reachable-unauth"
-		title = "Metode gRPC terjangkau tanpa autentikasi: " + method
-		desc = "Invokasi tanpa kredensial ditolak pada validasi input (InvalidArgument), bukan autentikasi — auth tampaknya tak ditegakkan lebih dulu."
+		title = "A gRPC method is reachable without authentication: " + method
+		desc = "Invoking without credentials was rejected at input validation (InvalidArgument), not authentication — auth appears not to be enforced first."
 	default:
-		return nil // terproteksi atau tak diketahui → tidak dilaporkan
+		return nil // protected or unknown → not reported
 	}
 	f := mk(target, typ, title, sev, desc, "grpc://"+target+"/"+strings.ReplaceAll(method, ".", "/"), "grpc status: "+code, "CWE-306", program, runID)
 	f.Confidence = finding.ConfidenceMedium

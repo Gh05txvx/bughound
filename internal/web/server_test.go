@@ -30,7 +30,7 @@ func newTestServer(t *testing.T) (*Server, *store.Mem) {
 		Recon:        recon.MockPipeline{},
 		Vault:        secret.NewMemVault(secret.NewKeyring(k)),
 		Audit:        audit.NewMemLog([]byte("test-audit-key")),
-		AuthDisabled: true, // fitur diuji tanpa gate login; RBAC diuji terpisah
+		AuthDisabled: true, // the feature is tested without a login gate; RBAC is tested separately
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -39,33 +39,33 @@ func newTestServer(t *testing.T) (*Server, *store.Mem) {
 	return srv, st
 }
 
-// runIDFrom mengekstrak run id dari partial status (id="run-...").
+// runIDFrom extracts the run id from the status partial (id="run-...").
 func runIDFrom(t *testing.T, body string) string {
 	t.Helper()
 	m := regexp.MustCompile(`id="run-([^"]+)"`).FindStringSubmatch(body)
 	if m == nil {
-		t.Fatalf("run id tak ditemukan di respons:\n%s", body)
+		t.Fatalf("run id not found in the response:\n%s", body)
 	}
 	return m[1]
 }
 
-// waitRunDone menunggu run mencapai keadaan terminal lalu mengembalikan body-nya.
+// waitRunDone waits for the run to reach a terminal state, then returns its body.
 func waitRunDone(t *testing.T, srv *Server, id string) string {
 	t.Helper()
 	for i := 0; i < 300; i++ {
 		b := do(t, srv, "GET", "/runs/"+id, nil).Body.String()
-		if strings.Contains(b, "Lihat findings") || strings.Contains(b, "gagal") {
+		if strings.Contains(b, "View findings") || strings.Contains(b, "failed") {
 			return b
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("run tidak selesai tepat waktu")
+	t.Fatal("the run did not finish in time")
 	return ""
 }
 
 func do(t *testing.T, srv *Server, method, target string, form url.Values) *httptest.ResponseRecorder {
 	t.Helper()
-	// Untuk permintaan state-changing, ambil token CSRF dulu (double-submit).
+	// For a state-changing request, take the CSRF token first (double-submit).
 	var token string
 	if method != http.MethodGet && method != http.MethodHead {
 		gr := httptest.NewRecorder()
@@ -102,8 +102,8 @@ func TestScanFormRenders(t *testing.T) {
 		t.Fatalf("GET /scan = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Konfigurasi scan") || !strings.Contains(body, "demo.test") {
-		t.Error("form scan tidak ter-render dengan prefill")
+	if !strings.Contains(body, "Scan configuration") || !strings.Contains(body, "demo.test") {
+		t.Error("the scan form did not render with the prefill")
 	}
 }
 
@@ -114,7 +114,7 @@ func TestStaticServed(t *testing.T) {
 		t.Fatalf("GET /static/app.css = %d", rec.Code)
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "css") {
-		t.Errorf("content-type css diharapkan, dapat %q", ct)
+		t.Errorf("css content-type expected, got %q", ct)
 	}
 }
 
@@ -128,8 +128,8 @@ func TestScanRunThenFindings(t *testing.T) {
 		t.Fatalf("POST /scan = %d", rec.Code)
 	}
 	done := waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
-	if !strings.Contains(done, "temuan baru") || !strings.Contains(done, "evil.test") {
-		t.Errorf("status run selesai tak memuat ringkasan/penolakan:\n%s", done)
+	if !strings.Contains(done, "new findings") || !strings.Contains(done, "evil.test") {
+		t.Errorf("the finished run status is missing the summary/denial:\n%s", done)
 	}
 
 	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
@@ -143,12 +143,12 @@ func TestScanRunThenFindings(t *testing.T) {
 		}
 	}
 	if !hasNuclei || !hasFfuf {
-		t.Fatalf("kedua engine (nuclei+ffuf) harus menyumbang; dapat %d temuan", len(fs))
+		t.Fatalf("both engines (nuclei+ffuf) must contribute; got %d findings", len(fs))
 	}
 
 	rec = do(t, srv, "GET", "/findings?program=demo", nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "ssrf-via-fetch") {
-		t.Errorf("findings tidak menampilkan temuan (code=%d)", rec.Code)
+		t.Errorf("findings does not show the finding (code=%d)", rec.Code)
 	}
 
 	rec = do(t, srv, "GET", "/findings/"+fs[0].ID+"?program=demo", nil)
@@ -156,7 +156,7 @@ func TestScanRunThenFindings(t *testing.T) {
 		t.Fatalf("GET detail = %d", rec.Code)
 	}
 	if strings.Contains(rec.Body.String(), "SECRET-abc123") {
-		t.Error("detail membocorkan secret")
+		t.Error("the detail leaks the secret")
 	}
 }
 
@@ -168,7 +168,7 @@ func TestTriageConfirm(t *testing.T) {
 	waitRunDone(t, srv, runIDFrom(t, rec0.Body.String()))
 	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
 	if len(fs) == 0 {
-		t.Fatal("tidak ada temuan untuk ditriase")
+		t.Fatal("no finding to triage")
 	}
 	id := fs[0].ID
 
@@ -181,19 +181,19 @@ func TestTriageConfirm(t *testing.T) {
 	}
 	got, _ := st.Get(context.Background(), id)
 	if got.Status != "confirmed" || got.VerifiedBy != "gh05t" {
-		t.Errorf("triase tidak tersimpan: status=%s by=%s", got.Status, got.VerifiedBy)
+		t.Errorf("triage not stored: status=%s by=%s", got.Status, got.VerifiedBy)
 	}
 
-	// Triase manual tak boleh menetapkan duplicate.
+	// Manual triage must not set duplicate.
 	rec = do(t, srv, "POST", "/findings/"+id+"/status", url.Values{"status": {"duplicate"}})
 	if rec.Code == http.StatusOK {
-		t.Error("status duplicate lewat triase manual harus ditolak")
+		t.Error("a duplicate status through manual triage must be denied")
 	}
 }
 
-// TestFindingsListsProgramFromStore mensimulasikan kondisi setelah restart:
-// server baru (registry in-memory kosong), tapi data ada di store. Tab program
-// harus tetap muncul dari store.
+// TestFindingsListsProgramFromStore simulates the state after a restart:
+// a new server (empty in-memory registry), but the data is in the store. The program tab
+// must still show from the store.
 func TestFindingsListsProgramFromStore(t *testing.T) {
 	st := store.NewMem()
 	ctx := context.Background()
@@ -207,7 +207,7 @@ func TestFindingsListsProgramFromStore(t *testing.T) {
 		t.Fatalf("seed Save: %v", err)
 	}
 
-	srv, err := NewServer(Config{ // registry in-memory kosong
+	srv, err := NewServer(Config{ // empty in-memory registry
 		Store:        st,
 		Engines:      []engine.Engine{nuclei.Mock{}},
 		AuthDisabled: true,
@@ -216,13 +216,13 @@ func TestFindingsListsProgramFromStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { srv.Close() })
-	rec := do(t, srv, "GET", "/findings", nil) // tanpa ?program=
+	rec := do(t, srv, "GET", "/findings", nil) // without ?program=
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /findings = %d", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "ssrf-via-fetch") || !strings.Contains(body, ">demo<") {
-		t.Errorf("program dari store seharusnya tampil tanpa scan ulang:\n%s", body)
+		t.Errorf("a program from the store should show without a rescan:\n%s", body)
 	}
 }
 
@@ -239,14 +239,14 @@ func TestScanWithReconDiscovers(t *testing.T) {
 		t.Fatalf("POST /scan = %d", rec.Code)
 	}
 	done := waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
-	if !strings.Contains(done, "aset recon") {
-		t.Error("status run harus menampilkan jumlah aset recon")
+	if !strings.Contains(done, "recon assets") {
+		t.Error("the run status must show the recon asset count")
 	}
 	if !strings.Contains(done, "exfil.evil.test") {
-		t.Error("aset recon di luar scope harus muncul sebagai ditolak")
+		t.Error("an out-of-scope recon asset must show as denied")
 	}
 	if fs, _ := st.List(context.Background(), store.Query{Program: "demo"}); len(fs) == 0 {
-		t.Error("harus ada temuan dari aset recon yang in-scope")
+		t.Error("there must be a finding from the in-scope recon asset")
 	}
 }
 
@@ -260,37 +260,37 @@ func TestReportFlow(t *testing.T) {
 	waitRunDone(t, srv, runIDFrom(t, rec0.Body.String()))
 	fs, _ := st.List(ctx, store.Query{Program: "demo"})
 	if len(fs) == 0 {
-		t.Fatal("tak ada temuan untuk direport")
+		t.Fatal("no finding to report")
 	}
 
-	// Sebelum ada yang dikonfirmasi: report kosong.
+	// Before anything is confirmed: the report is empty.
 	rec := do(t, srv, "GET", "/report?program=demo", nil)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Belum ada temuan") {
-		t.Errorf("report tanpa confirmed harus empty state (code=%d)", rec.Code)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "still empty") {
+		t.Errorf("a report without confirmed findings must be an empty state (code=%d)", rec.Code)
 	}
 
-	// Konfirmasi satu temuan.
+	// Confirm one finding.
 	do(t, srv, "POST", "/findings/"+fs[0].ID+"/status", url.Values{"status": {"confirmed"}})
 
 	rec = do(t, srv, "GET", "/report?program=demo", nil)
 	body := rec.Body.String()
 	if !strings.Contains(body, "DRAFT") || !strings.Contains(body, fs[0].Title) {
-		t.Error("report harus memuat temuan terkonfirmasi dan ditandai DRAFT")
+		t.Error("the report must hold the confirmed finding and be marked DRAFT")
 	}
 
-	// Unduh .md.
+	// Download .md.
 	rec = do(t, srv, "GET", "/report/download?program=demo", nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Disposition"), "report-demo.md") {
-		t.Errorf("unduh .md gagal: code=%d cd=%q", rec.Code, rec.Header().Get("Content-Disposition"))
+		t.Errorf("download .md failed: code=%d cd=%q", rec.Code, rec.Header().Get("Content-Disposition"))
 	}
-	if !strings.Contains(rec.Body.String(), "# Laporan") {
-		t.Error("isi .md tidak sesuai")
+	if !strings.Contains(rec.Body.String(), "# Report") {
+		t.Error("the .md content does not match")
 	}
 
-	// Tampilan cetak (untuk Simpan sebagai PDF).
+	// Print view (for Save as PDF).
 	rec = do(t, srv, "GET", "/report/print?program=demo", nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "window.print()") {
-		t.Errorf("tampilan cetak gagal (code=%d)", rec.Code)
+		t.Errorf("print view failed (code=%d)", rec.Code)
 	}
 }
 
@@ -301,27 +301,27 @@ func TestSettingsSecretFlow(t *testing.T) {
 		"scope": {"global"}, "name": {"nuclei-key"}, "value": {"supersecret-xyz"},
 	})
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("POST add = %d, ingin 303", rec.Code)
+		t.Fatalf("POST add = %d, want 303", rec.Code)
 	}
 
 	rec = do(t, srv, "GET", "/settings?scope=global", nil)
 	body := rec.Body.String()
 	if !strings.Contains(body, "nuclei-key") {
-		t.Error("secret harus terdaftar (nama)")
+		t.Error("the secret must be listed (name)")
 	}
 	if strings.Contains(body, "supersecret-xyz") {
-		t.Error("NILAI secret tidak boleh muncul di UI")
+		t.Error("the secret VALUE must not appear in the UI")
 	}
 
 	rec = do(t, srv, "POST", "/settings/secrets/delete", url.Values{
 		"scope": {"global"}, "name": {"nuclei-key"},
 	})
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("POST delete = %d, ingin 303", rec.Code)
+		t.Fatalf("POST delete = %d, want 303", rec.Code)
 	}
 	rec = do(t, srv, "GET", "/settings?scope=global", nil)
 	if strings.Contains(rec.Body.String(), "nuclei-key") {
-		t.Error("secret harus hilang setelah dihapus")
+		t.Error("the secret must be gone after it is deleted")
 	}
 }
 
@@ -335,13 +335,13 @@ func TestAuditTrail(t *testing.T) {
 
 	rec = do(t, srv, "GET", "/audit?program=demo", nil)
 	body := rec.Body.String()
-	if !strings.Contains(body, "integritas OK") {
-		t.Error("integritas audit harus OK")
+	if !strings.Contains(body, "integrity OK") {
+		t.Error("the audit integrity must be OK")
 	}
 	if !strings.Contains(body, "scope.decision") {
-		t.Error("audit harus memuat entri keputusan scope")
+		t.Error("the audit must hold the scope decision entries")
 	}
 	if !strings.Contains(body, "evil.test") {
-		t.Error("penolakan evil.test harus tercatat di audit")
+		t.Error("the evil.test denial must be recorded in the audit")
 	}
 }

@@ -9,17 +9,17 @@ func TestIsLogoutURL(t *testing.T) {
 		"https://app.test/wp-login.php?action=logout", "https://app.test/web/session/logout",
 	} {
 		if !IsLogoutURL(s) {
-			t.Errorf("%q harus terdeteksi sebagai logout", s)
+			t.Errorf("%q must be detected as logout", s)
 		}
 	}
 	for _, s := range []string{
 		"https://app.test/", "https://app.test/login", "https://app.test/logo.png", "https://app.test/signup",
 		"https://app.test/blog/outline", "https://app.test/catalog",
-		// host tak ikut dicocokkan: scan berlogin tak boleh membuang seluruh host ini
+		// the host is not matched: an authenticated scan must not drop this whole host
 		"https://catalogoutlet.test/", "https://signoff.corp.test/app", "signoff.corp.test", "logout.test:8443",
 	} {
 		if IsLogoutURL(s) {
-			t.Errorf("%q BUKAN route logout (scan berlogin tak boleh melewatkannya)", s)
+			t.Errorf("%q is NOT a logout route (an authenticated scan must not skip it)", s)
 		}
 	}
 }
@@ -27,12 +27,12 @@ func TestIsLogoutURL(t *testing.T) {
 func TestIsLogoutPath(t *testing.T) {
 	for _, s := range []string{"logout", "/logout", "api/auth/sign-out", "/LogOff.aspx", "signoff"} {
 		if !IsLogoutPath(s) {
-			t.Errorf("%q harus terdeteksi sebagai path logout", s)
+			t.Errorf("%q must be detected as a logout path", s)
 		}
 	}
 	for _, s := range []string{"login", "/logo.png", "signup", "/blog/outline", "admin"} {
 		if IsLogoutPath(s) {
-			t.Errorf("%q BUKAN path logout", s)
+			t.Errorf("%q is NOT a logout path", s)
 		}
 	}
 }

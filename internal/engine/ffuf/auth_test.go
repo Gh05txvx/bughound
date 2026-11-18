@@ -15,10 +15,10 @@ func TestBuildArgsAuthHeaders(t *testing.T) {
 	hdr := "Cookie: session=abc"
 	r := &Runner{}
 	if hasHeaderArg(r.buildArgs("http://t", "out.json", "wl.txt"), hdr) {
-		t.Error("tanpa UseAuthHeaders tak boleh ada -H")
+		t.Error("without UseAuthHeaders there must be no -H")
 	}
 	r.UseAuthHeaders([]string{hdr})
 	if !hasHeaderArg(r.buildArgs("http://t", "out.json", "wl.txt"), hdr) {
-		t.Errorf("buildArgs harus memuat -H %q", hdr)
+		t.Errorf("buildArgs must contain -H %q", hdr)
 	}
 }

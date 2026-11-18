@@ -1,5 +1,5 @@
-"""Layer analyst — metrik DETERMINISTIK (tanpa LLM): klaster, fp_likelihood,
-exploitability, bounty_weight, dan pra-filter sebelum SAW."""
+"""Analyst layer, DETERMINISTIC metrics (no LLM): clusters, fp_likelihood,
+exploitability, bounty_weight, and a pre-filter before SAW."""
 from __future__ import annotations
 
 from collections import Counter, defaultdict
@@ -9,12 +9,12 @@ from typing import Dict, List, Optional, Set
 from .config import CONF_NUM, SEV_NUM, Config
 from .model import Finding
 
-# status yang dibuang dari triase.
+# statuses dropped from triage.
 _DROP_STATUS = {"duplicate", "false_positive", "ignored"}
 
 
 def cluster_key(f: Finding) -> str:
-    """Identitas klaster: dedup_key bila ada, else host+type+parameter."""
+    """Cluster identity: dedup_key when present, else host+type+parameter."""
     if f.dedup_key:
         return f.dedup_key
     return f"{f.host()}|{f.type}|{f.location.parameter}"
@@ -34,8 +34,8 @@ def siblings_on_endpoint(findings: List[Finding]) -> Dict[str, int]:
     return {f.id: by_url[f.location.url] - 1 for f in findings}
 
 
-# Penanda umum shell SPA (React/Vue/Angular/Next/Nuxt/Svelte/webpack) — bila ini
-# muncul di body, respons ffuf besar kemungkinan app-shell (soft-200), bukan path nyata.
+# Common SPA shell markers (React/Vue/Angular/Next/Nuxt/Svelte/webpack). When these
+# show up in the body, a large ffuf response is probably the app shell (soft-200), not a real path.
 _SPA_MARKERS = (
     '<div id="root"', '<div id="app"', "<app-root", "ng-version", "data-reactroot",
     "window.__", "__next_data__", "__nuxt__", "__initial_state__",
@@ -49,8 +49,8 @@ def _looks_like_spa(f: Finding) -> bool:
 
 
 def _ffuf_flood_hosts(findings: List[Finding], threshold: int) -> Set[str]:
-    """Host dengan >=threshold temuan exposed-path dari ffuf → kemungkinan
-    soft-404/wildcard (server balas 200 utk hampir semua path). Prior FP."""
+    """A host with >=threshold exposed-path findings from ffuf is probably a
+    soft-404/wildcard (the server answers 200 for nearly every path). A FP prior."""
     c = Counter(f.host() for f in findings
                 if f.source_engine == "ffuf" and "exposed" in (f.type or "").lower())
     return {h for h, n in c.items() if n >= threshold}
@@ -73,8 +73,8 @@ def exploitability_raw(f: Finding, cfg: Config) -> float:
 
 
 def bounty_weight(f: Finding, scope: Optional[Dict] = None) -> float:
-    """Potensi bounty. Bila `scope` berisi asset→{max_severity, eligible_for_bounty},
-    pakai itu; selain itu fallback = severity temuan."""
+    """Bounty potential. When `scope` holds asset->{max_severity, eligible_for_bounty},
+    use it; otherwise the fallback = the finding severity."""
     base = SEV_NUM.get(f.severity, 1)
     if scope:
         meta = scope.get(f.host()) or scope.get(f.target) or {}
@@ -89,7 +89,7 @@ def bounty_weight(f: Finding, scope: Optional[Dict] = None) -> float:
 
 
 def _parse_time(s: str) -> Optional[datetime]:
-    """Parse created_at (RFC3339/ISO8601) → datetime aware, atau None bila gagal."""
+    """Parse created_at (RFC3339/ISO8601) into an aware datetime, or None on failure."""
     if not s:
         return None
     s = s.strip()
@@ -114,10 +114,10 @@ def _freshness_bucket(gap_days: float) -> int:
 
 
 def freshness_map(findings: List[Finding]) -> Dict[str, int]:
-    """Freshness per temuan = kebaruan `created_at` relatif thd temuan TERBARU di
-    batch (run terbaru → 5; makin lama makin turun). created_at tak terbaca → 3
-    (netral). Relatif-ke-terbaru, bukan ke jam sekarang: ranking ekspor lama tetap
-    stabil & run terakhir selalu paling segar."""
+    """Freshness per finding = how recent `created_at` is relative to the NEWEST
+    finding in the batch (newest run -> 5; older drops off). An unreadable created_at
+    -> 3 (neutral). Relative to the newest, not to the current clock: the ranking of
+    an old export stays stable & the last run is always the freshest."""
     times = {f.id: _parse_time(f.created_at) for f in findings}
     valid = [t for t in times.values() if t is not None]
     if not valid:
@@ -135,7 +135,7 @@ def freshness_map(findings: List[Finding]) -> Dict[str, int]:
 
 def derive(findings: List[Finding], cfg: Config,
            scope: Optional[Dict] = None) -> Dict[str, Dict]:
-    """Hitung semua metrik turunan → map finding.id → dict."""
+    """Compute every derived metric -> map finding.id -> dict."""
     sib = siblings_on_endpoint(findings)
     fresh = freshness_map(findings)
     flood_fp = float(cfg.heuristics.get("ffuf_flood_fp", 0.6))
@@ -145,8 +145,8 @@ def derive(findings: List[Finding], cfg: Config,
         fp = fp_likelihood(f)
         if f.status != "confirmed" and f.source_engine == "ffuf" and f.host() in flood_hosts:
             fp = max(fp, flood_fp)   # prior soft-404/wildcard
-        # path ikut di-signal → exposed-path ke /.git /admin /backup dipromosikan ke high;
-        # path membosankan (robots/sitemap/.well-known) → NETRAL diturunkan ke noise.
+        # the path is part of the signal -> an exposed-path to /.git /admin /backup is promoted to high;
+        # a boring path (robots/sitemap/.well-known) -> NEUTRAL dropped to noise.
         sig = cfg.signal(" ".join(x for x in [f.type, f.title, *f.tags] if x), f.path())
         if sig == 0.5 and cfg.is_boring_path(f.path()):
             sig = 0.1
@@ -164,8 +164,8 @@ def derive(findings: List[Finding], cfg: Config,
 
 def prefilter(findings: List[Finding], drop_info: bool = True,
               collapse_clusters: bool = True) -> List[Finding]:
-    """Buang status duplikat/FP/ignored (+ info opsional), lalu satu wakil per
-    klaster (severity tertinggi) agar tak dobel verifikasi."""
+    """Drop duplicate/FP/ignored statuses (+ optional info), then one representative
+    per cluster (highest severity) to avoid double verification."""
     kept = [f for f in findings if f.status not in _DROP_STATUS]
     if drop_info:
         kept = [f for f in kept if f.severity != "info"]

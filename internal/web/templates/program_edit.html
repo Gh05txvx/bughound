@@ -2,14 +2,14 @@
 <div class="report-head">
   <div>
     <h2>Scope editor{{if .Name}} · {{.Name}}{{end}}</h2>
-    <p class="muted small">Out-of-scope menang · default-deny · fail-closed.</p>
+    <p class="muted small">Out-of-scope wins · default-deny · fail-closed.</p>
   </div>
-  <a class="btn ghost" href="/programs">← daftar program</a>
+  <a class="btn ghost" href="/programs">← program list</a>
 </div>
 
 {{if .Errors}}
 <div class="errors">
-  <h4>Tidak disimpan</h4>
+  <h4>Not saved</h4>
   <ul>{{range .Errors}}<li>{{.}}</li>{{end}}</ul>
 </div>
 {{end}}
@@ -17,23 +17,23 @@
 {{with .Import}}
 {{if .Held}}
 <div class="errors">
-  <h4>Impor ditahan · {{len .Unresolved}} eksklusi tak bisa diwakili</h4>
-  <p>Program mengecualikan aset di bawah, tetapi bentuknya tak bisa jadi entri scope, jadi guard tak akan menghadangnya. Baca satu per satu dan tulis padanannya sendiri di Out-of-scope bila perlu.</p>
+  <h4>Import held · {{len .Unresolved}} exclusions cannot be represented</h4>
+  <p>The program excludes the assets below, but their shape cannot become a scope entry, so the guard will not block them. Read them one by one and write your own equivalent in Out-of-scope if needed.</p>
   {{template "import_items" .Unresolved}}
-  <label class="check"><input type="checkbox" name="ack_unresolved" value="{{.Digest}}" form="scope-form"><span>Saya sudah membaca daftar ini dan menangani eksklusinya sendiri</span></label>
-  <div class="actions"><button class="btn primary" type="submit" form="scope-form" formaction="/programs/import" formnovalidate>Lanjutkan impor</button></div>
+  <label class="check"><input type="checkbox" name="ack_unresolved" value="{{.Digest}}" form="scope-form"><span>I have read this list and will handle its exclusions myself</span></label>
+  <div class="actions"><button class="btn primary" type="submit" form="scope-form" formaction="/programs/import" formnovalidate>Continue import</button></div>
 </div>
 {{else}}
 <div class="card import-report">
-  <h2>Hasil impor · {{.Format}}</h2>
-  <p><b>{{len .InScope}}</b> in-scope · <b>{{len .OutScope}}</b> out-of-scope. <b>Belum disimpan:</b> tinjau kolom di bawah, uji dengan Pratinjau, lalu klik Simpan scope.</p>
-  <p class="muted small">In-scope menggantikan isi form; out-of-scope digabung dengan yang sudah ada. Wildcard <span class="mono">*.x</span> tak mencakup apex <span class="mono">x</span>: tambahkan sendiri bila program mengizinkannya.</p>
-  {{if .Unresolved}}<details open><summary>Eksklusi tak terwakili yang kamu setujui ({{len .Unresolved}})</summary>{{template "import_items" .Unresolved}}</details>{{end}}
-  {{if .Shadowed}}<details open><summary>In-scope yang tertimpa eksklusi ({{len .Shadowed}})</summary><p class="muted small">Out-of-scope menang, jadi guard menolak entri ini. Bila program memang mengizinkannya, sempitkan eksklusi pemicunya.</p>{{template "import_items" .Shadowed}}</details>{{end}}
-  {{if .Replaced}}<details open><summary>Entri in-scope lama yang digantikan ({{len .Replaced}})</summary><ul class="list import-items">{{range .Replaced}}<li class="mono">{{.}}</li>{{end}}</ul></details>{{end}}
-  {{if .Widened}}<details><summary>Eksklusi yang diperluas agar tetap efektif ({{len .Widened}})</summary>{{template "import_items" .Widened}}</details>{{end}}
-  {{if .Skipped}}<details><summary>Tidak diimpor ({{len .Skipped}})</summary>{{template "import_items" .Skipped}}</details>{{end}}
-  {{if .Notes}}<details><summary>Instruksi program per aset ({{len .Notes}})</summary>{{template "import_items" .Notes}}</details>{{end}}
+  <h2>Import result · {{.Format}}</h2>
+  <p><b>{{len .InScope}}</b> in-scope · <b>{{len .OutScope}}</b> out-of-scope. <b>Not saved yet:</b> review the fields below, test with Preview, then click Save scope.</p>
+  <p class="muted small">In-scope replaces the form content; out-of-scope is merged with what is already there. The wildcard <span class="mono">*.x</span> does not cover the apex <span class="mono">x</span>: add it yourself if the program allows it.</p>
+  {{if .Unresolved}}<details open><summary>Unrepresented exclusions you agreed to ({{len .Unresolved}})</summary>{{template "import_items" .Unresolved}}</details>{{end}}
+  {{if .Shadowed}}<details open><summary>In-scope entries overridden by an exclusion ({{len .Shadowed}})</summary><p class="muted small">Out-of-scope wins, so the guard rejects these entries. If the program does allow them, narrow the exclusion that triggers it.</p>{{template "import_items" .Shadowed}}</details>{{end}}
+  {{if .Replaced}}<details open><summary>Old in-scope entries that were replaced ({{len .Replaced}})</summary><ul class="list import-items">{{range .Replaced}}<li class="mono">{{.}}</li>{{end}}</ul></details>{{end}}
+  {{if .Widened}}<details><summary>Exclusions widened so they stay effective ({{len .Widened}})</summary>{{template "import_items" .Widened}}</details>{{end}}
+  {{if .Skipped}}<details><summary>Not imported ({{len .Skipped}})</summary>{{template "import_items" .Skipped}}</details>{{end}}
+  {{if .Notes}}<details><summary>Per-asset program instructions ({{len .Notes}})</summary>{{template "import_items" .Notes}}</details>{{end}}
 </div>
 {{end}}
 {{end}}
@@ -41,36 +41,36 @@
 <div class="grid-2">
   <form class="card" id="scope-form" method="post" action="/programs">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label>Nama program</label>
+    <label>Program name</label>
     <input type="text" name="name" value="{{.Name}}" autocomplete="off" required {{if not .IsNew}}readonly{{end}}>
 
-    <label>In-scope <span class="muted small">(satu entri per baris · domain, *.wildcard, URL, IP, CIDR)</span></label>
+    <label>In-scope <span class="muted small">(one entry per line · domain, *.wildcard, URL, IP, CIDR)</span></label>
     <textarea name="in_scope" rows="6" spellcheck="false">{{.InScope}}</textarea>
 
     <label>Out-of-scope</label>
     <textarea name="out_scope" rows="4" spellcheck="false">{{.OutScope}}</textarea>
 
-    <label>Target uji <span class="muted small">(untuk pratinjau; tidak disimpan)</span></label>
+    <label>Test target <span class="muted small">(for the preview; not saved)</span></label>
     <textarea name="targets" rows="3" spellcheck="false">{{.Targets}}</textarea>
 
     <div class="actions">
-      <button class="btn primary" type="submit">Simpan scope</button>
-      <button class="btn" type="button" hx-post="/programs/preview" hx-target="#preview" hx-include="closest form">Pratinjau</button>
+      <button class="btn primary" type="submit">Save scope</button>
+      <button class="btn" type="button" hx-post="/programs/preview" hx-target="#preview" hx-include="closest form">Preview</button>
     </div>
 
     <details class="import-box"{{if .PlatformData}} open{{end}}>
-      <summary>Impor dari platform (HackerOne / Bugcrowd)</summary>
-      <p class="muted small">Muat atau tempel satu program: CSV HackerOne (<b>Download CSV</b> di tab Scope), JSON API <span class="mono">structured_scopes</span>, JSON brief Bugcrowd, atau satu objek <span class="mono">bounty-targets-data</span>. Hasilnya mengisi kolom di atas untuk ditinjau; tak ada yang tersimpan sebelum kamu klik Simpan scope. Aturan teks bebas di policy program tak ikut terbaca, jadi tetap baca brief-nya.</p>
-      <input type="file" accept=".csv,.json,text/csv,application/json" aria-label="Muat berkas scope" onchange="bhLoadFile(this, 'platform-data')">
+      <summary>Import from a platform (HackerOne / Bugcrowd)</summary>
+      <p class="muted small">Load or paste one program: a HackerOne CSV (<b>Download CSV</b> on the Scope tab), the <span class="mono">structured_scopes</span> JSON API, a Bugcrowd brief JSON, or one <span class="mono">bounty-targets-data</span> object. The result fills the fields above for review; nothing is saved before you click Save scope. Free-text rules in the program policy are not read, so still read its brief.</p>
+      <input type="file" accept=".csv,.json,text/csv,application/json" aria-label="Load scope file" onchange="bhLoadFile(this, 'platform-data')">
       <textarea id="platform-data" name="platform_data" rows="6" spellcheck="false" aria-label="Data scope platform">{{.PlatformData}}</textarea>
-      <div class="actions"><button class="btn" type="submit" formaction="/programs/import" formnovalidate>Konversi ke scope</button></div>
+      <div class="actions"><button class="btn" type="submit" formaction="/programs/import" formnovalidate>Convert to scope</button></div>
     </details>
   </form>
 
   <div class="card">
-    <h2>Pratinjau keputusan scope</h2>
+    <h2>Preview the scope decisions</h2>
     <div id="preview">
-      <p class="muted">Isi scope &amp; target uji, lalu klik <b>Pratinjau</b> untuk melihat izin/tolak per target (tanpa menyentuh jaringan).</p>
+      <p class="muted">Fill in the scope &amp; test targets, then click <b>Preview</b> to see allow/deny per target (without touching the network).</p>
     </div>
   </div>
 </div>

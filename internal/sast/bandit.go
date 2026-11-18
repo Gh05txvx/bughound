@@ -13,27 +13,30 @@ import (
 	"bughound/internal/finding"
 )
 
-// BanditRunner adalah adapter SAST untuk Bandit (analisis statis Python).
-// Menjalankan `bandit -r -f json -q <dir>` lalu menormalkan JSON native-nya
-// (lebih stabil & kaya metadata — CWE, confidence — dibanding output SARIF
-// bandit yang butuh formatter tambahan). OPT-IN: butuh biner `bandit`.
+// BanditRunner is the SAST adapter for Bandit (static analysis for Python).
+// It runs `bandit -r -f json -q <dir>` and normalizes its native JSON (more
+// stable and richer in metadata, such as CWE and confidence, than bandit's
+// SARIF output, which needs an extra formatter). OPT-IN: needs the `bandit`
+// binary.
 //
-// Tak menyentuh jaringan; dikurung ke dir in-scope (dijamin Resolve). Hanya
-// menganalisis berkas Python; dir tanpa .py menghasilkan 0 temuan (bukan error).
+// It does not touch the network and is confined to the in-scope dir
+// (guaranteed by Resolve). It only analyzes Python files; a dir without .py
+// files yields 0 findings (not an error).
 type BanditRunner struct {
 	Bin string // default "bandit"
 }
 
-// Name memenuhi Engine.
+// Name implements Engine.
 func (r *BanditRunner) Name() string { return "bandit" }
 
-// args menyusun argumen bandit (dipisah agar bisa diuji tanpa mengeksekusi).
-// -r rekursif, -f json keluaran mesin, -q diam (tanpa progress ke stderr).
+// args builds the bandit arguments (kept separate so they can be tested
+// without executing anything). -r recursive, -f json machine output, -q quiet
+// (no progress on stderr).
 func (r *BanditRunner) args(dir string) []string {
 	return []string{"-r", "-f", "json", "-q", dir}
 }
 
-// Analyze menjalankan bandit pada dir dan mengembalikan temuan ternormalkan.
+// Analyze runs bandit on dir and returns normalized findings.
 func (r *BanditRunner) Analyze(ctx context.Context, dir, _, _ string) ([]*finding.Finding, error) {
 	bin := r.Bin
 	if bin == "" {
@@ -43,9 +46,9 @@ func (r *BanditRunner) Analyze(ctx context.Context, dir, _, _ string) ([]*findin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	// bandit keluar kode 1 saat menemukan isu (normal), 0 bila bersih. Kode exit
-	// tak dijadikan sinyal error: bandit -f json selalu menulis laporan penuh ke
-	// stdout, jadi keberhasilan diukur dari apakah JSON-nya bisa diurai.
+	// bandit exits with code 1 when it finds issues (normal) and 0 when clean. The
+	// exit code is not treated as an error signal: bandit -f json always writes
+	// the full report to stdout, so success is measured by whether its JSON parses.
 	runErr := cmd.Run()
 	fs, perr := parseBandit(bytes.NewReader(stdout.Bytes()), dir)
 	if perr != nil {
@@ -77,9 +80,9 @@ type banditResult struct {
 	MoreInfo string `json:"more_info"`
 }
 
-// parseBandit menormalkan output JSON bandit ke Skema Temuan Seragam. dir dipakai
-// untuk membuat path file relatif (lebih rapi di report). program/run_id/target
-// diisi oleh Run. Tak menyentuh jaringan.
+// parseBandit normalizes bandit's JSON output into the Uniform Finding Schema.
+// dir is used to make file paths relative (tidier in reports).
+// program/run_id/target are filled in by Run. It does not touch the network.
 func parseBandit(r io.Reader, dir string) ([]*finding.Finding, error) {
 	var out banditOutput
 	if err := json.NewDecoder(r).Decode(&out); err != nil {
@@ -132,7 +135,7 @@ func parseBandit(r io.Reader, dir string) ([]*finding.Finding, error) {
 	return fs, nil
 }
 
-// mapBanditSeverity memetakan severity bandit (LOW/MEDIUM/HIGH) ke enum.
+// mapBanditSeverity maps bandit's severity (LOW/MEDIUM/HIGH) to the enum.
 func mapBanditSeverity(s string) finding.Severity {
 	switch strings.ToUpper(strings.TrimSpace(s)) {
 	case "HIGH":
@@ -146,8 +149,8 @@ func mapBanditSeverity(s string) finding.Severity {
 	}
 }
 
-// relPath membuat file relatif terhadap dir bila memungkinkan; selain itu apa
-// adanya. Menjaga report tetap ringkas (path repo-relatif, bukan absolut panjang).
+// relPath makes file relative to dir when possible, otherwise returns it as is.
+// It keeps reports compact (repo-relative paths, not long absolute ones).
 func relPath(dir, file string) string {
 	if dir == "" || file == "" {
 		return file

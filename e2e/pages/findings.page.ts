@@ -1,8 +1,8 @@
 import { type Page, type Locator } from '@playwright/test';
 
-type BulkAction = 'Konfirmasi' | 'False positive' | 'Abaikan';
+type BulkAction = 'Confirm' | 'False positive' | 'Ignore';
 
-/** Layar Findings: daftar temuan, filter, aksi massal, detail/triase. */
+/** Findings screen: the finding list, filters, bulk actions, detail/triage. */
 export class FindingsPage {
   constructor(private readonly page: Page) {}
 
@@ -23,7 +23,7 @@ export class FindingsPage {
     await form.getByRole('button', { name: 'Filter' }).click();
   }
 
-  /** Centang semua checkbox baris yang sedang tampil. */
+  /** Check every visible row checkbox. */
   async selectAllVisible() {
     const boxes = this.page.locator('#bulkform input[name="ids"]');
     const n = await boxes.count();
@@ -34,7 +34,7 @@ export class FindingsPage {
     await this.page.locator('.bulk-bar').getByRole('button', { name: action }).click();
   }
 
-  /** Buka detail satu temuan dengan mengklik judulnya (bubbling ke baris → hx-get). */
+  /** Open a finding's detail by clicking its title (bubbles to the row -> hx-get). */
   async open(titleText: string) {
     await this.page.getByText(titleText).click();
   }

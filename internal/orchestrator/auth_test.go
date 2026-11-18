@@ -11,8 +11,8 @@ import (
 	"bughound/internal/store"
 )
 
-// authEngine (AuthAware) mencatat header yang diterima & memancarkan temuan yang
-// evidence-nya memuat header itu — meniru engine yang meng-echo request mentah.
+// authEngine (AuthAware) records the headers it receives and emits a finding
+// whose evidence contains them, like an engine that echoes the raw request.
 type authEngine struct {
 	got    []string
 	cookie string
@@ -30,7 +30,7 @@ func (e *authEngine) Scan(_ context.Context, _ string, program, runID string) ([
 	}}, nil
 }
 
-// authRecon (recon.Engine + AuthAware) mencatat header lalu memberi satu aset in-scope.
+// authRecon (recon.Engine + AuthAware) records the headers, then returns one in-scope asset.
 type authRecon struct{ got []string }
 
 func (*authRecon) Name() string                { return "authrecon" }
@@ -55,28 +55,28 @@ func TestAuthHeadersPlumbedAndEvidenceRedacted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 1) engine & recon menerima header (plumbing lewat AuthAware).
+	// 1) the engine and recon receive the headers (plumbing through AuthAware).
 	if len(eng.got) != 1 || eng.got[0] != "Cookie: session=SUPERSECRET" {
-		t.Fatalf("engine tak menerima header auth: %v", eng.got)
+		t.Fatalf("the engine did not receive the auth headers: %v", eng.got)
 	}
 	if len(rec.got) != 1 || rec.got[0] != "Cookie: session=SUPERSECRET" {
-		t.Fatalf("recon tak menerima header auth: %v", rec.got)
+		t.Fatalf("recon did not receive the auth headers: %v", rec.got)
 	}
-	// 2) evidence tersimpan TANPA nilai cookie (redaksi di hulu sebelum Save).
+	// 2) the evidence is stored WITHOUT the cookie value (redacted upstream, before Save).
 	fs, _ := st.List(context.Background(), store.Query{Program: "demo"})
 	if len(fs) == 0 {
-		t.Fatal("tak ada temuan tersimpan")
+		t.Fatal("no finding was stored")
 	}
 	req := fs[0].Evidence.Request
 	if strings.Contains(req, "SUPERSECRET") {
-		t.Errorf("secret cookie bocor ke evidence:\n%s", req)
+		t.Errorf("the cookie secret leaked into the evidence:\n%s", req)
 	}
 	if !strings.Contains(req, "Cookie: [REDACTED]") {
-		t.Errorf("header Cookie harus terredaksi:\n%s", req)
+		t.Errorf("the Cookie header must be redacted:\n%s", req)
 	}
-	// struktur lain utuh (request-line & Host tetap).
+	// the rest of the structure is intact (request line and Host stay).
 	if !strings.Contains(req, "GET /a HTTP/1.1") || !strings.Contains(req, "Host: demo.test") {
-		t.Errorf("redaksi tak boleh merusak baris non-header:\n%s", req)
+		t.Errorf("redaction must not damage non-header lines:\n%s", req)
 	}
 }
 
@@ -90,7 +90,7 @@ func TestAuthHeadersNotPlumbedWhenEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	if eng.got != nil {
-		t.Errorf("tanpa AuthHeaders, UseAuthHeaders tak boleh dipanggil; dapat %v", eng.got)
+		t.Errorf("without AuthHeaders, UseAuthHeaders must not be called; got %v", eng.got)
 	}
 }
 
@@ -98,18 +98,18 @@ func TestAuthHeadersStringRedacts(t *testing.T) {
 	s := AuthHeaders{"Cookie: session=abc", "Authorization: Bearer xyz"}.String()
 	for _, secret := range []string{"abc", "xyz", "session=abc", "Bearer"} {
 		if strings.Contains(s, secret) {
-			t.Errorf("String() membocorkan %q: %s", secret, s)
+			t.Errorf("String() leaks %q: %s", secret, s)
 		}
 	}
 	for _, name := range []string{"Cookie", "Authorization"} {
 		if !strings.Contains(s, name) {
-			t.Errorf("String() harus pertahankan nama %q: %s", name, s)
+			t.Errorf("String() must keep the name %q: %s", name, s)
 		}
 	}
 }
 
-// echoEngine & echoRecon (AuthAware) gagal dengan galat yang meng-echo header
-// auth — meniru tool yang mencetak argv/konfig ke stderr.
+// echoEngine and echoRecon (AuthAware) fail with an error that echoes the auth
+// headers, like a tool that prints its argv/config to stderr.
 type echoEngine struct{ got []string }
 
 func (*echoEngine) Name() string                { return "echofail" }
@@ -126,46 +126,46 @@ func (r *echoRecon) Discover(context.Context, []string) ([]recon.Asset, error) {
 	return nil, fmt.Errorf("katana: bad header %s", strings.Join(r.got, " | "))
 }
 
-// Galat engine & recon (masuk audit append-only + ringkasan run) tak boleh
-// memuat nilai header auth.
+// Engine and recon errors (which go into the append-only audit and the run
+// summary) must not contain auth header values.
 func TestAuthHeadersScrubbedFromErrors(t *testing.T) {
 	hdrs := AuthHeaders{"Cookie: session=SUPERSECRET", "Authorization: Bearer TOKEN123"}
 	g := newGuard(t, []string{"demo.test"}, nil)
 	noLeak := func(where, s string) {
 		t.Helper()
 		if strings.Contains(s, "SUPERSECRET") || strings.Contains(s, "TOKEN123") {
-			t.Errorf("%s membocorkan nilai header: %s", where, s)
+			t.Errorf("%s leaks a header value: %s", where, s)
 		}
 		if !strings.Contains(s, "Cookie: [REDACTED]") {
-			t.Errorf("%s harus tetap memuat nama header + [REDACTED]: %s", where, s)
+			t.Errorf("%s must still contain the header name + [REDACTED]: %s", where, s)
 		}
 	}
 
 	o := New(g, &echoEngine{}, store.NewMem(), testLimiter(), nil)
 	res, err := o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r1", Targets: []string{"demo.test"}, AuthHeaders: hdrs})
 	if err != nil || len(res.EngineErrors) != 1 {
-		t.Fatalf("mau 1 EngineError tanpa galat run: err=%v errs=%v", err, res.EngineErrors)
+		t.Fatalf("want 1 EngineError and no run error: err=%v errs=%v", err, res.EngineErrors)
 	}
 	noLeak("EngineError", res.EngineErrors[0].Err)
 
 	o = New(g, &echoEngine{}, store.NewMem(), testLimiter(), nil)
 	o.UseRecon(&echoRecon{})
 	if _, err = o.RunScan(context.Background(), ScanRequest{Program: "demo", RunID: "r2", Seeds: []string{"demo.test"}, AuthHeaders: hdrs}); err == nil {
-		t.Fatal("recon gagal harus menggagalkan run")
+		t.Fatal("a failed recon must fail the run")
 	}
-	noLeak("galat recon", err.Error())
+	noLeak("recon error", err.Error())
 }
 
 func TestAuthHeadersScrubLongestFirst(t *testing.T) {
 	if got := (AuthHeaders{"A: abc", "B: abcdef"}).Scrub("x abcdef y abc"); got != "x [REDACTED] y [REDACTED]" {
-		t.Errorf("nilai yang memuat nilai lain tak boleh tersisa sebagian: %q", got)
+		t.Errorf("a value that contains another value must not be left partly visible: %q", got)
 	}
-	if got := (AuthHeaders(nil)).Scrub("utuh"); got != "utuh" {
-		t.Errorf("tanpa header teks harus utuh: %q", got)
+	if got := (AuthHeaders(nil)).Scrub("intact"); got != "intact" {
+		t.Errorf("without headers the text must be intact: %q", got)
 	}
 }
 
-// reconWith memberi aset tetap — meniru katana/gau yang menemukan URL logout.
+// reconWith returns fixed assets, like katana/gau finding a logout URL.
 type reconWith struct{ assets []string }
 
 func (*reconWith) Name() string { return "reconwith" }
@@ -177,9 +177,9 @@ func (r *reconWith) Discover(context.Context, []string) ([]recon.Asset, error) {
 	return out, nil
 }
 
-// Scan berlogin: route logout TAK dipindai — baik hasil recon maupun target
-// (mis. endpoint hasil ekspansi spec OpenAPI) — satu GET mematikan sesi. Tanpa
-// auth, dipindai seperti biasa.
+// Logged-in scan: logout routes are NOT scanned, whether they come from recon
+// or from the targets (e.g. endpoints expanded from an OpenAPI spec), because
+// one GET kills the session. Without auth they are scanned as usual.
 func TestAuthScanSkipsLogoutTargets(t *testing.T) {
 	for _, tc := range []struct {
 		auth       AuthHeaders
@@ -197,12 +197,12 @@ func TestAuthScanSkipsLogoutTargets(t *testing.T) {
 		got := strings.Join(res.Scanned, " ")
 		for _, lo := range []string{"/logout", "/user/sign-out"} {
 			if strings.Contains(got, lo) != tc.wantLogout {
-				t.Errorf("auth=%v: %s dipindai=%v, mau %v (scanned: %s)", tc.auth.Names(), lo, !tc.wantLogout, tc.wantLogout, got)
+				t.Errorf("auth=%v: %s scanned=%v, want %v (scanned: %s)", tc.auth.Names(), lo, !tc.wantLogout, tc.wantLogout, got)
 			}
 		}
 		for _, keep := range []string{"/account", "/user/1"} {
 			if !strings.Contains(got, keep) {
-				t.Errorf("auth=%v: %s (non-logout) tetap harus dipindai (scanned: %s)", tc.auth.Names(), keep, got)
+				t.Errorf("auth=%v: %s (non-logout) must still be scanned (scanned: %s)", tc.auth.Names(), keep, got)
 			}
 		}
 	}
@@ -212,11 +212,11 @@ func TestAuthHeadersNames(t *testing.T) {
 	got := AuthHeaders{"Cookie: a", "Authorization: b", "  X-Api-Key : c", "garbage"}.Names()
 	want := []string{"Cookie", "Authorization", "X-Api-Key"}
 	if len(got) != len(want) {
-		t.Fatalf("names=%v mau %v", got, want)
+		t.Fatalf("names=%v want %v", got, want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Errorf("name[%d]=%q mau %q", i, got[i], want[i])
+			t.Errorf("name[%d]=%q want %q", i, got[i], want[i])
 		}
 	}
 }

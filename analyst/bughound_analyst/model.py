@@ -1,7 +1,7 @@
-"""Model data: Finding dari JSON skema BugHound (BH-SPEC-FINDING).
+"""Data model: Finding from BugHound schema JSON (BH-SPEC-FINDING).
 
-Hanya field yang dipakai analitik/SPK yang diambil; sisanya diabaikan dengan
-aman. Nilai hilang → default netral (tak pernah KeyError)."""
+Only the fields used by analytics/decision-support are taken; the rest are safely
+ignored. A missing value -> a neutral default (never a KeyError)."""
 from __future__ import annotations
 
 import re
@@ -12,10 +12,10 @@ _OWASP_RE = re.compile(r"A0?([1-9]|10)\b", re.IGNORECASE)
 
 
 def _owasp_cat(owasp: Any) -> str:
-    """Ekstrak kode kategori OWASP 2021 (A01..A10) dari bentuk apa pun.
+    """Extract the OWASP 2021 category code (A01..A10) from any shape.
 
-    Struktur objek `owasp` di skema bisa dict {category/code/id/...} atau string.
-    Best-effort: cari pola A0x di representasi teksnya. '' bila tak ada.
+    The `owasp` object in the schema can be a dict {category/code/id/...} or a string.
+    Best-effort: look for the A0x pattern in its text form. '' when absent.
     """
     if not owasp:
         return ""
@@ -61,7 +61,7 @@ class Finding:
     confidence: str = "low"     # low|medium|high
     cwe: List[str] = field(default_factory=list)
     tags: List[str] = field(default_factory=list)
-    owasp_category: str = ""     # A01..A10 (hasil ekstraksi)
+    owasp_category: str = ""     # A01..A10 (extracted)
     source_engine: str = ""
     source_template: str = ""
     location: Location = field(default_factory=Location)
@@ -94,14 +94,14 @@ class Finding:
         )
 
     def host(self) -> str:
-        """Host dari location.url (tanpa skema/path) untuk klaster."""
+        """Host from location.url (without scheme/path) for clustering."""
         u = self.location.url
         u = re.sub(r"^[a-zA-Z][\w+.\-]*://", "", u)
         return u.split("/", 1)[0].split("?", 1)[0]
 
     def path(self) -> str:
-        """Path+file dari location.url (tanpa skema/host/query), lowercase.
-        Dipakai signal utk membedakan exposed-path juicy (/.git, /admin) vs aset biasa."""
+        """Path+file from location.url (without scheme/host/query), lowercase.
+        Used by the signal to tell a juicy exposed-path (/.git, /admin) from an ordinary asset."""
         u = re.sub(r"^[a-zA-Z][\w+.\-]*://", "", self.location.url or "")
         slash = u.find("/")
         if slash < 0:

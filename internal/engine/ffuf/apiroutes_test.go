@@ -7,7 +7,7 @@ import (
 )
 
 func TestNormalizeAPIRoutes(t *testing.T) {
-	raw := []byte(`# komentar
+	raw := []byte(`# comment
 /api/v1/bulklog
 /api/v1/bulklog
 /rest/products/search?q=1
@@ -21,7 +21,7 @@ no-leading-slash
 	got := normalizeAPIRoutes(raw, 100)
 	want := []string{"api/v1/bulklog", "rest/products/search", "graphql", "no-leading-slash"}
 	if len(got) != len(want) {
-		t.Fatalf("jumlah path salah: got %v (len %d), want %v", got, len(got), want)
+		t.Fatalf("wrong path count: got %v (len %d), want %v", got, len(got), want)
 	}
 	for i := range want {
 		if got[i] != want[i] {
@@ -37,12 +37,12 @@ func TestNormalizeAPIRoutesMaxCap(t *testing.T) {
 	}
 	got := normalizeAPIRoutes(b, 10)
 	if len(got) != 10 {
-		t.Fatalf("cap max harus 10; dapat %d", len(got))
+		t.Fatalf("max cap must be 10; got %d", len(got))
 	}
 }
 
-// apiRoutePaths di-gate pada APIRoutes DAN proxyAddr: tanpa salah satunya, nil
-// (tak ada amplifikasi path tanpa proxy scope-enforced).
+// apiRoutePaths is gated on APIRoutes AND proxyAddr: without either one, nil
+// (no path amplification without a scope-enforced proxy).
 func TestAPIRoutePathsGating(t *testing.T) {
 	dir := t.TempDir()
 	wl := filepath.Join(dir, "apiroutes.txt")
@@ -51,34 +51,34 @@ func TestAPIRoutePathsGating(t *testing.T) {
 	}
 	t.Setenv("BUGHOUND_API_WORDLIST", wl)
 
-	// APIRoutes=false → nil meski proxy diset.
+	// APIRoutes=false returns nil even when a proxy is set.
 	off := &Runner{}
 	off.UseProxy("127.0.0.1:1")
 	if got := off.apiRoutePaths(); got != nil {
-		t.Errorf("APIRoutes=false harus nil; dapat %v", got)
+		t.Errorf("APIRoutes=false must be nil; got %v", got)
 	}
 
-	// APIRoutes=true tapi tanpa proxy → nil (fail-safe).
+	// APIRoutes=true but without a proxy returns nil (fail-safe).
 	noProxy := &Runner{APIRoutes: true}
 	if got := noProxy.apiRoutePaths(); got != nil {
-		t.Errorf("tanpa proxy harus nil; dapat %v", got)
+		t.Errorf("without a proxy must be nil; got %v", got)
 	}
 
-	// APIRoutes=true + proxy → baca berkas (env override), path bentuk FUZZ.
+	// APIRoutes=true + proxy reads the file (env override), paths in FUZZ form.
 	on := &Runner{APIRoutes: true}
 	on.UseProxy("127.0.0.1:1")
 	got := on.apiRoutePaths()
 	if len(got) != 2 || got[0] != "api/v1/x" || got[1] != "api/v1/y" {
-		t.Errorf("harus baca 2 path FUZZ dari env; dapat %v", got)
+		t.Errorf("must read 2 FUZZ paths from env; got %v", got)
 	}
 }
 
-// Berkas wordlist absen → nil (best-effort), bukan error/panik.
+// A missing wordlist file returns nil (best-effort), not an error or panic.
 func TestAPIRoutePathsAbsent(t *testing.T) {
-	t.Setenv("BUGHOUND_API_WORDLIST", filepath.Join(t.TempDir(), "tidak-ada.txt"))
+	t.Setenv("BUGHOUND_API_WORDLIST", filepath.Join(t.TempDir(), "does-not-exist.txt"))
 	r := &Runner{APIRoutes: true}
 	r.UseProxy("127.0.0.1:1")
 	if got := r.apiRoutePaths(); got != nil {
-		t.Errorf("berkas absen harus nil; dapat %v", got)
+		t.Errorf("missing file must be nil; got %v", got)
 	}
 }

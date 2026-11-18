@@ -1,170 +1,170 @@
-# BH-GUIDE-PROXY — Proxy chain, endpoint echo IP & upstream proxy
+# BH-GUIDE-PROXY: proxy chains, the IP echo endpoint & upstream proxy
 
-> Panduan operasional menu **Proxy** (`/proxy`, nav *Pengujian*): menguji rantai upstream proxy sebelum dipakai scan, dan memverifikasi apakah IP yang dilihat target benar-benar berubah. Ditulis sesuai implementasi (`internal/egress`, `internal/web`, `internal/geoip`). Terakhir diperbarui: 2026-11-12.
+> An operational guide to the **Proxy** menu (`/proxy`, under the *Testing* nav group): testing an upstream proxy chain before a scan, and verifying that the IP the target sees actually changed. Written to match the implementation (`internal/egress`, `internal/web`, `internal/geoip`). Last updated: 2026-11-12.
 
-Menu ini **diagnostik**, bukan jalur scan. Rantai yang kamu masukkan di sini tidak otomatis dipakai scan — scan tetap mengambil rantai dari field **Upstream proxy / rantai** di form **Scan**. Gunakan menu Proxy untuk *membuktikan rantai bekerja & IP berubah*, lalu salin rantai yang terbukti ke form Scan.
+This menu is **diagnostic**, not a scan path. The chain you enter here is not used by a scan automatically: the scan takes its chain from the **Upstream proxy / chain** field in the **Scan** form. Use the Proxy menu to *prove the chain works & the IP changes*, then copy the proven chain into the Scan form.
 
 ---
 
-## 1. Apa yang dilakukan menu Proxy
+## 1. What the Proxy menu does
 
-| Bagian | Selalu jalan? | Menyentuh target? | Keterangan |
+| Part | Always runs? | Touches the target? | Notes |
 | --- | --- | --- | --- |
-| Validasi rantai | ya | tidak | Cek skema & format tiap hop. |
-| Uji konektivitas hop | ya | **tidak** | Tiap hop di-reach berurutan (`hop_i` lewat `hop_1..hop_{i-1}`); hanya menyentuh **infrastruktur proxy milikmu**, bukan target scan. Melaporkan reachable + latensi + IP hasil-resolve. |
-| Cek IP egress | opsional | ya (ke **echo**) | Dua GET ke endpoint echo — **langsung** vs **lewat rantai** — lalu bandingkan IP yang dilihat server echo → badge **"IP berubah"**. |
+| Chain validation | yes | no | Checks the scheme & format of each hop. |
+| Hop connectivity test | yes | **no** | Each hop is reached in order (`hop_i` through `hop_1..hop_{i-1}`); it only touches **your own proxy infrastructure**, not the scan target. Reports reachable + latency + the resolved IP. |
+| Egress IP check | optional | yes (to the **echo**) | Two GETs to the echo endpoint, **direct** vs **through the chain**, then it compares the IP the echo server saw → the **"IP changed"** badge. |
 
-**Batas keamanan (tak bisa dimatikan dari menu ini):**
+**Security limits (cannot be turned off from this menu):**
 
-- **Echo tunduk scope guard program** (default-deny, `BH-SPEC-SCOPE`). Host echo yang tidak terbukti in-scope **ditolak** — sama seperti engine nyata.
-- **Kredensial proxy** (`user:pass@`) **disensor** dari UI, pesan error, dan audit (`egress.check`). Tak pernah bocor.
-- **IP-pinning / anti-SSRF**: target di-resolve & di-*pin* di host BugHound sebelum rantai; IP privat/internal ditolak kecuali eksplisit in-scope.
-- **Bounded**: diagnostik ini sekali-jalan (timeout 8 dtk/hop, 10 dtk/echo) — bukan flood. Rate limiter wajib berlaku di **scan**, diatur di form Scan.
+- **The echo is subject to the program's scope guard** (default-deny, `BH-SPEC-SCOPE`). An echo host not proven in-scope is **rejected**, just like a real engine.
+- **Proxy credentials** (`user:pass@`) are **redacted** from the UI, error messages, and the audit (`egress.check`). They never leak.
+- **IP-pinning / anti-SSRF**: the target is resolved & *pinned* on the BugHound host before the chain; a private/internal IP is rejected unless it is explicitly in-scope.
+- **Bounded**: this diagnostic runs once (an 8s timeout per hop, 10s per echo), it is not a flood. The mandatory rate limiter applies to the **scan**, set in the Scan form.
 
 ---
 
-## 2. Rantai proxy (upstream chain)
+## 2. The proxy chain (upstream chain)
 
-**Format:** satu hop per baris, **urut** (hop pertama di atas). Alur:
+**Format:** one hop per line, **in order** (the first hop at the top). The flow:
 
 ```
 engine/bughound → hop1 → hop2 → … → hopN → target
 ```
 
-**Skema yang didukung** (hop tak valid = *fail-closed*, scan/diagnostik tak jalan):
+**Supported schemes** (an invalid hop = *fail-closed*, the scan/diagnostic does not run):
 
-| Skema | Transport | Catatan |
+| Scheme | Transport | Notes |
 | --- | --- | --- |
-| `http://` | HTTP `CONNECT` | proxy HTTP biasa (Burp, Squid, dll). Tak perlu pasang CA cert. |
-| `https://` | HTTP `CONNECT` over TLS | koneksi ke proxy-nya terenkripsi. |
-| `socks5://` | SOCKS5 | DNS di-resolve sisi BugHound (lihat §6). |
-| `socks5h://` | SOCKS5 | sama; resolusi target tetap di-pin di hulu. |
+| `http://` | HTTP `CONNECT` | a plain HTTP proxy (Burp, Squid, etc.). No CA cert needed. |
+| `https://` | HTTP `CONNECT` over TLS | the connection to the proxy itself is encrypted. |
+| `socks5://` | SOCKS5 | DNS is resolved on BugHound's side (see §6). |
+| `socks5h://` | SOCKS5 | the same; the target resolution is still pinned upstream. |
 
-**Kredensial:** sematkan di URL → `skema://user:pass@host:port`. Didukung untuk HTTP (`Proxy-Authorization: Basic`) dan SOCKS5 (auth user/pass). **Ditampilkan tersensor** menjadi `skema://host:port`.
+**Credentials:** embed them in the URL → `scheme://user:pass@host:port`. Supported for HTTP (`Proxy-Authorization: Basic`) and SOCKS5 (user/pass auth). **Shown redacted** as `scheme://host:port`.
 
-**Contoh rantai:**
+**Example chains:**
 
 ```text
-# satu hop (Burp)
+# one hop (Burp)
 http://127.0.0.1:8080
 
-# satu hop SOCKS5 berkredensial (proxy komersial)
+# one SOCKS5 hop with credentials (a commercial proxy)
 socks5://user:pass@gw.provider.example:1080
 
-# multi-hop: lewat Burp lalu keluar via Tor
+# multi-hop: through Burp, then out via Tor
 http://127.0.0.1:8080
 socks5://127.0.0.1:9050
 ```
 
 ---
 
-## 3. Upstream proxy — apa saja yang bisa dipakai
+## 3. Upstream proxy: what you can use
 
-| Kategori | Contoh URL | Kapan dipakai |
+| Category | Example URL | When to use it |
 | --- | --- | --- |
-| **Burp Suite** (Proxy) | `http://127.0.0.1:8080` | melihat/merekam & memanipulasi traffic di Burp. |
-| **OWASP ZAP** | `http://127.0.0.1:8080` | idem, lewat ZAP. |
-| **mitmproxy** | `http://127.0.0.1:8080` | inspeksi/scripting traffic. |
-| **Tor** | `socks5://127.0.0.1:9050` | keluar lewat jaringan Tor (anonimitas; hindari untuk program yang melarang Tor). |
-| **SSH dynamic SOCKS** | `socks5://127.0.0.1:1080` (via `ssh -D 1080 user@jump`) | keluar lewat IP server lompatan (jump box / VPS). |
-| **Proxy korporat / Squid** | `http://proxy.corp.local:3128` | wajib di jaringan kantor. |
-| **Proxy komersial (residential/datacenter)** | `socks5://user:pass@host:port` atau `http://...` | **exit IP statis** yang di-allowlist program bug bounty. |
+| **Burp Suite** (Proxy) | `http://127.0.0.1:8080` | to watch/record & manipulate traffic in Burp. |
+| **OWASP ZAP** | `http://127.0.0.1:8080` | the same, through ZAP. |
+| **mitmproxy** | `http://127.0.0.1:8080` | traffic inspection/scripting. |
+| **Tor** | `socks5://127.0.0.1:9050` | exit through the Tor network (anonymity; avoid it for programs that forbid Tor). |
+| **SSH dynamic SOCKS** | `socks5://127.0.0.1:1080` (via `ssh -D 1080 user@jump`) | exit through a jump box / VPS IP. |
+| **Corporate / Squid proxy** | `http://proxy.corp.local:3128` | required on an office network. |
+| **Commercial proxy (residential/datacenter)** | `socks5://user:pass@host:port` or `http://...` | a **static exit IP** that a bug bounty program allowlists. |
 
-> **Catatan:** BugHound hanya meneruskan egress HTTP/HTTPS lewat proxy (CONNECT/SOCKS). Egress non-HTTP (mis. DNS mentah engine) tidak lewat sini — itu urusan lapis OS (pertahanan berlapis).
+> **Note:** BugHound only forwards HTTP/HTTPS egress through a proxy (CONNECT/SOCKS). Non-HTTP egress (e.g. an engine's raw DNS) does not go through here: that is the OS layer's job (defense in depth).
 
 ---
 
-## 4. Endpoint echo IP
+## 4. The IP echo endpoint
 
-**Tujuan:** sebuah URL yang membalas **IP klien yang dilihat server**. BugHound mengambil token IP pertama dari body (teks polos atau JSON). Dengan membandingkan echo *langsung* vs *lewat rantai*, kamu tahu IP exit benar berubah.
+**Purpose:** a URL that returns **the client IP the server sees**. BugHound takes the first IP token from the body (plain text or JSON). By comparing the echo *direct* vs *through the chain*, you learn whether the exit IP really changed.
 
-**Requirement wajib:** host echo **harus in-scope** di program (default-deny). Kalau tidak, echo **ditolak scope guard** — itu disengaja (Prinsip #2: BugHound tak menyentuh aset di luar scope, bahkan untuk diagnostik). Jadi:
+**A hard requirement:** the echo host **must be in-scope** in the program (default-deny). Otherwise the echo is **rejected by the scope guard**, which is deliberate (Principle #2: BugHound does not touch out-of-scope assets, not even for a diagnostic). So:
 
-> Endpoint echo adalah **infrastruktur diagnostikmu**, bukan bagian target. Untuk memakainya, **tambahkan host echo ke daftar in-scope** program secara sadar.
+> The echo endpoint is **your diagnostic infrastructure**, not part of the target. To use it, **add the echo host to the program's in-scope list** on purpose.
 
-**Opsi endpoint echo:**
+**Echo endpoint options:**
 
-| Opsi | Contoh | Catatan |
+| Option | Example | Notes |
 | --- | --- | --- |
-| **Echo milik sendiri** (disarankan) | VPS/lab kamu: `http://echo.lab.kamu/ip` | paling bersih; kamu kontrol penuh. Contoh nginx: `location / { return 200 "$remote_addr"; }`. |
-| **Layanan publik** | `https://api.ipify.org`, `https://ifconfig.me/ip`, `https://icanhazip.com`, `https://checkip.amazonaws.com`, `https://ipinfo.io/ip` | hanya jika **kamu tambahkan ke in-scope** program. Pilih yang membalas IP sebagai teks polos agar parsing bersih. |
+| **Your own echo** (recommended) | your VPS/lab: `http://echo.your.lab/ip` | the cleanest; you control it fully. nginx example: `location / { return 200 "$remote_addr"; }`. |
+| **A public service** | `https://api.ipify.org`, `https://ifconfig.me/ip`, `https://icanhazip.com`, `https://checkip.amazonaws.com`, `https://ipinfo.io/ip` | only if **you add it to the program's in-scope list**. Pick one that returns the IP as plain text so parsing is clean. |
 
-**Format body yang dikenali:** `203.0.113.9`, `{"ip":"203.0.113.9"}`, `your ip is 203.0.113.9` — token IPv4/IPv6 pertama diambil. Kosong bila tak ada IP.
+**Recognized body formats:** `203.0.113.9`, `{"ip":"203.0.113.9"}`, `your ip is 203.0.113.9`: the first IPv4/IPv6 token is taken. Empty if there is no IP.
 
-### Negara & ASN IP exit (GeoIP offline — opsional)
+### Exit IP country & ASN (offline GeoIP, optional)
 
-BugHound bisa **melabeli IP sumber & exit dengan negara dan ASN**, tepat di bawah IP-nya (mis. `185.220.101.4  🇳🇱 Netherlands (NL) · AS205100 — DigitalOcean, LLC`). Berguna untuk program yang mensyaratkan egress dari **negara/ASN tertentu**.
+BugHound can **label the source & exit IP with a country and ASN**, right below the IP (e.g. `185.220.101.4  🇳🇱 Netherlands (NL) · AS205100 — DigitalOcean, LLC`). Useful for a program that requires egress from a **specific country/ASN**.
 
-**Offline, tanpa kompromi egress.** Lookup memakai database MaxMind **GeoLite2 lokal** (`.mmdb`) — **tak pernah** memanggil layanan geolokasi pihak ketiga (ipinfo.io, ip-api.com, dll). Memanggilnya berarti egress ke aset out-of-scope (melanggar Prinsip #2); karena itu BugHound hanya membaca file DB yang kamu sediakan sendiri. Fitur **opsional** dan **degradasi mulus**: tanpa DB, menu Proxy tetap menampilkan IP, hanya tanpa negara.
+**Offline, no egress compromise.** The lookup uses a **local MaxMind GeoLite2** database (`.mmdb`) and **never** calls a third-party geolocation service (ipinfo.io, ip-api.com, etc.). Calling one would mean egress to an out-of-scope asset (breaking Principle #2), so BugHound only reads a DB file you supply yourself. The feature is **optional** and **degrades cleanly**: without a DB, the Proxy menu still shows the IP, just without a country.
 
-**Mengaktifkan:**
+**To enable it:**
 
-1. Unduh database gratis **GeoLite2** dari MaxMind (butuh akun gratis): `GeoLite2-Country.mmdb` (untuk negara) dan opsional `GeoLite2-ASN.mmdb` (untuk ASN/organisasi).
-2. Taruh file di host atau mount ke container, lalu set env sebelum start:
+1. Download the free **GeoLite2** database from MaxMind (needs a free account): `GeoLite2-Country.mmdb` (for the country) and optionally `GeoLite2-ASN.mmdb` (for ASN/organization).
+2. Put the files on the host or mount them into the container, then set the env before start:
 
    ```bash
    BUGHOUND_GEOIP_COUNTRY_DB=/data/geoip/GeoLite2-Country.mmdb
-   BUGHOUND_GEOIP_ASN_DB=/data/geoip/GeoLite2-ASN.mmdb   # opsional
+   BUGHOUND_GEOIP_ASN_DB=/data/geoip/GeoLite2-ASN.mmdb   # optional
    ```
 
-3. Start BugHound; log mencetak `geoip: aktif …`. Bila env tak diset atau file gagal dibuka, log mencetak alasannya dan fitur mati mulus (menu Proxy menampilkan hint cara mengaktifkan).
+3. Start BugHound; the log prints `geoip: on …`. If the env is unset or a file fails to open, the log prints why and the feature stays off cleanly (the Proxy menu shows a hint on how to enable it).
 
-**Catatan:**
+**Notes:**
 
-- Murni **label tampilan** — tak menyentuh scope guard, egress, rate limiter, atau secret.
-- IP privat/tak terdaftar → negara kosong (ditandai "tak ditemukan di DB GeoIP").
-- Data GeoLite2 milik MaxMind; patuhi ketentuan lisensinya (termasuk update berkala agar akurat).
-
----
-
-## 5. Pakai untuk program bug bounty di luar (requirement)
-
-Banyak program menuntut traffic datang dari **IP statis terdaftar** (VPN program, atau IP yang kamu declare di profil). Menu Proxy adalah cara memverifikasinya **sebelum** scan sungguhan.
-
-**Requirement & langkah:**
-
-1. **Exit IP statis** — siapkan upstream proxy yang IP keluarnya = IP yang di-allowlist program (VPS/jump box via `ssh -D`, atau proxy komersial statis). Rantai Tor/residential-rotating **tidak cocok** untuk program yang mewajibkan IP tetap.
-2. **Scope presisi** — isi in-scope program dengan target resmi program (domain/wildcard/CIDR). Kalau mau verifikasi IP, **tambahkan host echo** (mis. `api.ipify.org`) ke in-scope juga.
-3. **Verifikasi IP (menu Proxy)** — Program = program itu, Rantai = proxymu, Echo = endpoint in-scope → **Uji proxy**. Pastikan **IP exit** = IP yang didaftarkan program. Kalau "IP sama" / tak berubah, rantai belum efektif.
-4. **Rate limit** — set di form **Scan** sesuai aturan program (BugHound menjepit per-engine, maks 50/dtk).
-5. **Auth proxy** — pakai `user:pass@` bila proxy komersial butuh (tersensor otomatis).
-6. **Scan** — baru jalankan scan dengan rantai yang sama di form Scan. Report tetap **draft** (tanpa auto-submit).
-
-**Checklist cepat sebelum scan program eksternal:**
-
-- [ ] Exit IP proxy = IP terdaftar program (dibuktikan lewat menu Proxy).
-- [ ] Target program sudah in-scope; out-of-scope diisi bila ada.
-- [ ] Host echo (bila dipakai) ditambahkan in-scope.
-- [ ] Rate limit sesuai aturan program.
-- [ ] Rantai yang terbukti disalin ke form **Scan**.
+- Purely a **display label**: it does not touch the scope guard, egress, rate limiter, or secrets.
+- A private/unlisted IP → an empty country (marked "not found in the GeoIP DB").
+- The GeoLite2 data belongs to MaxMind; follow its license terms (including periodic updates so it stays accurate).
 
 ---
 
-## 6. Catatan teknis & batasan
+## 5. Using it for an external bug bounty program (requirements)
 
-- **Resolusi & IP-pin di hulu.** Target di-resolve ke IP di host BugHound lalu di-*pin* (anti DNS-rebinding), baru koneksi ke IP itu diteruskan lewat rantai. Jadi `socks5` vs `socks5h` tak mengubah resolusi target (sudah di-pin); DNS target terjadi di sisi BugHound, bukan di exit node.
-- **Path pada HTTPS.** Tunnel CONNECT hanya menegakkan host:port. Host:port yang punya eksklusi ber-path dibuka agar tiap request dinilai, dan hanya HTTP/1 yang lewat di sana; host lain tetap tunnel buta. Tak perlu CA cert: sertifikatnya sekali pakai dan engine memang tak memverifikasi target.
-- **Hop = infra, bukan target.** Konektivitas hop tidak di-scope-check (hop memang proxy milikmu, sering loopback seperti Burp/Tor). Hanya **target & echo** yang melewati scope guard.
-- **Fail-closed.** Hop/skema tak valid, atau echo out-of-scope → ditolak; tak ada koneksi diam-diam.
-- **Audit.** Tiap uji tercatat `egress.check` (ringkasan hop, echo?, ip-berubah?); penolakan echo dicatat dengan alasan. Tanpa kredensial.
+Many programs demand that traffic come from a **registered static IP** (a program VPN, or an IP you declare in your profile). The Proxy menu is how you verify this **before** a real scan.
+
+**Requirements & steps:**
+
+1. **A static exit IP:** set up an upstream proxy whose exit IP = the IP the program allowlists (a VPS/jump box via `ssh -D`, or a static commercial proxy). A Tor/rotating-residential chain **does not fit** a program that requires a fixed IP.
+2. **Precise scope:** fill the program's in-scope with the program's official targets (domain/wildcard/CIDR). To verify the IP, **add the echo host** (e.g. `api.ipify.org`) to in-scope too.
+3. **Verify the IP (Proxy menu):** Program = that program, Chain = your proxy, Echo = the in-scope endpoint → **Test proxy**. Confirm the **exit IP** = the IP the program registered. If it says "same IP" / unchanged, the chain is not effective yet.
+4. **Rate limit:** set it in the **Scan** form per the program's rules (BugHound clamps per engine, max 50/s).
+5. **Proxy auth:** use `user:pass@` if a commercial proxy requires it (redacted automatically).
+6. **Scan:** only then run the scan with the same chain in the Scan form. The report stays a **draft** (no auto-submit).
+
+**A quick checklist before scanning an external program:**
+
+- [ ] The proxy exit IP = the program's registered IP (proven via the Proxy menu).
+- [ ] The program's targets are in-scope; out-of-scope is filled in if there are exclusions.
+- [ ] The echo host (if used) is added to in-scope.
+- [ ] The rate limit matches the program's rules.
+- [ ] The proven chain is copied into the **Scan** form.
 
 ---
 
-## 7. Resep uji-coba lokal (lab milik sendiri)
+## 6. Technical notes & limits
 
-Membuktikan "IP berubah" butuh echo + proxy pada **IP berbeda** di jaringan lab sendiri (keduanya in-scope). Contoh pada `bughound-lab` (`172.30.0.0/24`):
+- **Resolution & IP-pinning upstream.** The target is resolved to an IP on the BugHound host then *pinned* (anti DNS-rebinding), and only then is the connection to that IP forwarded through the chain. So `socks5` vs `socks5h` does not change the target resolution (already pinned); the target's DNS happens on BugHound's side, not at the exit node.
+- **Paths on HTTPS.** A CONNECT tunnel only enforces host:port. A host:port that has a path-based exclusion is opened so each request is evaluated, and only HTTP/1 passes there; other hosts stay a blind tunnel. No CA cert needed: the certificate is one-time and the engine does not verify the target anyway.
+- **A hop = infrastructure, not a target.** Hop connectivity is not scope-checked (a hop is your own proxy, often loopback like Burp/Tor). Only the **target & echo** pass through the scope guard.
+- **Fail-closed.** An invalid hop/scheme, or an out-of-scope echo → rejected; no connection happens quietly.
+- **Audit.** Each test is recorded as `egress.check` (a hop summary, echo?, ip-changed?); an echo rejection is recorded with its reason. No credentials.
+
+---
+
+## 7. A local trial recipe (your own lab)
+
+Proving "IP changed" needs an echo + a proxy on **different IPs** in your own lab network (both in-scope). An example on `bughound-lab` (`172.30.0.0/24`):
 
 ```bash
-# Echo: balas IP klien apa adanya
+# Echo: return the client IP as is
 docker run -d --name lab-echo --network bughound-lab --ip 172.30.0.40 nginx:alpine
 docker exec lab-echo sh -c 'printf "server { listen 80; location / { default_type text/plain; return 200 \"\$remote_addr\n\"; } }\n" > /etc/nginx/conf.d/default.conf && nginx -s reload'
 
-# Proxy SOCKS5 (butuh kredensial, atau pakai -e REQUIRE_AUTH=false)
+# SOCKS5 proxy (needs credentials, or use -e REQUIRE_AUTH=false)
 docker run -d --name lab-proxy --network bughound-lab --ip 172.30.0.50 \
   -e PROXY_USER=labuser -e PROXY_PASSWORD=labpass serjs/go-socks5-proxy
 ```
 
-Di menu Proxy: Program dengan in-scope `172.30.0.0/24`, Rantai `socks5://labuser:labpass@172.30.0.50:1080`, Echo `http://172.30.0.40/`.
-Harapan: hop **reachable** (kredensial tersensor), **IP sumber** (IP lab BugHound) → **IP exit** `172.30.0.50`, **"IP berubah ✓"**.
+In the Proxy menu: Program with in-scope `172.30.0.0/24`, Chain `socks5://labuser:labpass@172.30.0.50:1080`, Echo `http://172.30.0.40/`.
+Expected: the hop is **reachable** (credentials redacted), **source IP** (the BugHound lab IP) → **exit IP** `172.30.0.50`, **"IP changed ✓"**.
 
-Bersihkan: hapus program lewat endpoint ter-audit, lalu `docker rm -f lab-echo lab-proxy`.
+Cleanup: delete the program through the audited endpoint, then `docker rm -f lab-echo lab-proxy`.

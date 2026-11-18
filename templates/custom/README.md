@@ -1,31 +1,31 @@
-# Template deteksi custom BugHound (Bank Payload)
+# BugHound custom detection templates (Payload Bank)
 
-Direktori ini berisi template nuclei **bikinan sendiri** yang dijalankan runner
-`nuclei-custom` (lihat `BH-SPEC-PAYLOAD` dan `cmd/bughound` roster). Runner ini
-memanggil `nuclei -t <dir ini>` sehingga **hanya** template di sini yang jalan,
-terpisah dari runner `nuclei` resmi yang memakai set bawaan penuh.
+This directory holds the **home-grown** nuclei templates that the `nuclei-custom`
+runner runs (see `BH-SPEC-PAYLOAD` and the `cmd/bughound` roster). The runner
+calls `nuclei -t <this dir>`, so **only** the templates here run, separate from
+the official `nuclei` runner that uses the full built-in set.
 
-## Aturan (mengikat)
+## Rules (binding)
 
-1. **Read-only saja.** Template di sini wajib non-destruktif: deteksi lewat
-   request baca (GET, atau query baca seperti introspection GraphQL). Dilarang
-   menulis/mengubah/menghapus keadaan target, mengunggah berkas, atau memicu
-   DoS. Tag `dos`/`smuggling` dan ID unsafe tetap diblok struktural oleh
-   `nonDestructiveArgs()`, tapi jangan bergantung padanya — tulis template yang
-   memang aman.
-2. **Jangan seret rahasia ke evidence.** Cocokkan penanda struktural (pola kunci,
-   nama field), bukan menyedot nilai sensitif.
-3. **Satu temuan = satu kelas jelas.** Sertakan `classification.cwe-id` dan
-   `tags` agar normalisasi → OWASP + remediasi actionable bekerja di draft report.
+1. **Read-only only.** Templates here must be non-destructive: detect through a
+   read request (GET, or a read query such as GraphQL introspection). Do not
+   write, change, or delete target state, upload a file, or trigger a DoS. The
+   `dos`/`smuggling` tags and unsafe IDs are still blocked structurally by
+   `nonDestructiveArgs()`, but do not lean on that; write a template that is
+   safe on its own.
+2. **Do not drag secrets into evidence.** Match structural markers (key patterns,
+   field names), not the sensitive values themselves.
+3. **One finding = one clear class.** Include `classification.cwe-id` and `tags`
+   so the normalization to OWASP + actionable remediation works in the draft report.
 
-## Aktivasi
+## Activation
 
-Runner opt-in: tambahkan `nuclei-custom` ke daftar `-engine` **dan** arahkan dir:
+Opt-in runner: add `nuclei-custom` to the `-engine` list **and** point it at the dir:
 
 ```
 -engine nuclei,ffuf,zap,nuclei-dast,dalfox,nuclei-custom \
--custom-templates ./templates/custom      # atau env BUGHOUND_CUSTOM_TEMPLATES
+-custom-templates ./templates/custom      # or env BUGHOUND_CUSTOM_TEMPLATES
 ```
 
-Di image, dir ini di-COPY ke `/app/templates/custom` dan env
-`BUGHOUND_CUSTOM_TEMPLATES` menunjuk ke sana.
+In the image this dir is COPIED to `/app/templates/custom` and the
+`BUGHOUND_CUSTOM_TEMPLATES` env points there.

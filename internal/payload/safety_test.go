@@ -12,37 +12,37 @@ func TestClassifySafety(t *testing.T) {
 		{nil, SafetyReadOnly},
 		{[]string{"dos"}, SafetyMutating},
 		{[]string{"cve", "DOS"}, SafetyMutating}, // case-insensitive
-		{[]string{"intrusive"}, SafetyMutating},  // penanda intrusive
+		{[]string{"intrusive"}, SafetyMutating},  // intrusive marker
 		{[]string{"exposure", "destructive"}, SafetyMutating},
 	}
 	for _, c := range cases {
 		if got := classifySafety(c.tags); got != c.want {
-			t.Errorf("classifySafety(%v) = %q, mau %q", c.tags, got, c.want)
+			t.Errorf("classifySafety(%v) = %q, want %q", c.tags, got, c.want)
 		}
 	}
 }
 
 func TestSafetyValid(t *testing.T) {
 	if !SafetyReadOnly.Valid() || !SafetyMutating.Valid() {
-		t.Error("read-only & mutating harus valid")
+		t.Error("read-only and mutating must be valid")
 	}
 	if Safety("").Valid() || Safety("bogus").Valid() {
-		t.Error("nilai kosong/asing harus tidak valid")
+		t.Error("an empty or unknown value must be invalid")
 	}
 }
 
-// Sidecar menimpa klasifikasi turunan (mis. menandai template deteksi sebagai
-// mutating secara sadar, atau sebaliknya).
+// A sidecar overrides the derived class (e.g. deliberately marking a detection
+// template as mutating, or the other way round).
 func TestSidecarOverridesSafety(t *testing.T) {
-	e := Entry{Tags: []string{"dos"}} // turunan = mutating
+	e := Entry{Tags: []string{"dos"}} // derived = mutating
 	applySidecar(&e, metaSidecar{Safety: "read-only"})
 	if e.Safety != SafetyReadOnly {
-		t.Errorf("sidecar harus menimpa safety ke read-only; dapat %q", e.Safety)
+		t.Errorf("the sidecar must override safety to read-only; got %q", e.Safety)
 	}
-	// Sidecar nilai asing diabaikan (tak menimpa).
+	// An unknown sidecar value is ignored (it does not override).
 	e2 := Entry{}
 	applySidecar(&e2, metaSidecar{Safety: "bogus"})
 	if e2.Safety != "" {
-		t.Errorf("safety sidecar asing harus diabaikan; dapat %q", e2.Safety)
+		t.Errorf("an unknown sidecar safety must be ignored; got %q", e2.Safety)
 	}
 }

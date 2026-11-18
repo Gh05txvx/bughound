@@ -30,18 +30,18 @@ func TestScoreRecallAndOptional(t *testing.T) {
 	}, b)
 
 	if got.Required != 2 || got.RequiredCovered != 1 {
-		t.Errorf("required cov: mau 1/2, dapat %d/%d", got.RequiredCovered, got.Required)
+		t.Errorf("required cov: want 1/2, got %d/%d", got.RequiredCovered, got.Required)
 	}
 	if got.Recall != 0.5 {
-		t.Errorf("recall mau 0.5, dapat %v", got.Recall)
+		t.Errorf("recall want 0.5, got %v", got.Recall)
 	}
 	if got.Optional != 1 || got.OptionalCovered != 1 {
-		t.Errorf("opsional cov: mau 1/1, dapat %d/%d", got.OptionalCovered, got.Optional)
+		t.Errorf("optional cov: want 1/1, got %d/%d", got.OptionalCovered, got.Optional)
 	}
-	// robots tak tercakup → item itu Covered=false
+	// robots is not covered → that item has Covered=false
 	for _, it := range got.Items {
 		if it.Expected.ID == "robots" && it.Covered {
-			t.Error("robots semestinya tak tercakup")
+			t.Error("robots should not be covered")
 		}
 	}
 }
@@ -49,14 +49,14 @@ func TestScoreRecallAndOptional(t *testing.T) {
 func TestScoreExtraNotCountedAsFalsePositive(t *testing.T) {
 	b := Baseline{Name: "t", Detectable: []Expected{{ID: "metrics", AnyKeyword: []string{"/metrics"}}}}
 	got := Score([]*finding.Finding{
-		f("prometheus", "http://t/metrics", "nuclei"), // cocok
-		f("weird-thing", "http://t/zzz", "x"),         // di luar baseline
+		f("prometheus", "http://t/metrics", "nuclei"), // matches
+		f("weird-thing", "http://t/zzz", "x"),         // outside the baseline
 	}, b)
 	if got.Recall != 1.0 {
-		t.Errorf("recall mau 1.0 (extra tak menyeret), dapat %v", got.Recall)
+		t.Errorf("recall want 1.0 (extras do not drag it down), got %v", got.Recall)
 	}
 	if len(got.Extra) != 1 || got.Extra[0] != "weird-thing @ http://t/zzz (x)" {
-		t.Errorf("extra mau 1 item ringkas, dapat %v", got.Extra)
+		t.Errorf("extra want 1 short item, got %v", got.Extra)
 	}
 }
 
@@ -64,25 +64,25 @@ func TestExpectedCWEGate(t *testing.T) {
 	e := Expected{ID: "sqli", AnyKeyword: []string{"sql"}, AnyCWE: []string{"CWE-89"}}
 	hit := f("sql-injection", "http://t/x", "nuclei-dast")
 	hit.CWE = []string{"CWE-89"}
-	miss := f("sql-injection", "http://t/x", "nuclei-dast") // keyword cocok, TAPI CWE salah
+	miss := f("sql-injection", "http://t/x", "nuclei-dast") // the keyword matches, BUT the CWE is wrong
 	miss.CWE = []string{"CWE-200"}
 	if !e.matches(hit) {
-		t.Error("CWE cocok + keyword cocok harus match")
+		t.Error("matching CWE + matching keyword must match")
 	}
 	if e.matches(miss) {
-		t.Error("CWE salah harus menggagalkan match walau keyword cocok")
+		t.Error("a wrong CWE must block the match even when the keyword matches")
 	}
 }
 
 func TestLoadBuiltinJuiceShop(t *testing.T) {
-	// readFile sengaja gagal: membuktikan baseline dimuat dari embed, bukan disk.
-	failRead := func(string) ([]byte, error) { return nil, fmt.Errorf("tak boleh dipanggil") }
+	// readFile fails on purpose: it proves the baseline is loaded from the embed, not from disk.
+	failRead := func(string) ([]byte, error) { return nil, fmt.Errorf("must not be called") }
 	b, err := LoadBaseline("juice-shop", failRead)
 	if err != nil {
-		t.Fatalf("muat juice-shop bawaan: %v", err)
+		t.Fatalf("load built-in juice-shop: %v", err)
 	}
 	if b.Name != "juice-shop" {
-		t.Errorf("nama mau juice-shop, dapat %q", b.Name)
+		t.Errorf("name want juice-shop, got %q", b.Name)
 	}
 	var req, opt int
 	for _, e := range b.Detectable {
@@ -93,13 +93,13 @@ func TestLoadBuiltinJuiceShop(t *testing.T) {
 		}
 	}
 	if req != 7 {
-		t.Errorf("baseline juice-shop mau 7 item wajib, dapat %d", req)
+		t.Errorf("the juice-shop baseline want 7 required items, got %d", req)
 	}
 	if opt == 0 {
-		t.Error("baseline juice-shop harus punya item opsional")
+		t.Error("the juice-shop baseline must have optional items")
 	}
 	if len(b.BlindSpots) == 0 {
-		t.Error("baseline juice-shop harus mendokumentasikan blind-spot (set B)")
+		t.Error("the juice-shop baseline must document blind spots (set B)")
 	}
 }
 
@@ -108,7 +108,7 @@ func TestScoreJuiceShopFullRecall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Satu temuan per kelas WAJIB + satu opsional (injection) + satu extra.
+	// One finding per REQUIRED class + one optional (injection) + one extra.
 	findings := []*finding.Finding{
 		f("directory-listing", "http://t/ftp/", "ffuf"),
 		f("prometheus-metrics", "http://t/metrics", "nuclei"),
@@ -117,18 +117,18 @@ func TestScoreJuiceShopFullRecall(t *testing.T) {
 		f("cross-domain-misconfiguration", "http://t/", "zap"),
 		f("fingerprinthub-web-fingerprints", "http://t/", "nuclei", "tech-detect"),
 		f("api-endpoint", "http://t/rest/products", "katana"),
-		f("sqli-error-based", "http://t/rest/products/search", "nuclei-dast"), // opsional
+		f("sqli-error-based", "http://t/rest/products/search", "nuclei-dast"), // optional
 		f("weak-jwt", "http://t/auth", "x"),                                   // extra
 	}
 	got := Score(findings, b)
 	if got.RequiredCovered != got.Required || got.Recall != 1.0 {
-		t.Errorf("mau recall penuh atas 7 wajib; dapat %d/%d = %v", got.RequiredCovered, got.Required, got.Recall)
+		t.Errorf("want full recall over the 7 required; got %d/%d = %v", got.RequiredCovered, got.Required, got.Recall)
 	}
 	if got.OptionalCovered < 1 {
-		t.Error("injection-error opsional semestinya tercakup oleh sqli-error-based")
+		t.Error("the optional injection-error item should be covered by sqli-error-based")
 	}
 	if len(got.Extra) != 1 {
-		t.Errorf("mau 1 temuan di luar baseline, dapat %d (%v)", len(got.Extra), got.Extra)
+		t.Errorf("want 1 finding outside the baseline, got %d (%v)", len(got.Extra), got.Extra)
 	}
 }
 
@@ -141,25 +141,25 @@ func TestParseFindingsBothShapes(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if len(fs) != 1 || fs[0].Type != "a" {
-			t.Errorf("%s: parse salah: %+v", name, fs)
+			t.Errorf("%s: wrong parse: %+v", name, fs)
 		}
 	}
 	if _, err := ParseFindings([]byte("   ")); err == nil {
-		t.Error("input kosong harus error")
+		t.Error("empty input must error")
 	}
 }
 
 func TestBaselineValidate(t *testing.T) {
 	cases := []Baseline{
-		{Name: "", Detectable: []Expected{{ID: "x", AnyKeyword: []string{"y"}}}}, // tanpa nama
-		{Name: "n"}, // tanpa detectable
-		{Name: "n", Detectable: []Expected{{ID: "", AnyKeyword: []string{"y"}}}},                                        // item tanpa id
-		{Name: "n", Detectable: []Expected{{ID: "x"}}},                                                                  // item tanpa kriteria
+		{Name: "", Detectable: []Expected{{ID: "x", AnyKeyword: []string{"y"}}}}, // no name
+		{Name: "n"}, // no detectable items
+		{Name: "n", Detectable: []Expected{{ID: "", AnyKeyword: []string{"y"}}}},                                        // item without an id
+		{Name: "n", Detectable: []Expected{{ID: "x"}}},                                                                  // item without criteria
 		{Name: "n", Detectable: []Expected{{ID: "x", AnyKeyword: []string{"a"}}, {ID: "x", AnyKeyword: []string{"b"}}}}, // id dup
 	}
 	for i, b := range cases {
 		if err := b.validate(); err == nil {
-			t.Errorf("kasus %d semestinya invalid", i)
+			t.Errorf("case %d should be invalid", i)
 		}
 	}
 }

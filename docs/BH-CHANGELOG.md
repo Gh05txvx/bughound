@@ -1,140 +1,140 @@
-# BH-CHANGELOG — Catatan perkembangan implementasi
+# BH-CHANGELOG: implementation progress notes
 
-Log rekayasa: **apa yang sudah dibangun** di repo (pelengkap spec/PRD yang menyatakan apa yang *seharusnya* dibangun). Sumber kebenaran detail tetap git history + CI; dokumen ini peta ringkasnya. Tanggal relatif dikonversi ke milestone/rilis.
+An engineering log: **what has been built** in the repo (a companion to the spec/PRD, which state what *should* be built). The source of truth for detail stays git history + CI; this document is the summary map. Relative dates are converted to milestones/releases.
 
-## Status ringkas
+## Status at a glance
 
-Fondasi **M0**, MVP **M1**, triase & multi-engine **M2**: **selesai**. **M3** (pengerasan & rilis) berjalan: audit pre-launch lolos + diremediasi, export platform, dashboard, SAST plugin, adapter engine nyata (ffuf, ZAP, dalfox). Rilis publik: **v0.1.0 → v0.5.0** (lintas-platform + `SHA256SUMS.txt`).
+The **M0** foundation, the **M1** MVP, and **M2** triage & multi-engine: **done**. **M3** (hardening & release) is underway: the pre-launch audit passed + remediated, platform export, the dashboard, the SAST plugin, real engine adapters (ffuf, ZAP, dalfox). Public releases: **v0.1.0 through v0.5.0** (cross-platform + `SHA256SUMS.txt`).
 
-## Rilis
+## Releases
 
-| Tag | Isi inti |
+| Tag | Core content |
 | --- | --- |
-| `v0.5.0` | SAST diperluas: adapter **Bandit** (Python), **Gitleaks** (deteksi secret, redaksi ganda), **FindSecBugs** (bytecode JVM, opt-in) + **normalizer SARIF 2.1.0** generik (satu jalur normalisasi untuk CodeQL/SpotBugs/gitleaks & emitter SARIF lain), ketiganya otomatis muncul di dropdown `/sast`; **image Docker multi-target** `dast`/`sast`/`full` — toolchain DAST & SAST dapat dipakai terpisah (image sendiri), ketiga varian dipublish ke GHCR (`-dast`/`-sast`/utama) |
-| `v0.4.0` | SAST aktif default (ruleset semgrep `p/default` di-pre-bake, siap-offline); engine XSS **dalfox** (adapter + normalisasi, request lewat proxy egress scope-enforced); **brute route API** opt-in per-scan (wordlist Assetnote `apiroutes`) + kalibrasi dinding yang menggemakan path — grup 401/403/500 sebentuk dikolaps jadi satu catatan sehingga rute nyata tak tenggelam |
-| `v0.3.2` | Brand "BugHound" diseragamkan (UI/docs/report); impor scope HackerOne/Bugcrowd; preset template per program; kategori OWASP 2021 + metode HTTP & clamp ukuran evidence di temuan; sejumlah pengerasan egress/scope |
-| `v0.3.1` | Pengerasan secret (redaksi master key & kredensial proxy chain, bungkus master key dengan Secret); buang dead code (BH-P06); ringkas intro README |
-| `v0.3.0` | Rilis besar: RBAC + login wajib, redesign UI, Bank Payload + seleksi template, throttle laju per-engine; dashboard (monitor scan live, hapus temuan/program); kualitas ffuf (kalibrasi catch-all SPA + dedup site-wide + enrichment robots.txt/OpenAPI); adapter retire.js (SCA klien) & nuclei-dast (fuzzing aktif); integrasi Burp (API baca-saja + extension); M3 lengkapi-draft; menu Proxy |
-| `v0.2.7` | Capture: reverse proxy perekam (browsing manual → scan) |
-| `v0.2.6` | Proxy upstream & rantai (chain) egress |
-| `v0.2.5` | gRPC fuzz invokasi metode read-only (deteksi akses tanpa auth) |
-| `v0.2.4` | Scan ter-arah OpenAPI/Swagger + enumerasi gRPC |
-| `v0.2.3` | Recon naabu + gau + dnsx (image GHCR 9-engine) |
-| `v0.2.2` | Docker (engine di dalam image) + publish image ke GHCR |
-| `v0.2.1` | Adapter engine nyata ffuf + ZAP (mode scan & wordlist bawaan) |
-| `v0.2.0` | SAST sebagai plugin (analisis statis lokal; minor bump) |
-| `v0.1.2` | Export report ke template HackerOne/Bugcrowd + Dashboard |
-| `v0.1.1` | Perbaikan CSRF (Origin: null) + anchoring audit (BH-F06) |
-| `v0.1.0` | Fondasi + M1 + packaging single-binary |
+| `v0.5.0` | SAST expanded: **Bandit** (Python), **Gitleaks** (secret detection, double redaction), and **FindSecBugs** (JVM bytecode, opt-in) adapters + a generic **SARIF 2.1.0 normalizer** (one normalization path for CodeQL/SpotBugs/gitleaks & other SARIF emitters), all three appearing automatically in the `/sast` dropdown; **multi-target Docker images** `dast`/`sast`/`full`, so the DAST & SAST toolchains can be used separately (their own image), all three variants published to GHCR (`-dast`/`-sast`/main) |
+| `v0.4.0` | SAST on by default (the semgrep `p/default` ruleset pre-baked, offline-ready); the **dalfox** XSS engine (adapter + normalization, requests through the scope-enforced egress proxy); **API route brute force** opt-in per scan (the Assetnote `apiroutes` wordlist) + a wall calibration that echoes the path, a 401/403/500 group of the same shape collapses into one record so real routes do not drown |
+| `v0.3.2` | The "BugHound" brand unified (UI/docs/report); HackerOne/Bugcrowd scope import; a per-program template preset; OWASP 2021 category + HTTP method & evidence size clamp on findings; several egress/scope hardenings |
+| `v0.3.1` | Secret hardening (redacting the master key & proxy-chain credentials, wrapping the master key with Secret); dead-code removal (BH-P06); a shorter README intro |
+| `v0.3.0` | A big release: RBAC + required login, a UI redesign, the Payload Bank + template selection, per-engine rate throttling; the dashboard (live scan monitor, delete findings/program); ffuf quality (SPA catch-all calibration + site-wide dedup + robots.txt/OpenAPI enrichment); the retire.js (client SCA) & nuclei-dast (active fuzzing) adapters; Burp integration (a read-only API + extension); M3 draft completion; the Proxy menu |
+| `v0.2.7` | Capture: a recording reverse proxy (manual browsing -> scan) |
+| `v0.2.6` | Upstream proxy & egress chains |
+| `v0.2.5` | gRPC fuzzing of read-only method invocations (detect access without auth) |
+| `v0.2.4` | OpenAPI/Swagger-directed scan + gRPC enumeration |
+| `v0.2.3` | Recon naabu + gau + dnsx (the 9-engine GHCR image) |
+| `v0.2.2` | Docker (engines inside the image) + pushing the image to GHCR |
+| `v0.2.1` | Real ffuf + ZAP engine adapters (scan mode & built-in wordlist) |
+| `v0.2.0` | SAST as a plugin (local static analysis; a minor bump) |
+| `v0.1.2` | Report export to the HackerOne/Bugcrowd templates + the Dashboard |
+| `v0.1.1` | A CSRF fix (Origin: null) + audit anchoring (BH-F06) |
+| `v0.1.0` | The foundation + M1 + single-binary packaging |
 
-Tiap rilis = single binary lintas-platform (linux/darwin/windows) + `SHA256SUMS.txt`, dibangun workflow `release.yml` saat tag `v*` dipush.
+Each release = a cross-platform single binary (linux/darwin/windows) + `SHA256SUMS.txt`, built by the `release.yml` workflow when a `v*` tag is pushed.
 
-## Fondasi & pipeline (M0–M1)
+## Foundation & pipeline (M0-M1)
 
-- **Skema Temuan Seragam** (`BH-SPEC-FINDING`): format berversi, `dedup_key` deterministik, evidence tersensor.
-- **Scope Guard** (`BH-SPEC-SCOPE`): domain/wildcard/URL/IP/CIDR, normalisasi punycode & IP, default-deny, penegakan **dua lapis** (input + egress).
-- **Store**: in-memory & SQLite (pure-Go), dedup per-program, triase, query terurut severity, program+scope persisten.
-- **Orchestrator**: recon → scope (input) → scan rate-limited → egress re-check → store + audit.
-- **Web UI**: Go + HTMX + `html/template`, aset di-`go:embed` (single binary).
-- **Rate limiter** wajib di jalur eksekusi (config dijepit, tak bisa dimatikan).
-- **Recon**: pipeline mock + nyata (subfinder → httpx → katana).
-- **Job queue** async (worker pool), **report module** (draft Markdown + PDF), **egress proxy** (HTTP+CONNECT, per-koneksi scope) + `nuclei.Runner` nyata.
+- **The Unified Finding Schema** (`BH-SPEC-FINDING`): a versioned format, a deterministic `dedup_key`, redacted evidence.
+- **The Scope Guard** (`BH-SPEC-SCOPE`): domain/wildcard/URL/IP/CIDR, punycode & IP normalization, default-deny, **two-layer** enforcement (input + egress).
+- **The store**: in-memory & SQLite (pure-Go), per-program dedup, triage, severity-ordered queries, persistent programs+scope.
+- **The orchestrator**: recon → scope (input) → rate-limited scan → egress re-check → store + audit.
+- **The web UI**: Go + HTMX + `html/template`, assets `go:embed`-ed (single binary).
+- **The rate limiter**, mandatory in the execution path (the config is clamped, it cannot be turned off).
+- **Recon**: a mock + real pipeline (subfinder → httpx → katana).
+- An async **job queue** (worker pool), a **report module** (Markdown draft + PDF), an **egress proxy** (HTTP+CONNECT, per-connection scope) + the real `nuclei.Runner`.
 
-## Triase & scope (M2)
+## Triage & scope (M2)
 
-- **Aksi massal** di Findings: konfirmasi / false-positive / abaikan sekaligus (fail-closed status, CSRF).
-- **Filter** severity | status | type | run.
-- **Program & scope persisten** + **scope editor** dengan pratinjau izin/tolak (tanpa menyentuh jaringan).
+- **Bulk actions** on Findings: confirm / false-positive / ignore at once (fail-closed status, CSRF).
+- **Filters** by severity | status | type | run.
+- **Persistent programs & scope** + a **scope editor** with an allow/deny preview (without touching the network).
 
-## Keamanan
+## Security
 
-7 prinsip mengikat diimplementasikan & diuji:
+The 7 binding principles are implemented & tested:
 
-1. Scope guard default-deny, satu titik penegakan, tahan bypass (homoglyph/IP-obfuscation/userinfo/suffix/encoding).
-2. Tak pernah menyentuh out-of-scope — input + egress + proxy per-koneksi; dialer anti-SSRF/anti-rebinding (resolve + tolak IP internal + pin IP).
-3. Tanpa auto-submit — report selalu draft; export hanya memformat untuk submit manual.
-4. Rate limiter di jalur eksekusi.
-5. Secret AES-256-GCM, keyring + rotasi, tersensor dari log/store/report.
-6. Audit trail HMAC-chain append-only + **anchoring eksternal** (BH-F06): trunkasi/rollback/penghapusan total store terdeteksi.
-7. Satu skema temuan seragam untuk semua engine.
+1. Default-deny scope guard, one enforcement point, bypass-resistant (homoglyph/IP-obfuscation/userinfo/suffix/encoding).
+2. Never touches out-of-scope, input + egress + per-connection proxy; an anti-SSRF/anti-rebinding dialer (resolve + reject internal IPs + pin the IP).
+3. No auto-submit, a report is always a draft; export only formats it for manual submission.
+4. The rate limiter is in the execution path.
+5. Secrets are AES-256-GCM, a keyring + rotation, redacted from the log/store/report.
+6. An append-only HMAC-chain audit trail + **external anchoring** (BH-F06): a truncation/rollback/whole-store deletion is detected.
+7. One unified finding schema for every engine.
 
-**Audit pre-launch (`BH-P03-APPSEC`)** — laporan audit dikelola internal (tak disertakan di repo publik). Semua temuan **High/Medium/Low** diremediasi (BH-F01 CSRF+auth, BH-F02 rebinding, BH-F04 parser, BH-F05 reveal-audit, BH-F06 anchoring, BH-F07 rotasi; BH-F03 dimitigasi Opsi C + ADR). Tersisa: Info (F08/F09), BH-F03 (defense-in-depth), Option A (allowlist OS). Perbaikan tambahan dari E2E: CSRF menerima `Origin: null` (form non-HTMX same-origin di Chromium) tanpa melemahkan pertahanan (token + Sec-Fetch-Site).
+**The pre-launch audit (`BH-P03-APPSEC`)**: the audit report is managed internally (not included in the public repo). Every **High/Medium/Low** finding is remediated (BH-F01 CSRF+auth, BH-F02 rebinding, BH-F04 parser, BH-F05 reveal-audit, BH-F06 anchoring, BH-F07 rotation; BH-F03 mitigated with Option C + an ADR). Remaining: Info (F08/F09), BH-F03 (defense in depth), Option A (an OS allowlist). An extra fix from E2E: CSRF accepts `Origin: null` (a non-HTMX same-origin form in Chromium) without weakening the defense (token + Sec-Fetch-Site).
 
-## Rilis & CI
+## Release & CI
 
-- **Packaging**: single binary (`go:embed` + SQLite pure-Go, CGO off), versi via `-ldflags -X main.version`, footer UI + `-version`.
-- **Tooling**: `Makefile`, `scripts/build-release.sh` (cross-compile + arsip + checksum).
-- **Workflow**: `ci.yml` (Go test), `e2e.yml` (Playwright), `release.yml` (tag `v*` → GitHub Release).
+- **Packaging**: a single binary (`go:embed` + pure-Go SQLite, CGO off), the version via `-ldflags -X main.version`, the UI footer + `-version`.
+- **Tooling**: `Makefile`, `scripts/build-release.sh` (cross-compile + archive + checksum).
+- **Workflows**: `ci.yml` (Go test), `e2e.yml` (Playwright), `release.yml` (a `v*` tag -> a GitHub Release).
 
 ## E2E (`BH-P05`)
 
-Suite Playwright di `e2e/`: 5 skenario (2 kritis: scope-guard & no-auto-submit; + scan-flow, triage, program-scope). Engine mock, store/kunci ephemeral, bind localhost, **egress diblok dua lapis** (env proxy mati + pengaman browser). Page Object Model, selector peran/teks, auto-wait.
+A Playwright suite in `e2e/`: 5 scenarios (2 critical: scope-guard & no-auto-submit; + scan-flow, triage, program-scope). Mock engines, an ephemeral store/key, localhost bind, **egress blocked in two layers** (a dead proxy env + a browser guard). Page Object Model, role/text selectors, auto-wait.
 
 ## Report & export (M3)
 
-- Draft report dari temuan **terkonfirmasi** (Markdown, unduh/cetak-PDF).
-- **Export** ke template **HackerOne** & **Bugcrowd** (per-temuan atau seluruh report) — tetap draft, submit **manual**, tanpa koneksi keluar; pemetaan severity/CWE/CVSS + bagian khas tiap platform.
+- A draft report from **confirmed** findings (Markdown, download/print-PDF).
+- **Export** to the **HackerOne** & **Bugcrowd** templates (per finding or the whole report), still a draft, **manual** submission, no outbound connection; a severity/CWE/CVSS mapping + each platform's own sections.
 
 ## Dashboard (M3)
 
-Halaman landing `/dashboard`: KPI lintas-program (program/temuan/terkonfirmasi/run) + tabel per program (breakdown severity, konfirmasi, run, aktivitas terakhir, tautan cepat).
+The `/dashboard` landing page: cross-program KPIs (programs/findings/confirmed/runs) + a per-program table (severity breakdown, confirmations, runs, last activity, quick links).
 
-## SAST sebagai plugin (M3)
+## SAST as a plugin (M3)
 
-`internal/sast`: analisis statis sebagai **plugin** (registry adapter) yang menulis ke skema temuan yang sama, membaca **kode lokal**. Boundary = **path scope** (`sast.Resolve`: confine ke satu root, default-deny, tolak traversal/symlink-escape). Adapter: **Mock** (offline) + **semgrep Runner**. Diaktifkan `-sast-root`; temuan muncul di Findings/Dashboard.
+`internal/sast`: static analysis as a **plugin** (an adapter registry) that writes to the same finding schema, reading **local code**. The boundary = a **path scope** (`sast.Resolve`: confine to one root, default-deny, reject traversal/symlink-escape). Adapters: **Mock** (offline) + the **semgrep Runner**. Enabled with `-sast-root`; findings appear in Findings/Dashboard.
 
-## Status adapter engine
+## Engine adapter status
 
-| Engine | Peran | Adapter |
+| Engine | Role | Adapter |
 | --- | --- | --- |
-| nuclei | DAST | mock + nyata (`-proxy`) |
-| subfinder → httpx → katana | recon | mock + nyata (httpx/katana via proxy) |
-| gau | recon (URL historis, pasif) | mock + nyata |
-| dnsx | recon (resolusi DNS) | mock + nyata |
-| naabu | recon (port scan TCP) | mock + nyata (TCP mentah; hanya dipindai pada host in-scope hasil httpx) |
-| ffuf | DAST (content discovery) | mock + nyata (wordlist bawaan ter-embed; override `-ffuf-wordlist`) |
-| ZAP | DAST (proxy scanner) | mock + nyata (mode `-zap-mode` quick/baseline/full; full = spider + active scan via Automation Framework; upstream proxy config) |
-| semgrep | SAST | mock + nyata (opt-in via `-sast-root`) |
-| grpcurl | gRPC (enumerasi + fuzz invokasi) | mock + nyata (`-grpc real`) |
+| nuclei | DAST | mock + real (`-proxy`) |
+| subfinder → httpx → katana | recon | mock + real (httpx/katana through the proxy) |
+| gau | recon (historical URLs, passive) | mock + real |
+| dnsx | recon (DNS resolution) | mock + real |
+| naabu | recon (TCP port scan) | mock + real (raw TCP; only scanned on in-scope hosts from httpx) |
+| ffuf | DAST (content discovery) | mock + real (the built-in wordlist embedded; override with `-ffuf-wordlist`) |
+| ZAP | DAST (proxy scanner) | mock + real (`-zap-mode` quick/baseline/full; full = spider + active scan via the Automation Framework; upstream proxy config) |
+| semgrep | SAST | mock + real (opt-in via `-sast-root`) |
+| grpcurl | gRPC (enumeration + invocation fuzzing) | mock + real (`-grpc real`) |
 
-Pemilihan engine: `-engine mock` (default, semua mock, tanpa jaringan) · `-engine real` (nuclei + recon nyata) · daftar koma `-engine nuclei,ffuf,zap`. Semua engine nyata = subprocess tool eksternal yang **tidak di-bundle**; lihat README "Engine yang didukung & cara pasang".
+Engine selection: `-engine mock` (default, all mock, no network) · `-engine real` (real nuclei + recon) · a comma list `-engine nuclei,ffuf,zap`. Every real engine = an external tool subprocess that is **not bundled**; see the README "DAST & recon engines" (install instructions there).
 
-## Scan ter-arah OpenAPI/Swagger (API)
+## OpenAPI/Swagger-directed scan (API)
 
-`internal/openapi`: `Endpoints(spec, fallbackBase)` mem-parse OpenAPI 3 / Swagger 2 (JSON atau YAML via gopkg.in/yaml.v3, fallback encoding/json) → daftar URL endpoint absolut unik (base dari `servers`/`host`+`basePath`+`schemes` atau fallback target; param path `{id}`→`1`). Form Scan dapat kolom *OpenAPI/Swagger spec*: endpoint hasil ekspansi ditambahkan ke target dan **tetap lewat scope guard** (spec tak memintas batas). Menjangkau seluruh endpoint API terdokumentasi, bukan hanya crawling. Batas: belum fuzzing per-method/body (nuclei `-im openapi`) & belum gRPC. Uji `openapi/openapi_test.go` + `web/openapi_scan_test.go`.
+`internal/openapi`: `Endpoints(spec, fallbackBase)` parses OpenAPI 3 / Swagger 2 (JSON or YAML via gopkg.in/yaml.v3, falling back to encoding/json) → a list of unique absolute endpoint URLs (the base from `servers`/`host`+`basePath`+`schemes` or the fallback target; a path param `{id}`→`1`). The Scan form has an *OpenAPI/Swagger spec* field: the expanded endpoints are added as targets and **still pass the scope guard** (a spec does not bypass the boundary). It reaches every documented API endpoint, not just what crawling found. Limits: no per-method/body fuzzing yet (nuclei `-im openapi`) & no gRPC yet. Tests `openapi/openapi_test.go` + `web/openapi_scan_test.go`.
 
-## gRPC — enumerasi via reflection
+## gRPC: enumeration via reflection
 
-`internal/engine/grpc`: `Mock` + `Runner` (grpcurl) + `buildFindings`. Memakai gRPC Server Reflection untuk mengenumerasi layanan & metode → temuan: `grpc-reflection-enabled` (Medium, CWE-200), `grpc-service-exposed`, `grpc-method-exposed` (Info); layanan infra (reflection/health/channelz) disaring. Halaman web **gRPC** (`GET /grpc`, `POST /grpc/run`): target `host:port`, tiap host **wajib lolos scope guard program** (grpcurl tak bisa diproxy → scope ditegakkan di hulu; penolakan dicatat audit `grpc.scope`). Engine: mock default, `-grpc real` (+ `-grpc-plaintext`) memakai grpcurl; ditambahkan ke image Docker. **Fuzz invokasi** (opt-in, checkbox di halaman gRPC): `Scanner.Fuzz` menginvoke metode yang terlihat **read-only** (Get/List/Query/… — metode mutasi Create/Delete/… dilewati demi keamanan) dengan payload kosong, lalu mengklasifikasi status gRPC → temuan `grpc-method-callable-unauth` (Medium, CWE-306, respons OK tanpa kredensial) / `grpc-method-reachable-unauth` (Low, InvalidArgument); Unauthenticated/PermissionDenied = terproteksi (tak dilaporkan). Uji `engine/grpc/grpc_test` (+ classify/readOnly/fuzz) + `web/grpc_test` (+ fuzz).
+`internal/engine/grpc`: `Mock` + `Runner` (grpcurl) + `buildFindings`. It uses gRPC Server Reflection to enumerate services & methods → findings: `grpc-reflection-enabled` (Medium, CWE-200), `grpc-service-exposed`, `grpc-method-exposed` (Info); infra services (reflection/health/channelz) are filtered out. The **gRPC** web page (`GET /grpc`, `POST /grpc/run`): `host:port` targets, each host **must pass the program's scope guard** (grpcurl cannot be proxied → scope is enforced upstream; a denial is recorded as `grpc.scope`). Engine: mock by default, `-grpc real` (+ `-grpc-plaintext`) uses grpcurl; added to the Docker image. **Invocation fuzzing** (opt-in, a checkbox on the gRPC page): `Scanner.Fuzz` invokes methods that look **read-only** (Get/List/Query/…, mutating methods Create/Delete/… are skipped for safety) with an empty payload, then classifies the gRPC status → findings `grpc-method-callable-unauth` (Medium, CWE-306, an OK response without credentials) / `grpc-method-reachable-unauth` (Low, InvalidArgument); Unauthenticated/PermissionDenied = protected (not reported). Tests `engine/grpc/grpc_test` (+ classify/readOnly/fuzz) + `web/grpc_test` (+ fuzz).
 
-## Proxy upstream & rantai (meneruskan egress)
+## Upstream proxy & chains (forwarding egress)
 
-`egress.Proxy.SetUpstream(urls...)` + `internal/egress/upstream.go` (`buildChainDialer`): koneksi akhir (ke IP yang SUDAH di-scope-check & di-pin) diteruskan lewat **satu proxy atau rantai multi-hop**. Skema tiap hop: **http/https** (CONNECT, TLS untuk https, Proxy-Authorization Basic), **socks5/socks5h** (via `golang.org/x/net/proxy`, Tor-friendly); kredensial `user:pass@host`. Rantai dibangun dengan fold: tiap hop jadi `proxy.Dialer` yang me-reach dirinya lewat hop sebelumnya (`httpProxyDialer`/SOCKS5, semuanya `ContextDialer` sehingga ctx & pin IP terjaga). `orchestrator.ScanRequest.ProxyChain []string` (fail-closed bila ada hop tak valid); form Scan punya kolom **Upstream proxy / rantai** (satu hop per baris). Keamanan tetap: scope guard + IP-pinning (anti-SSRF/rebinding) berjalan sebelum diteruskan — rantai hanya mengganti jalur ke IP yang sudah dicek. Uji `egress/upstream_test` (tunnel 1-hop & **2-hop** via proxy palsu + echo, skema salah, hop kedua salah, rantai kosong, socks5 construct, SetUpstream). Reverse proxy: lihat bagian berikut (capture gateway).
+`egress.Proxy.SetUpstream(urls...)` + `internal/egress/upstream.go` (`buildChainDialer`): the final connection (to the IP already scope-checked & pinned) is forwarded through **one proxy or a multi-hop chain**. Each hop scheme: **http/https** (CONNECT, TLS for https, Proxy-Authorization Basic), **socks5/socks5h** (via `golang.org/x/net/proxy`, Tor-friendly); credentials `user:pass@host`. The chain is built with a fold: each hop becomes a `proxy.Dialer` that reaches itself through the previous hop (`httpProxyDialer`/SOCKS5, all `ContextDialer` so the ctx & pinned IP are kept). `orchestrator.ScanRequest.ProxyChain []string` (fail-closed if a hop is invalid); the Scan form has an **Upstream proxy / chain** field (one hop per line). Security holds: the scope guard + IP-pinning (anti-SSRF/rebinding) run before forwarding, the chain only changes the route to an already-checked IP. Tests `egress/upstream_test` (a 1-hop & **2-hop** tunnel via a fake proxy + echo, a wrong scheme, a wrong second hop, an empty chain, socks5 construct, SetUpstream). Reverse proxy: see the next section (the capture gateway).
 
-## Reverse proxy — capture gateway (browsing manual → scan)
+## Reverse proxy: the capture gateway (manual browsing -> scan)
 
-"Reverse proxy" diwujudkan sebagai **capture gateway**, dikendalikan penuh dari UI web (bukan CLI). `internal/egress/capture.go` (`Gateway` + `httputil.ReverseProxy`): BugHound berdiri sebagai reverse proxy ke **satu target in-scope**; hunter mengarahkan browser ke listener lokal (`http://127.0.0.1:<port>/`) dan browsing target seperti biasa. Tiap request yang lewat **direkam** (dedup per `method+URL`, dengan status & hitungan) sebagai kandidat endpoint, lalu bisa **di-promote jadi scan** lewat jalur scan yang sama (`enqueueScan` → orchestrator → scope guard + rate limiter + egress). **Keamanan**: gateway memakai ulang transport egress ter-guard (`Proxy.transport`: resolve → tolak IP internal → pin IP, plus rantai upstream bila diset), target divalidasi scope guard saat start (**fail closed**, default-deny), dan tiap penerusan di-**scope-check ulang** + **rate-limited** → hanya host in-scope yang pernah diteruskan, bahkan saat browsing manual. Listener lokal bicara HTTP biasa di loopback; re-originasi ke target HTTPS ditangani transport (SNI = host target, IP di-pin) sehingga **tanpa pasang CA cert** di browser. Tanpa auto-submit (promote hanya membuat scan draft). Audit: `capture.start` / `capture.stop` / `capture.promote` / `capture.egress` (penolakan). Halaman web **Capture** (`GET /capture`, `POST /capture/{start,stop,promote}`). Uji `egress/capture_test` (teruskan+rekam, dedup, tolak target out-of-scope, rate-limited) + `web/capture_test` (start/listener, promote→scan selesai, stop, wajib scope program).
+The "reverse proxy" is realized as a **capture gateway**, driven entirely from the web UI (not the CLI). `internal/egress/capture.go` (`Gateway` + `httputil.ReverseProxy`): BugHound stands as a reverse proxy to **one in-scope target**; the hunter points a browser at the local listener (`http://127.0.0.1:<port>/`) and browses the target as usual. Each request that passes through is **recorded** (deduplicated per `method+URL`, with a status & count) as an endpoint candidate, then can be **promoted into a scan** through the same scan path (`enqueueScan` → orchestrator → scope guard + rate limiter + egress). **Security**: the gateway reuses the guarded egress transport (`Proxy.transport`: resolve → reject internal IPs → pin the IP, plus the upstream chain if set), the target is validated by the scope guard at start (**fail closed**, default-deny), and each forward is **re-scope-checked** + **rate-limited** → only in-scope hosts are ever forwarded, even during manual browsing. The local listener speaks plain HTTP on loopback; re-origination to an HTTPS target is handled by the transport (SNI = target host, IP pinned) so **no CA cert** is installed in the browser. No auto-submit (promoting only creates a draft scan). Audit: `capture.start` / `capture.stop` / `capture.promote` / `capture.egress` (denials). The **Capture** web page (`GET /capture`, `POST /capture/{start,stop,promote}`). Tests `egress/capture_test` (forward+record, dedup, reject an out-of-scope target, rate-limited) + `web/capture_test` (start/listener, promote→scan done, stop, program scope required).
 
-## Branding & halaman login (UI)
+## Branding & the login page (UI)
 
-Logo **BugHound** (maskot beagle-detektif) dipasang di UI: sidebar brand + favicon (`internal/web/static/bughound-logo.png`, ikut `go:embed`), dan maskot di header README. **Halaman login ber-logo** menggantikan popup HTTP Basic untuk browser **saat `-auth`/`BUGHOUND_AUTH` diset**: `GET/POST /login` + `POST /logout`, template standalone `login.html`. Auth berbasis **sesi cookie** (`bh_session`, `HttpOnly`+`SameSite=Strict`, `Secure` bila TLS, TTL 12 jam, invalidasi server-side saat logout); perbandingan password **constant-time**; **CSRF tetap berlaku** pada `POST /login`. **HTTP Basic tetap didukung** sebagai jalur otomasi/CLI (kredensial eksplisit yang gagal → 401; browser tanpa sesi → redirect `/login`). Tanpa `-auth`, perilaku lama: akses terbuka (hanya aman di localhost), `/login` mengalihkan ke `/dashboard`. `enqueueScan`/jalur lain tak berubah. Audit `auth.login` (sukses/gagal) + `auth.logout`. Uji `web/login_test` (alur sesi, CSRF wajib, mode tanpa-auth) + `web/security_test` (Basic auth diperbarui: tanpa kredensial → redirect login).
+The **BugHound** logo (a detective-beagle mascot) is placed in the UI: the brand sidebar + favicon (`internal/web/static/bughound-logo.png`, part of `go:embed`), and the mascot in the README header. A **logo'd login page** replaces the HTTP Basic popup for the browser **when `-auth`/`BUGHOUND_AUTH` is set**: `GET/POST /login` + `POST /logout`, a standalone `login.html` template. Auth is **cookie-session** based (`bh_session`, `HttpOnly`+`SameSite=Strict`, `Secure` under TLS, a 12-hour TTL, server-side invalidation on logout); the password comparison is **constant-time**; **CSRF still applies** on `POST /login`. **HTTP Basic is still supported** as the automation/CLI path (explicit credentials that fail → 401; a browser without a session → redirect to `/login`). Without `-auth`, the old behavior: open access (safe on localhost only), `/login` redirects to `/dashboard`. `enqueueScan`/other paths are unchanged. Audit `auth.login` (success/failure) + `auth.logout`. Tests `web/login_test` (the session flow, CSRF required, the no-auth mode) + `web/security_test` (Basic auth updated: no credentials → login redirect).
 
-## Pembaruan UI/UX (design system — BH-P02-DESIGN)
+## UI/UX updates (design system: BH-P02-DESIGN)
 
-Poles tampilan agar konsisten dengan design spec: padat, flat, gelap, status-forward, aksen tunggal, fokus terlihat. `internal/web/static/app.css` diperbarui menyeluruh (semua kelas lama dipertahankan): token surface berlapis + radius/transisi/focus-ring; **`select` & checkbox kini ter-style** (sebelumnya default browser yang kontras di tema gelap); filter & bulk-bar dirapikan; tabel zebra + header uppercase; **nav aktif pakai bar aksen kiri**; scrollbar tipis; `:focus-visible` (aksesibilitas); tombol/kartu/badge/pill dipoles; halaman login lebih premium (backdrop radial + logo berpendar). `base.html`: topbar kini menampilkan status **"scope guard: default-deny"** yang selalu terlihat + program sebagai chip (prinsip "status & scope selalu tampak"). Hanya CSS + satu perubahan markup header; `go test ./...` hijau, seluruh halaman render 200.
+A visual polish to match the design spec: dense, flat, dark, status-forward, a single accent, visible focus. `internal/web/static/app.css` updated throughout (every old class kept): layered surface tokens + radius/transition/focus-ring; **`select` & checkboxes are now styled** (previously the browser default, which clashed on the dark theme); filters & the bulk bar tidied; zebra tables + uppercase headers; **active nav uses a left accent bar**; a thin scrollbar; `:focus-visible` (accessibility); buttons/cards/badges/pills polished; the login page more premium (a radial backdrop + a glowing logo). `base.html`: the topbar now shows an always-visible **"scope guard: default-deny"** status + the program as a chip (the "status & scope always visible" principle). CSS only + one header markup change; `go test ./...` green, every page renders 200.
 
-## RBAC & autentikasi wajib (login default)
+## RBAC & required authentication (login by default)
 
-Login kini **wajib secara default** saat `go run ./cmd/bughound` (tak perlu flag). Paket baru `internal/auth`: tiga **peran** — `admin` > `operator` > `viewer` — dengan helper hak (`CanRead`/`CanWrite`/`CanAdmin`) dan **hashing kata sandi PBKDF2-HMAC-SHA256** dari pustaka standar (`crypto/pbkdf2`, Go 1.24+; **tanpa dependensi baru**): salt acak 16-byte, 210k iterasi, format self-describing, verifikasi waktu-tetap. Akun disimpan di store (`store.UserStore` pada **Mem & SQLite**, tabel `users`); kata sandi mentah tak pernah disimpan/dicatat.
+Login is now **required by default** on `go run ./cmd/bughound` (no flag needed). A new `internal/auth` package: three **roles**, `admin` > `operator` > `viewer`, with rights helpers (`CanRead`/`CanWrite`/`CanAdmin`) and **PBKDF2-HMAC-SHA256 password hashing** from the standard library (`crypto/pbkdf2`, Go 1.24+; **no new dependency**): a random 16-byte salt, 210k iterations, a self-describing format, constant-time verification. Accounts are kept in the store (`store.UserStore` on **Mem & SQLite**, the `users` table); the raw password is never stored/logged.
 
-**Bootstrap**: bila belum ada akun, `admin` dibuat otomatis dengan **kata sandi acak yang dicetak ke konsol sekali** (override via `-admin-user`/`-admin-password` atau env `BUGHOUND_ADMIN_USER`/`BUGHOUND_ADMIN_PASSWORD`). **Login** (`username`+`password`) memakai sesi cookie (`bh_session`, `HttpOnly`+`SameSite=Strict`, `Secure` bila TLS, TTL 12 jam, invalidasi server-side saat logout); **HTTP Basic** (username+password akun) tetap untuk otomasi/CLI; verifikasi waktu-tetap + hash dummy untuk menyeragamkan waktu pada username tak dikenal (anti-enumerasi). **Otorisasi RBAC** di satu titik (`ServeHTTP` → `authorize`): area `/users` hanya admin, aksi state-changing (selain `/logout`) butuh operator ke atas, GET untuk semua peran valid — **default-deny** bila peran tak cukup. Halaman **Users** (admin): tambah/hapus/reset-password; anti kunci-diri (tak bisa hapus akun sendiri / admin terakhir). Identitas + peran tampil di topbar; tombol **Keluar** di sidebar; menu **Users** hanya untuk admin. Audit `auth.login`/`auth.logout`/`user.create`/`user.delete`/`user.password`.
+**Bootstrap**: if there is no account yet, `admin` is created automatically with a **random password printed to the console once** (override via `-admin-user`/`-admin-password` or the env `BUGHOUND_ADMIN_USER`/`BUGHOUND_ADMIN_PASSWORD`). **Login** (`username`+`password`) uses a cookie session (`bh_session`, `HttpOnly`+`SameSite=Strict`, `Secure` under TLS, a 12-hour TTL, server-side invalidation on logout); **HTTP Basic** (the account's username+password) stays for automation/CLI; constant-time verification + a dummy hash to level the timing on an unknown username (anti-enumeration). **RBAC authorization** at one point (`ServeHTTP` → `authorize`): the `/users` area is admin only, a state-changing action (other than `/logout`) needs operator or above, GET is for every valid role, **default-deny** when the role is not enough. The **Users** page (admin): add/delete/reset-password; a self-lockout guard (cannot delete your own account / the last admin). The identity + role show in the topbar; a **Sign out** button in the sidebar; the **Users** menu is admin only. Audit `auth.login`/`auth.logout`/`user.create`/`user.delete`/`user.password`.
 
-`-no-auth` menonaktifkan login & RBAC (akses terbuka) **hanya** untuk localhost tepercaya / test; dipakai oleh harness E2E (alur produk diuji langsung; login & RBAC diuji unit Go). Template full-page kini dibungkus `shellData` (chrome: pengguna/peran) sehingga tak ada struct halaman yang perlu tahu auth. Uji: `internal/auth` (hash/verify/peran), `store` (CRUD user Mem+SQLite), `web/login_test` (alur sesi, username tak dikenal, CSRF), `web/rbac_test` (viewer read-only, operator tanpa admin, admin kelola user, proteksi hapus-diri).
+`-no-auth` disables login & RBAC (open access) **only** for a trusted localhost / tests; used by the E2E harness (the product flow is tested directly; login & RBAC are unit-tested in Go). Full-page templates are now wrapped in `shellData` (chrome: user/role) so no page struct needs to know about auth. Tests: `internal/auth` (hash/verify/roles), `store` (user CRUD Mem+SQLite), `web/login_test` (the session flow, an unknown username, CSRF), `web/rbac_test` (viewer read-only, operator without admin, admin manages users, self-delete protection).
 
-## Docker (engine ikut di image)
+## Docker (engines included in the image)
 
-`Dockerfile` multi-stage + `docker-compose.yml` + `.dockerignore`: image gabungan **BugHound + engine** (nuclei/subfinder/httpx/katana/ffuf via `go install`, semgrep via pip; **ZAP opsional** `--build-arg WITH_ZAP=true`). Di dalam container engine ada di `PATH` → `-engine real` jalan tanpa pasang tool di host. Non-root, data di `/data`, default `-engine mock` (aman); port dipetakan ke localhost + `-auth` untuk akses non-lokal. Divalidasi `docker build --check` (bersih; base image resolve). Cocok untuk mesin tanpa engine terpasang tapi punya Docker. Workflow `docker.yml`: saat tag `v*`, build & push image ke **GitHub Container Registry** (`ghcr.io/<owner>/bughound`, varian lean) dengan cache GHA → `docker pull ghcr.io/…:latest`. Lihat README "Docker".
+A multi-stage `Dockerfile` + `docker-compose.yml` + `.dockerignore`: a combined **BugHound + engines** image (nuclei/subfinder/httpx/katana/ffuf via `go install`, semgrep via pip; **ZAP optional** `--build-arg WITH_ZAP=true`). Inside the container the engines are on `PATH` → `-engine real` runs without installing tools on the host. Non-root, data in `/data`, default `-engine mock` (safe); the port is mapped to localhost + `-auth` for non-local access. Validated with `docker build --check` (clean; base image resolves). A fit for a machine with no engines installed but with Docker. The `docker.yml` workflow: on a `v*` tag, build & push the image to the **GitHub Container Registry** (`ghcr.io/<owner>/bughound`, lean variant) with GHA cache → `docker pull ghcr.io/…:latest`. See the README "Run with Docker".
 
-## Catatan pola
+## A note on the pattern
 
-Menambah engine = menulis **satu adapter**: bangun argumen → subprocess (`ProxyAware` agar egress ditegakkan) → `Parse` output ke skema temuan. Contoh: `internal/engine/{nuclei,ffuf,zap}`, `internal/sast`. Triase/report/store/dashboard tak perlu disentuh.
+Adding an engine = writing **one adapter**: build the arguments → subprocess (`ProxyAware` so egress is enforced) → `Parse` the output into the finding schema. Examples: `internal/engine/{nuclei,ffuf,zap}`, `internal/sast`. Triage/report/store/dashboard do not need to be touched.

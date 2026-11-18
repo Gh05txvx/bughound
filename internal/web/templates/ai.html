@@ -1,43 +1,43 @@
 {{define "content"}}
 <div class="panel">
-  <div class="panel-head"><h3>MCP / AI — analisis what-if</h3></div>
+  <div class="panel-head"><h3>MCP / AI: what-if analysis</h3></div>
   <p class="muted">
-    Menu ini menghubungkan BugHound ke <b>API LLM</b> memakai API key milikmu. Saat sebuah
-    temuan dibuka, BugHound mengirim <b>konteks temuan yang sudah discrub</b> ke provider aktif
-    untuk menghasilkan <b>kartu what-if</b> (hipotesis + rencana validasi manual) di detail temuan.
-    Pilih salah satu provider sebagai aktif — mis. <b>Groq</b> (free-tier) bila kredit Anthropic habis.
+    This menu connects BugHound to an <b>LLM API</b> using your own API key. When a
+    finding is opened, BugHound sends the <b>scrubbed finding context</b> to the active provider
+    to produce a <b>what-if card</b> (hypotheses + a manual validation plan) in the finding detail.
+    Pick one provider as active, for example <b>Groq</b> (free tier) when your Anthropic credit runs out.
   </p>
   <ul class="list small muted">
-    <li>🔒 <b>API key = secret</b>: tersimpan terenkripsi di vault, teredaksi, tak pernah ke log/report/commit; setiap akses ter-audit.</li>
-    <li>🌐 <b>Egress terbatas</b>: hanya ke <span class="mono">api.anthropic.com</span> atau <span class="mono">api.groq.com</span> (kontrol-plane, di-hardcode), terpisah dari scope guard scan. Aktif hanya bila key provider aktif terpasang.</li>
-    <li>✂️ <b>Evidence discrub</b> sebelum dikirim (header/kredensial/PII diredaksi + dipotong).</li>
-    <li>🧭 <b>Advisory</b>: saran uji non-destruktif untuk dijalankan manual di Burp — tanpa auto-submit. Hasil di-cache per temuan (hemat biaya API-mu).</li>
+    <li>🔒 <b>API key = secret</b>: stored encrypted in the vault, redacted, never written to a log/report/commit; every access is audited.</li>
+    <li>🌐 <b>Limited egress</b>: only to <span class="mono">api.anthropic.com</span> or <span class="mono">api.groq.com</span> (control plane, hardcoded), separate from the scan scope guard. Active only when the active provider's key is set.</li>
+    <li>✂️ <b>Evidence is scrubbed</b> before it is sent (headers/credentials/PII redacted and trimmed).</li>
+    <li>🧭 <b>Advisory</b>: non-destructive test suggestions to run by hand in Burp, with no auto-submit. The result is cached per finding (saving your API cost).</li>
   </ul>
 </div>
 
-{{if .Saved}}<div class="panel ok-flash"><span class="chip ok">tersimpan</span> Setelan AI diperbarui.</div>{{end}}
+{{if .Saved}}<div class="panel ok-flash"><span class="chip ok">saved</span> AI settings updated.</div>{{end}}
 
 {{if not .Available}}
-<div class="panel"><p class="muted">Fitur AI tak tersedia: store atau vault tidak dikonfigurasi pada instance ini.</p></div>
+<div class="panel"><p class="muted">The AI feature is not available: the store or vault is not configured on this instance.</p></div>
 {{else}}
 <div class="panel">
-  <div class="panel-head"><h3>Konfigurasi</h3></div>
+  <div class="panel-head"><h3>Configuration</h3></div>
 
   <form method="post" action="/ai/settings" class="edit" autocomplete="off">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
 
-    <label class="fld">Provider aktif
+    <label class="fld">Active provider
       <select name="provider">
         {{range .Providers}}<option value="{{.ID}}" {{if .Selected}}selected{{end}}>{{.Label}}</option>{{end}}
       </select>
-      <span class="muted small">Provider yang dipakai semua kartu what-if. Kamu bisa menyimpan key kedua provider; yang dipilih di sini yang aktif.</span>
+      <span class="muted small">The provider every what-if card uses. You can save keys for both providers; the one chosen here is active.</span>
     </label>
 
     <fieldset class="fld-group">
-      <legend>Anthropic (Claude) {{if .AnthropicKeyPresent}}<span class="pill st-confirmed small">key terpasang</span>{{else}}<span class="pill st-new small">belum ada key</span>{{end}}</legend>
+      <legend>Anthropic (Claude) {{if .AnthropicKeyPresent}}<span class="pill st-confirmed small">key set</span>{{else}}<span class="pill st-new small">no key yet</span>{{end}}</legend>
       <label class="fld">API key Claude
-        <input type="password" name="anthropic_api_key" placeholder="{{if .AnthropicKeyPresent}}••••••••  (kosongkan untuk pertahankan){{else}}sk-ant-...{{end}}" autocomplete="new-password">
-        <span class="muted small">{{if .AnthropicKeyPresent}}Terpasang{{if .AnthropicKeyUpdated}} · diperbarui {{.AnthropicKeyUpdated}}{{end}}. Isi hanya bila ingin mengganti.{{else}}Dari console.anthropic.com. Disimpan terenkripsi.{{end}}</span>
+        <input type="password" name="anthropic_api_key" placeholder="{{if .AnthropicKeyPresent}}••••••••  (leave empty to keep){{else}}sk-ant-...{{end}}" autocomplete="new-password">
+        <span class="muted small">{{if .AnthropicKeyPresent}}Set{{if .AnthropicKeyUpdated}} · updated {{.AnthropicKeyUpdated}}{{end}}. Fill this in only to replace it.{{else}}From console.anthropic.com. Stored encrypted.{{end}}</span>
       </label>
       <label class="fld">Model Claude
         <select name="anthropic_model">
@@ -47,10 +47,10 @@
     </fieldset>
 
     <fieldset class="fld-group">
-      <legend>Groq {{if .GroqKeyPresent}}<span class="pill st-confirmed small">key terpasang</span>{{else}}<span class="pill st-new small">belum ada key</span>{{end}}</legend>
+      <legend>Groq {{if .GroqKeyPresent}}<span class="pill st-confirmed small">key set</span>{{else}}<span class="pill st-new small">no key yet</span>{{end}}</legend>
       <label class="fld">API key Groq
-        <input type="password" name="groq_api_key" placeholder="{{if .GroqKeyPresent}}••••••••  (kosongkan untuk pertahankan){{else}}gsk_...{{end}}" autocomplete="new-password">
-        <span class="muted small">{{if .GroqKeyPresent}}Terpasang{{if .GroqKeyUpdated}} · diperbarui {{.GroqKeyUpdated}}{{end}}. Isi hanya bila ingin mengganti.{{else}}Gratis dari console.groq.com/keys. Disimpan terenkripsi.{{end}}</span>
+        <input type="password" name="groq_api_key" placeholder="{{if .GroqKeyPresent}}••••••••  (leave empty to keep){{else}}gsk_...{{end}}" autocomplete="new-password">
+        <span class="muted small">{{if .GroqKeyPresent}}Set{{if .GroqKeyUpdated}} · updated {{.GroqKeyUpdated}}{{end}}. Fill this in only to replace it.{{else}}Free from console.groq.com/keys. Stored encrypted.{{end}}</span>
       </label>
       <label class="fld">Model Groq
         <input type="text" name="groq_model" value="{{.GroqModel}}" list="groq-model-suggest" placeholder="openai/gpt-oss-20b" autocomplete="off" spellcheck="false">
@@ -59,28 +59,28 @@
           <option value="openai/gpt-oss-120b">
           <option value="llama-3.3-70b-versatile">
         </datalist>
-        <span class="muted small">ID model (teks bebas; daftar Groq cepat berubah). Cek ID terbaru di <span class="mono">console.groq.com/docs/models</span>. ID yang sudah pensiun akan ditolak Groq dengan pesan jelas di kartu.</span>
+        <span class="muted small">Model ID (free text; Groq's list changes fast). Check the latest ID at <span class="mono">console.groq.com/docs/models</span>. A retired ID is rejected by Groq with a clear message on the card.</span>
       </label>
     </fieldset>
 
-    <button class="btn primary" type="submit">Simpan</button>
+    <button class="btn primary" type="submit">Save</button>
   </form>
 
   {{if or .AnthropicKeyPresent .GroqKeyPresent}}
   <div class="mt">
     {{if .AnthropicKeyPresent}}
-    <form method="post" action="/ai/key/delete" class="inline" onsubmit="return confirm('Hapus API key Anthropic?');">
+    <form method="post" action="/ai/key/delete" class="inline" onsubmit="return confirm('Delete the Anthropic API key?');">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="provider" value="anthropic">
-      <button class="btn danger small" type="submit">Hapus key Anthropic</button>
+      <button class="btn danger small" type="submit">Delete Anthropic key</button>
     </form>
     {{end}}
     {{if .GroqKeyPresent}}
-    <form method="post" action="/ai/key/delete" class="inline" onsubmit="return confirm('Hapus API key Groq?');">
+    <form method="post" action="/ai/key/delete" class="inline" onsubmit="return confirm('Delete the Groq API key?');">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="provider" value="groq">
-      <button class="btn danger small" type="submit">Hapus key Groq</button>
+      <button class="btn danger small" type="submit">Delete Groq key</button>
     </form>
     {{end}}
-    <span class="muted small">Menghapus key provider yang sedang aktif akan menonaktifkan analisis AI sampai diisi lagi.</span>
+    <span class="muted small">Deleting the key of the provider that is currently active turns off AI analysis until it is set again.</span>
   </div>
   {{end}}
 </div>

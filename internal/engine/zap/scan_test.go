@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
-// TestMain: dengan BH_FAKE_ZAP=1 binary tes ini menyamar sebagai zap.sh (fakeZAP),
-// agar Scan teruji end-to-end tanpa ZAP/JVM.
+// TestMain: with BH_FAKE_ZAP=1 this test binary masquerades as zap.sh (fakeZAP),
+// so Scan is tested end-to-end without ZAP/JVM.
 func TestMain(m *testing.M) {
 	if os.Getenv("BH_FAKE_ZAP") == "1" {
 		fakeZAP()
@@ -22,10 +22,10 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// fakeZAP meniru `zap.sh -cmd -autorun plan`: bila BH_FAKE_ZAP_HOLD=1 menduduki
-// port proxy lokal (-port; default 8080 seperti ZAP) selama "scan"; menulis
-// laporan traditional-json ke dir plan (kecuali BH_FAKE_ZAP_NOREPORT); keluar
-// dengan BH_FAKE_ZAP_EXIT (Automation Framework: 0 ok, 1 galat, 2 peringatan).
+// fakeZAP mimics `zap.sh -cmd -autorun plan`: with BH_FAKE_ZAP_HOLD=1 it occupies
+// the local proxy port (-port; default 8080 like ZAP) during the "scan"; it writes
+// the traditional-json report to the plan dir (unless BH_FAKE_ZAP_NOREPORT); it exits
+// with BH_FAKE_ZAP_EXIT (Automation Framework: 0 ok, 1 error, 2 warning).
 func fakeZAP() {
 	port, plan := "8080", ""
 	for i := 0; i+1 < len(os.Args); i++ {
@@ -62,8 +62,8 @@ func fakeZAPRunner(t *testing.T) *Runner {
 	return &Runner{Binary: exe}
 }
 
-// Dua scan ZAP bersamaan dalam satu kontainer dulu SELALU menggagalkan salah
-// satunya (BindException port proxy lokal, live 2026-11-16) → port per run.
+// Two concurrent ZAP scans in one container used to ALWAYS fail one
+// of them (local proxy port BindException, live 2026-11-16) → port per run.
 func TestScanConcurrentZAPRuns(t *testing.T) {
 	r := fakeZAPRunner(t)
 	t.Setenv("BH_FAKE_ZAP_HOLD", "1")
@@ -79,14 +79,14 @@ func TestScanConcurrentZAPRuns(t *testing.T) {
 	wg.Wait()
 	for i, err := range errs {
 		if err != nil {
-			t.Errorf("scan ZAP bersamaan #%d gagal: %v", i, err)
+			t.Errorf("concurrent ZAP scan #%d failed: %v", i, err)
 		}
 	}
 }
 
-// Exit 2 Automation Framework = plan selesai DENGAN peringatan (mis. target
-// membalas 401 di semua halaman); laporannya tetap dipakai. Exit 1, atau exit 2
-// tanpa laporan, tetap galat.
+// Automation Framework exit 2 = the plan finished WITH warnings (e.g. the target
+// replies 401 on every page); its report is still used. Exit 1, or exit 2
+// without a report, is still an error.
 func TestScanZAPExitCodes(t *testing.T) {
 	r := fakeZAPRunner(t)
 	for _, tc := range []struct {
@@ -102,10 +102,10 @@ func TestScanZAPExitCodes(t *testing.T) {
 		t.Setenv("BH_FAKE_ZAP_NOREPORT", tc.noReport)
 		fs, err := r.Scan(context.Background(), "http://t.test", "p", "r")
 		if (err != nil) != tc.wantErr {
-			t.Errorf("exit %s (tanpa laporan=%q): galat=%v, mau galat=%v", tc.exit, tc.noReport, err, tc.wantErr)
+			t.Errorf("exit %s (no report=%q): err=%v, want err=%v", tc.exit, tc.noReport, err, tc.wantErr)
 		}
 		if !tc.wantErr && len(fs) != 2 {
-			t.Errorf("exit %s: mau 2 temuan dari laporan, dapat %d", tc.exit, len(fs))
+			t.Errorf("exit %s: want 2 findings from the report, got %d", tc.exit, len(fs))
 		}
 	}
 }

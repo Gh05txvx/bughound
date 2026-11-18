@@ -13,25 +13,25 @@ import (
 	"bughound/internal/finding"
 )
 
-// FindSecBugsRunner adalah adapter SAST untuk FindSecBugs (plugin SpotBugs,
-// fokus keamanan JVM/Java). BERBEDA dari adapter SAST lain: FindSecBugs
-// menganalisis BYTECODE (.jar/.class), bukan source — jadi target harus sudah
-// di-compile. Bila tak ada artefak JVM di dir, adapter mengembalikan 0 temuan
-// (bukan error). Menjalankan SpotBugs dengan keluaran SARIF lalu menormalkannya
-// lewat NormalizeSARIF bersama.
+// FindSecBugsRunner is the SAST adapter for FindSecBugs (a SpotBugs plugin
+// focused on JVM/Java security). It DIFFERS from the other SAST adapters:
+// FindSecBugs analyzes BYTECODE (.jar/.class), not source, so the target must
+// already be compiled. When there are no JVM artifacts in dir, the adapter
+// returns 0 findings (not an error). It runs SpotBugs with SARIF output and
+// normalizes it through the shared NormalizeSARIF.
 //
-// OPT-IN: butuh SpotBugs + JRE + jar plugin findsecbugs (semuanya hanya ada di
-// image SAST yang di-build dengan WITH_FINDSECBUGS=true). Tak menyentuh jaringan;
-// dikurung ke dir in-scope.
+// OPT-IN: needs SpotBugs + a JRE + the findsecbugs plugin jar (all of them are
+// only in the SAST image built with WITH_FINDSECBUGS=true). It does not touch
+// the network and is confined to the in-scope dir.
 type FindSecBugsRunner struct {
 	Bin    string // default "spotbugs"
-	Plugin string // path jar plugin findsecbugs; default dari env/konstanta
+	Plugin string // path of the findsecbugs plugin jar; defaults to the env/constant
 }
 
-// Name memenuhi Engine.
+// Name implements Engine.
 func (r *FindSecBugsRunner) Name() string { return "findsecbugs" }
 
-// plugin memilih path jar plugin: field → env → default lokasi image.
+// plugin picks the plugin jar path: field → env → the image's default location.
 func (r *FindSecBugsRunner) plugin() string {
 	if p := strings.TrimSpace(r.Plugin); p != "" {
 		return p
@@ -42,21 +42,21 @@ func (r *FindSecBugsRunner) plugin() string {
 	return "/opt/findsecbugs/findsecbugs-plugin.jar"
 }
 
-// args menyusun argumen SpotBugs. -textui non-interaktif; -sarif + -output
-// menulis SARIF ke berkas; -pluginList memuat findsecbugs; -effort:max & -low
-// memaksimalkan cakupan; targets = jar/dir kelas yang ditemukan.
+// args builds the SpotBugs arguments. -textui is non-interactive; -sarif +
+// -output write SARIF to a file; -pluginList loads findsecbugs; -effort:max and
+// -low maximize coverage; targets = the jars/class dirs that were found.
 func (r *FindSecBugsRunner) args(report string, targets []string) []string {
 	a := []string{"-textui", "-sarif", "-output", report,
 		"-pluginList", r.plugin(), "-effort:max", "-low", "-nested:false"}
 	return append(a, targets...)
 }
 
-// Analyze menemukan artefak JVM di dir, menjalankan SpotBugs+FindSecBugs, dan
-// menormalkan hasil SARIF-nya.
+// Analyze finds JVM artifacts in dir, runs SpotBugs+FindSecBugs and normalizes
+// the SARIF result.
 func (r *FindSecBugsRunner) Analyze(ctx context.Context, dir, _, _ string) ([]*finding.Finding, error) {
 	targets := discoverJVMTargets(dir, 200)
 	if len(targets) == 0 {
-		// Tak ada bytecode untuk dianalisis — bukan error (SAST source murni).
+		// No bytecode to analyze: not an error (pure source SAST).
 		return nil, nil
 	}
 	bin := r.Bin
@@ -86,7 +86,7 @@ func (r *FindSecBugsRunner) Analyze(ctx context.Context, dir, _, _ string) ([]*f
 	return parseFindSecBugs(data)
 }
 
-// parseFindSecBugs menormalkan SARIF SpotBugs + menandai tag "java".
+// parseFindSecBugs normalizes SpotBugs SARIF and adds the "java" tag.
 func parseFindSecBugs(data []byte) ([]*finding.Finding, error) {
 	fs, err := NormalizeSARIF(data, "findsecbugs", nil)
 	if err != nil {
@@ -98,9 +98,10 @@ func parseFindSecBugs(data []byte) ([]*finding.Finding, error) {
 	return fs, nil
 }
 
-// discoverJVMTargets menemukan artefak bytecode di bawah dir: berkas *.jar dan
-// direktori yang memuat *.class (induk langsung dari tiap .class, didedup).
-// Membatasi jumlah target agar perintah tak meledak. Symlink tak diikuti.
+// discoverJVMTargets finds bytecode artifacts under dir: *.jar files and
+// directories that contain *.class (the direct parent of each .class, deduped).
+// It caps the number of targets so the command does not blow up. Symlinks are
+// not followed.
 func discoverJVMTargets(dir string, max int) []string {
 	seen := map[string]bool{}
 	var out []string

@@ -11,7 +11,7 @@ func TestMockPipelineDiscovers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(assets) == 0 {
-		t.Fatal("harus menemukan aset")
+		t.Fatal("must find assets")
 	}
 	var hasAppHost, hasAppURL, hasEvil, hasAdmin bool
 	for _, a := range assets {
@@ -27,13 +27,13 @@ func TestMockPipelineDiscovers(t *testing.T) {
 		}
 	}
 	if !hasAppHost || !hasAppURL {
-		t.Error("subfinder/katana harus menemukan app.demo.test")
+		t.Error("subfinder/katana must find app.demo.test")
 	}
 	if !hasAdmin {
-		t.Error("harus menemukan admin.demo.test (untuk uji out-of-scope)")
+		t.Error("must find admin.demo.test (for the out-of-scope test)")
 	}
 	if !hasEvil {
-		t.Error("pipeline harus menyertakan aset di luar scope untuk uji filter")
+		t.Error("the pipeline must include an out-of-scope asset for the filter test")
 	}
 }
 
@@ -45,7 +45,7 @@ func TestMockPipelineHasAllSources(t *testing.T) {
 	}
 	for _, s := range []string{"subfinder", "gau", "dnsx", "httpx", "naabu", "katana"} {
 		if !seen[s] {
-			t.Errorf("mock harus menyertakan sumber %q", s)
+			t.Errorf("the mock must include source %q", s)
 		}
 	}
 }
@@ -56,6 +56,6 @@ func TestMockPipelineEmptySeeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(assets) != 0 {
-		t.Errorf("tanpa seed tidak boleh ada aset, dapat %d", len(assets))
+		t.Errorf("without seeds there must be no assets, got %d", len(assets))
 	}
 }

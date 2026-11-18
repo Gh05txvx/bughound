@@ -55,7 +55,7 @@ func TestProxyAllowsInScopeHTTP(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		t.Fatalf("status=%d, ingin 200", resp.StatusCode)
+		t.Fatalf("status=%d, want 200", resp.StatusCode)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	if string(body) != "ok" {
@@ -90,7 +90,7 @@ func TestProxyDeniesOutOfScopeHTTP(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("status=%d, ingin 403", resp.StatusCode)
+		t.Fatalf("status=%d, want 403", resp.StatusCode)
 	}
 	if atomic.LoadInt32(&hits) != 0 {
 		t.Error("backend di luar scope TIDAK boleh tersentuh")
@@ -182,6 +182,6 @@ func TestProxyConnectTunnelInScope(t *testing.T) {
 		t.Fatalf("baca echo: %v", err)
 	}
 	if string(buf) != "ping" {
-		t.Errorf("echo=%q, ingin ping", buf)
+		t.Errorf("echo=%q, want ping", buf)
 	}
 }

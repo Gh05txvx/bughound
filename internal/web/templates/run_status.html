@@ -4,47 +4,47 @@
   {{if .Active}}
     <div class="result-summary">
       <span class="chip">run {{.ID}}</span>
-      {{if .Stopping}}<span class="chip warn">⏳ menghentikan…</span>
+      {{if .Stopping}}<span class="chip warn">⏳ stopping…</span>
       {{else}}<span class="chip warn">⏳ {{.Status}}…</span>
-      {{if .CanControl}}<button type="button" class="btn ghost small danger" title="Hentikan scan ini"
+      {{if .CanControl}}<button type="button" class="btn ghost small danger" title="Stop this scan"
         hx-post="/runs/{{.ID}}/stop" hx-target="#run-{{.ID}}" hx-swap="outerHTML" hx-disabled-elt="this"
-        hx-confirm="Hentikan scan ini? Engine dihentikan; temuan yang sudah tersimpan tetap ada.">Stop</button>{{end}}{{end}}
+        hx-confirm="Stop this scan? The engines are stopped; findings already saved stay.">Stop</button>{{end}}{{end}}
     </div>
-    <p class="muted small">Scan berjalan di latar belakang (rate limiter aktif di jalur eksekusi). Status diperbarui otomatis.</p>
+    <p class="muted small">The scan runs in the background (the rate limiter is active in the execution path). The status updates automatically.</p>
   {{else if eq .Status "failed"}}
     <div class="result-summary">
       <span class="chip">run {{.ID}}</span>
-      <span class="chip warn">gagal</span>
+      <span class="chip warn">failed</span>
     </div>
     <div class="errors"><p>{{.Err}}</p></div>
   {{else if eq .Status "cancelled"}}
     <div class="result-summary">
       <span class="chip">run {{.ID}}</span>
-      <span class="chip">dihentikan</span>
-      <span class="chip good">{{.Saved}} temuan tersimpan</span>
+      <span class="chip">stopped</span>
+      <span class="chip good">{{.Saved}} findings saved</span>
     </div>
-    <p class="muted small">Scan dihentikan sebelum selesai; temuan yang sudah tersimpan tetap ada.</p>
-    {{if .Saved}}<div class="actions"><a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a></div>{{end}}
+    <p class="muted small">The scan was stopped before it finished; findings already saved stay.</p>
+    {{if .Saved}}<div class="actions"><a class="btn" href="/findings?program={{.Program}}">View findings →</a></div>{{end}}
   {{else}}
     <div class="result-summary">
       <span class="chip ok">run {{.ID}}</span>
-      {{if .Discovered}}<span class="chip">{{.Discovered}} aset recon</span>{{end}}
-      <span class="chip">{{.Scanned}} discan</span>
-      <span class="chip good">{{.Saved}} temuan baru</span>
-      <span class="chip">{{.Duplicates}} duplikat</span>
-      <span class="chip warn">{{len .Denied}} ditolak</span>
-      {{if .Warnings}}<span class="chip warn">{{len .Warnings}} peringatan</span>{{end}}
+      {{if .Discovered}}<span class="chip">{{.Discovered}} recon assets</span>{{end}}
+      <span class="chip">{{.Scanned}} scanned</span>
+      <span class="chip good">{{.Saved}} new findings</span>
+      <span class="chip">{{.Duplicates}} duplicates</span>
+      <span class="chip warn">{{len .Denied}} denied</span>
+      {{if .Warnings}}<span class="chip warn">{{len .Warnings}} warnings</span>{{end}}
     </div>
     {{if .Denied}}
-    <h3>Ditolak scope guard</h3>
+    <h3>Denied by the scope guard</h3>
     <ul class="list">{{range .Denied}}<li class="mono">{{.}}</li>{{end}}</ul>
     {{end}}
     {{if .Warnings}}
-    <h3>Peringatan engine (run tetap selesai)</h3>
+    <h3>Engine warnings (the run still finished)</h3>
     <ul class="list">{{range .Warnings}}<li class="mono">{{.}}</li>{{end}}</ul>
     {{end}}
     <div class="actions">
-      <a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a>
+      <a class="btn" href="/findings?program={{.Program}}">View findings →</a>
       <a class="btn" href="/report?program={{.Program}}">Draft report →</a>
     </div>
   {{end}}

@@ -51,7 +51,7 @@ func TestAppendAndVerifyOK(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !res.OK || res.Count != 3 {
-				t.Fatalf("verify harus OK dengan 3 entri; dapat %+v", res)
+				t.Fatalf("verify must be OK with 3 entries; got %+v", res)
 			}
 		})
 	}
@@ -68,16 +68,16 @@ func TestListNewestFirstAndFilter(t *testing.T) {
 
 			all, _ := l.List(ctx, Filter{})
 			if len(all) != 3 || all[0].Target != "third" {
-				t.Fatalf("List harus terbaru dulu; dapat %d, [0]=%q", len(all), all[0].Target)
+				t.Fatalf("List must be newest first; got %d, [0]=%q", len(all), all[0].Target)
 			}
 			if a, _ := l.List(ctx, Filter{Program: "a"}); len(a) != 2 {
-				t.Errorf("filter program=a harus 2; dapat %d", len(a))
+				t.Errorf("filter program=a must return 2; got %d", len(a))
 			}
 			if k, _ := l.List(ctx, Filter{Kind: "run.start"}); len(k) != 1 {
-				t.Errorf("filter kind harus 1; dapat %d", len(k))
+				t.Errorf("the kind filter must return 1; got %d", len(k))
 			}
 			if lim, _ := l.List(ctx, Filter{Limit: 1}); len(lim) != 1 || lim[0].Target != "third" {
-				t.Errorf("limit 1 harus entri terbaru")
+				t.Errorf("limit 1 must return the newest entry")
 			}
 		})
 	}
@@ -86,20 +86,20 @@ func TestListNewestFirstAndFilter(t *testing.T) {
 func TestMemTamperDetected(t *testing.T) {
 	l := NewMemLog(testKey)
 	appendN(t, l, 3)
-	l.events[1].Message = "DIUBAH" // ubah entri langsung
+	l.events[1].Message = "CHANGED" // change the entry directly
 	res, _ := l.Verify(context.Background())
 	if res.OK || res.BrokenAt != 2 {
-		t.Fatalf("perubahan entri harus terdeteksi di seq 2; dapat %+v", res)
+		t.Fatalf("the changed entry must be detected at seq 2; got %+v", res)
 	}
 }
 
 func TestMemDeletionDetected(t *testing.T) {
 	l := NewMemLog(testKey)
 	appendN(t, l, 3)
-	l.events = []Event{l.events[0], l.events[2]} // hapus entri tengah
+	l.events = []Event{l.events[0], l.events[2]} // delete the middle entry
 	res, _ := l.Verify(context.Background())
 	if res.OK {
-		t.Fatal("penghapusan entri harus terdeteksi")
+		t.Fatal("the deleted entry must be detected")
 	}
 }
 
@@ -110,12 +110,12 @@ func TestSQLiteTamperDetected(t *testing.T) {
 	}
 	defer l.Close()
 	appendN(t, l, 3)
-	if _, err := l.db.Exec(`UPDATE audit_log SET message=? WHERE seq=2`, "DIUBAH"); err != nil {
+	if _, err := l.db.Exec(`UPDATE audit_log SET message=? WHERE seq=2`, "CHANGED"); err != nil {
 		t.Fatal(err)
 	}
 	res, _ := l.Verify(context.Background())
 	if res.OK || res.BrokenAt != 2 {
-		t.Fatalf("perubahan baris harus terdeteksi di seq 2; dapat %+v", res)
+		t.Fatalf("the changed row must be detected at seq 2; got %+v", res)
 	}
 }
 
@@ -131,17 +131,17 @@ func TestSQLiteDeletionDetected(t *testing.T) {
 	}
 	res, _ := l.Verify(context.Background())
 	if res.OK {
-		t.Fatal("penghapusan baris harus terdeteksi (gap seq / rantai putus)")
+		t.Fatal("the deleted row must be detected (seq gap / broken chain)")
 	}
 }
 
 func TestWrongKeyFailsVerify(t *testing.T) {
 	l := NewMemLog(testKey)
 	appendN(t, l, 2)
-	// Verifikasi dengan kunci berbeda harus gagal (rantai tak bisa dihitung ulang tanpa kunci).
-	l.key = []byte("kunci-salah")
+	// Verifying with a different key must fail (the chain cannot be recomputed without the key).
+	l.key = []byte("wrong-key")
 	res, _ := l.Verify(context.Background())
 	if res.OK {
-		t.Fatal("verify dengan kunci salah harus gagal")
+		t.Fatal("verify with the wrong key must fail")
 	}
 }

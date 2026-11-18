@@ -1,8 +1,8 @@
 {{define "content"}}
 <div class="report-head">
   <div>
-    <h2>gRPC <span class="muted small">(enumerasi via reflection)</span></h2>
-    <p class="muted small">Enumerasi layanan/metode gRPC lewat Server Reflection. Tiap target host:port wajib lolos scope guard program. Engine: <b>{{.EngineName}}</b>.</p>
+    <h2>gRPC <span class="muted small">(enumeration through reflection)</span></h2>
+    <p class="muted small">Enumerate gRPC services/methods through Server Reflection. Each host:port target must pass the program scope guard. Engine: <b>{{.EngineName}}</b>.</p>
   </div>
 </div>
 
@@ -11,37 +11,37 @@
 <div class="grid-2">
   <form class="card" method="post" action="/grpc/run">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label>Program <span class="muted small">(scope-nya dipakai untuk mengecek target)</span></label>
+    <label>Program <span class="muted small">(its scope is used to check the targets)</span></label>
     <input type="text" name="program" value="{{.Program}}" autocomplete="off" required list="grpc-progs">
     <datalist id="grpc-progs">{{range .Programs}}<option value="{{.}}">{{end}}</datalist>
 
-    <label>Target gRPC <span class="muted small">(host:port, satu per baris)</span></label>
+    <label>gRPC targets <span class="muted small">(host:port, one per line)</span></label>
     <textarea name="targets" rows="4" spellcheck="false" placeholder="api.demo.test:9090">{{.Targets}}</textarea>
 
-    <label class="check"><input type="checkbox" name="fuzz" {{if .Fuzz}}checked{{end}}> Fuzz invokasi (AKTIF)</label>
-    <p class="muted small">Peringatan: fuzz <b>memanggil</b> metode (hanya yang terlihat read-only: Get/List/Query/…) dengan payload kosong untuk mendeteksi akses tanpa autentikasi. Metode berpotensi mutasi (Create/Delete/Update/…) <b>dilewati</b> demi keamanan.</p>
+    <label class="check"><input type="checkbox" name="fuzz" {{if .Fuzz}}checked{{end}}> Fuzz invocation (ON)</label>
+    <p class="muted small">Warning: fuzz <b>calls</b> methods (only those that look read-only: Get/List/Query/…) with an empty payload to detect access without authentication. Methods that may mutate (Create/Delete/Update/…) are <b>skipped</b> for safety.</p>
 
     <div class="actions">
-      <button type="submit" class="btn primary">{{if .Fuzz}}Enumerasi + Fuzz{{else}}Enumerasi gRPC{{end}}</button>
-      <span class="muted small">reflection · tanpa auto-submit</span>
+      <button type="submit" class="btn primary">{{if .Fuzz}}Enumerate + Fuzz{{else}}Enumerate gRPC{{end}}</button>
+      <span class="muted small">reflection · no auto-submit</span>
     </div>
   </form>
 
   <div class="card">
-    <h2>Hasil</h2>
+    <h2>Result</h2>
     {{if .Result}}
     <div class="result-summary">
-      <span class="chip ok">{{.Result.Scanned}} target discan</span>
-      <span class="chip good">{{.Result.Saved}} temuan baru</span>
-      <span class="chip warn">{{len .Result.Denied}} ditolak</span>
+      <span class="chip ok">{{.Result.Scanned}} targets scanned</span>
+      <span class="chip good">{{.Result.Saved}} new findings</span>
+      <span class="chip warn">{{len .Result.Denied}} denied</span>
     </div>
     {{if .Result.Denied}}
-    <h3>Ditolak scope guard</h3>
+    <h3>Denied by the scope guard</h3>
     <ul class="list">{{range .Result.Denied}}<li class="mono">{{.}}</li>{{end}}</ul>
     {{end}}
-    {{if .Program}}<div class="actions"><a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a></div>{{end}}
+    {{if .Program}}<div class="actions"><a class="btn" href="/findings?program={{.Program}}">View findings →</a></div>{{end}}
     {{else}}
-    <p class="muted">Masukkan program + target host:port, lalu enumerasi. Butuh server dengan gRPC reflection aktif (mode nyata); mode mock menghasilkan contoh.</p>
+    <p class="muted">Enter a program + host:port targets, then enumerate. It needs a server with gRPC reflection enabled (real mode); mock mode produces examples.</p>
     {{end}}
   </div>
 </div>

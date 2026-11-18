@@ -21,14 +21,14 @@ import java.awt.FlowLayout;
 import java.net.URI;
 import java.util.List;
 
-// BughoundPanel: isi tab 'bughound' di Burp.
+// BughoundPanel: the contents of the 'bughound' tab in Burp.
 //
-// Baris atas  : form koneksi (URL bughound, user, pass, program) + "Muat temuan".
-// Tengah      : tabel temuan.
-// Baris bawah : "Kirim ke Repeater" + status.
+// Top row   : connection form (bughound URL, user, pass, program) + "Load findings".
+// Middle    : the findings table.
+// Bottom row: "Send to Repeater" + status.
 //
-// Kredensial hanya disimpan di memori UI ini (tidak dipersist) — demi keamanan,
-// password tidak ditulis ke disk; isi ulang tiap sesi Burp.
+// Credentials live only in this UI's memory (not persisted): for safety the
+// password is never written to disk; re-enter it each Burp session.
 class BughoundPanel extends JPanel {
     private final MontoyaApi api;
     private final ApiClient client = new ApiClient();
@@ -48,7 +48,7 @@ class BughoundPanel extends JPanel {
         setLayout(new BorderLayout(8, 8));
         setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
-        // --- form koneksi ---
+        // --- connection form ---
         JPanel form = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
         form.add(new JLabel("BugHound URL:"));
         form.add(baseUrlField);
@@ -58,11 +58,11 @@ class BughoundPanel extends JPanel {
         form.add(passField);
         form.add(new JLabel("program:"));
         form.add(programField);
-        JButton loadBtn = new JButton("Muat temuan");
+        JButton loadBtn = new JButton("Load findings");
         form.add(loadBtn);
         add(form, BorderLayout.NORTH);
 
-        // --- tabel temuan ---
+        // --- findings table ---
         tableModel = new DefaultTableModel(new Object[]{"Severity", "Type", "Title", "Method", "URL"}, 0) {
             @Override
             public boolean isCellEditable(int r, int c) {
@@ -74,9 +74,9 @@ class BughoundPanel extends JPanel {
         table.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
         add(new JScrollPane(table), BorderLayout.CENTER);
 
-        // --- aksi ---
+        // --- actions ---
         JPanel south = new JPanel(new BorderLayout(8, 0));
-        JButton sendBtn = new JButton("Kirim ke Repeater");
+        JButton sendBtn = new JButton("Send to Repeater");
         south.add(sendBtn, BorderLayout.WEST);
         south.add(status, BorderLayout.CENTER);
         add(south, BorderLayout.SOUTH);
@@ -85,17 +85,17 @@ class BughoundPanel extends JPanel {
         sendBtn.addActionListener(e -> sendSelectedToRepeater());
     }
 
-    // loadFindings: tarik temuan dari bughound di thread latar (jangan blok UI).
+    // loadFindings: pull findings from bughound on a background thread (don't block the UI).
     private void loadFindings() {
         final String base = baseUrlField.getText().trim();
         final String user = userField.getText().trim();
         final String pass = new String(passField.getPassword());
         final String program = programField.getText().trim();
         if (program.isEmpty()) {
-            setStatus("Isi nama program dulu.", true);
+            setStatus("Enter a program name first.", true);
             return;
         }
-        setStatus("Memuat…", false);
+        setStatus("Loading…", false);
         new SwingWorker<List<Finding>, Void>() {
             @Override
             protected List<Finding> doInBackground() throws Exception {
@@ -116,32 +116,32 @@ class BughoundPanel extends JPanel {
                                 f.location != null ? f.location.url : ""
                         });
                     }
-                    setStatus(findings.size() + " temuan dimuat dari '" + program + "'.", false);
+                    setStatus(findings.size() + " findings loaded from '" + program + "'.", false);
                 } catch (Exception ex) {
-                    setStatus("Gagal muat: " + rootMsg(ex), true);
-                    api.logging().logToError("bughound: muat temuan gagal: " + ex);
+                    setStatus("Load failed: " + rootMsg(ex), true);
+                    api.logging().logToError("bughound: loading findings failed: " + ex);
                 }
             }
         }.execute();
     }
 
-    // sendSelectedToRepeater: rekonstruksi request temuan terpilih → Repeater.
+    // sendSelectedToRepeater: rebuild the selected finding's request -> Repeater.
     private void sendSelectedToRepeater() {
         int row = table.getSelectedRow();
         if (row < 0 || row >= findings.size()) {
-            setStatus("Pilih satu baris temuan dulu.", true);
+            setStatus("Select a finding row first.", true);
             return;
         }
         Finding f = findings.get(row);
         if (f.location == null || f.location.url == null || f.location.url.isBlank()) {
-            setStatus("Temuan tak punya URL lokasi — tak bisa dikirim.", true);
+            setStatus("The finding has no location URL, cannot send.", true);
             return;
         }
         try {
             URI uri = URI.create(f.location.url);
             String host = uri.getHost();
             if (host == null) {
-                setStatus("URL lokasi tak valid: " + f.location.url, true);
+                setStatus("Invalid location URL: " + f.location.url, true);
                 return;
             }
             boolean secure = "https".equalsIgnoreCase(uri.getScheme());
@@ -150,19 +150,19 @@ class BughoundPanel extends JPanel {
 
             HttpRequest req;
             if (f.evidence != null && f.evidence.request != null && !f.evidence.request.isBlank()) {
-                // Request mentah dari engine (nuclei -include-rr, dll).
+                // Raw request from the engine (nuclei -include-rr, etc.).
                 req = HttpRequest.httpRequest(service, f.evidence.request);
             } else {
-                // Tak ada request mentah — fallback GET ke URL lokasi.
+                // No raw request, fall back to a GET to the location URL.
                 req = HttpRequest.httpRequestFromUrl(f.location.url);
             }
 
             String tab = "bh:" + shortTitle(f);
             api.repeater().sendToRepeater(req, tab);
-            setStatus("Terkirim ke Repeater (tab '" + tab + "'). Validasi manual di sana.", false);
+            setStatus("Sent to Repeater (tab '" + tab + "'). Validate manually there.", false);
         } catch (Exception ex) {
-            setStatus("Gagal kirim: " + rootMsg(ex), true);
-            api.logging().logToError("bughound: kirim ke Repeater gagal: " + ex);
+            setStatus("Send failed: " + rootMsg(ex), true);
+            api.logging().logToError("bughound: send to Repeater failed: " + ex);
         }
     }
 

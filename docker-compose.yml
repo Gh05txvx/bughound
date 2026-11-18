@@ -1,25 +1,25 @@
-# bughound + engine dalam satu image. Port dipetakan ke localhost saja.
+# bughound + engines in one image. Ports are mapped to localhost only.
 #
-#   docker compose up --build          # default: engine mock (aman)
-#   BUGHOUND_AUTH=rahasia docker compose up --build
+#   docker compose up --build          # default: mock engines (safe)
+#   BUGHOUND_AUTH=changeme docker compose up --build
 #
-# Untuk scan nyata, hilangkan komentar `command:` di bawah (engine sudah ada di
-# dalam image) dan set BUGHOUND_AUTH.
+# For a real scan, uncomment the `command:` below (the engines are already in
+# the image) and set BUGHOUND_AUTH.
 services:
   bughound:
     build:
       context: .
       args:
-        WITH_ZAP: "false" # set "true" untuk menyertakan OWASP ZAP (berat)
+        WITH_ZAP: "false" # set "true" to include OWASP ZAP (heavy)
     image: bughound:local
     ports:
-      - "127.0.0.1:8787:8787" # localhost host saja; ganti bila sadar risikonya
+      - "127.0.0.1:8787:8787" # localhost only; change it if you accept the risk
     volumes:
       - bughound-data:/data
     environment:
       - BUGHOUND_AUTH=${BUGHOUND_AUTH:-}
-    # SAST sudah aktif default (image men-set BUGHOUND_SAST_ROOT=/data/sast);
-    # taruh kode target di volume pada /data/sast. Tak perlu flag tambahan.
+    # SAST is on by default (the image sets BUGHOUND_SAST_ROOT=/data/sast);
+    # put the target code in a volume at /data/sast. No extra flag needed.
     # command: ["-addr","0.0.0.0:8787","-db","/data/bughound.db","-engine","nuclei,ffuf"]
 
 volumes:

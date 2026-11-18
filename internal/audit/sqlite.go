@@ -11,31 +11,31 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// SQLiteLog adalah Log berbasis SQLite (persisten, append-only secara kontrak:
-// tak ada metode hapus/ubah). Integritas dijaga rantai HMAC + Verify.
+// SQLiteLog is a Log backed by SQLite (persistent, append-only by contract:
+// there is no delete or update method). The HMAC chain + Verify protect its integrity.
 type SQLiteLog struct {
 	db       *sql.DB
 	key      []byte
 	now      func() time.Time
-	mu       sync.Mutex // atomisitas seq + prev_hash
-	anchorer Anchorer   // opsional: attestation eksternal (BH-F06)
+	mu       sync.Mutex // atomicity of seq + prev_hash
+	anchorer Anchorer   // optional: external attestation (BH-F06)
 }
 
-// Option mengonfigurasi SQLiteLog saat dibuka.
+// Option configures a SQLiteLog when it is opened.
 type Option func(*SQLiteLog)
 
-// WithAnchorer memasang attestation eksternal: head rantai di-anchor tiap
-// Append, dan Verify memeriksa store konsisten dengan anchor (deteksi
-// trunkasi/rollback/penghapusan total store — BH-F06).
+// WithAnchorer attaches external attestation: the chain head is anchored on
+// every Append, and Verify checks that the store is consistent with the anchors
+// (detects truncation, rollback and total deletion of the store, BH-F06).
 func WithAnchorer(a Anchorer) Option {
 	return func(l *SQLiteLog) { l.anchorer = a }
 }
 
-// OpenSQLiteLog membuka/membuat log pada path dengan kunci HMAC key.
+// OpenSQLiteLog opens or creates the log at path with the HMAC key.
 func OpenSQLiteLog(path string, key []byte, opts ...Option) (*SQLiteLog, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, fmt.Errorf("audit: buka log: %w", err)
+		return nil, fmt.Errorf("audit: open log: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	l := &SQLiteLog{db: db, key: key, now: time.Now}
@@ -84,7 +84,7 @@ func (l *SQLiteLog) Append(ctx context.Context, e Event) (Event, error) {
 	var lastHash string
 	err := l.db.QueryRowContext(ctx, `SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1`).Scan(&lastSeq, &lastHash)
 	if err != nil && err != sql.ErrNoRows {
-		return Event{}, fmt.Errorf("audit: baca entri terakhir: %w", err)
+		return Event{}, fmt.Errorf("audit: read last entry: %w", err)
 	}
 
 	if e.Time.IsZero() {
@@ -100,10 +100,10 @@ func (l *SQLiteLog) Append(ctx context.Context, e Event) (Event, error) {
 		e.Seq, e.Time.UTC().Format(time.RFC3339Nano), e.Kind, e.Program, e.RunID, e.Target,
 		boolToInt(e.Allowed), e.Reason, e.Layer, e.Message, e.PrevHash, e.Hash)
 	if err != nil {
-		return Event{}, fmt.Errorf("audit: simpan: %w", err)
+		return Event{}, fmt.Errorf("audit: save: %w", err)
 	}
-	// Attestation eksternal (best-effort): entri sudah tersimpan; kegagalan
-	// anchor tak membatalkan entri (rantai HMAC di store tetap utuh).
+	// External attestation (best effort): the entry is already saved; a failed
+	// anchor does not undo it (the HMAC chain in the store stays intact).
 	if l.anchorer != nil {
 		_ = l.anchorer.WriteAnchor(Anchor{Seq: e.Seq, Hash: e.Hash, At: e.Time})
 	}
@@ -129,7 +129,7 @@ func (l *SQLiteLog) List(ctx context.Context, f Filter) ([]Event, error) {
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
-	q += " ORDER BY seq DESC" // terbaru dulu
+	q += " ORDER BY seq DESC" // newest first
 	if f.Limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", f.Limit)
 	}
@@ -156,12 +156,12 @@ func (l *SQLiteLog) Verify(ctx context.Context) (Result, error) {
 	if !res.OK {
 		return res, nil
 	}
-	// Cross-check attestation eksternal: tangkap trunkasi/rollback/penghapusan
-	// total store yang tak terlihat oleh rantai internal (BH-F06).
+	// Cross-check the external attestation: catch truncation, rollback or total
+	// deletion of the store that the internal chain cannot see (BH-F06).
 	if l.anchorer != nil {
 		anchors, aerr := l.anchorer.Anchors()
 		if aerr != nil {
-			return Result{}, fmt.Errorf("audit: baca anchor: %w", aerr)
+			return Result{}, fmt.Errorf("audit: read anchors: %w", aerr)
 		}
 		if ares := verifyAnchors(l.key, events, anchors); !ares.OK {
 			return ares, nil

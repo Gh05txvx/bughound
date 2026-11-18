@@ -2,31 +2,31 @@
 <div class="report-head">
   <div>
     <h2>Programs</h2>
-    <p class="muted small">Definisi scope tersimpan (persisten lintas-restart).</p>
+    <p class="muted small">Saved scope definitions (persistent across restarts).</p>
   </div>
-  <div class="actions"><a class="btn primary" href="/programs/edit">+ Program baru</a></div>
+  <div class="actions"><a class="btn primary" href="/programs/edit">+ New program</a></div>
 </div>
 
 {{if .Note}}<div class="banner ok"><span class="dot ok"></span>{{.Note}}</div>{{end}}
 
 {{if .Programs}}
 <table class="tbl">
-  <thead><tr><th>Program</th><th>In-scope</th><th>Out-of-scope</th><th>Diperbarui</th><th></th></tr></thead>
+  <thead><tr><th>Program</th><th>In-scope</th><th>Out-of-scope</th><th>Updated</th><th></th></tr></thead>
   <tbody>
   {{range .Programs}}
   <tr>
     <td class="mono">{{.Name}}</td>
-    <td class="mono muted">{{len .InScope}} entri</td>
-    <td class="mono muted">{{len .OutScope}} entri</td>
+    <td class="mono muted">{{len .InScope}} entries</td>
+    <td class="mono muted">{{len .OutScope}} entries</td>
     <td class="mono muted">{{.UpdatedAt.Format "2006-01-02 15:04"}}</td>
     <td>
       <div class="row-actions">
         <a class="btn ghost" href="/programs/edit?name={{.Name}}">edit scope</a>
         <a class="btn" href="/scan?program={{.Name}}">scan →</a>
-        <form method="post" action="/programs/delete" class="inline" onsubmit="return confirm('Hapus definisi program {{.Name}}? Temuan & audit TETAP tersimpan — hanya scope program yang dibuang.')">
+        <form method="post" action="/programs/delete" class="inline" onsubmit="return confirm('Delete the definition of program {{.Name}}? Findings & audit STAY saved — only the program scope is removed.')">
           <input type="hidden" name="csrf" value="{{$.CSRF}}">
           <input type="hidden" name="name" value="{{.Name}}">
-          <button type="submit" class="btn ghost danger">hapus</button>
+          <button type="submit" class="btn ghost danger">delete</button>
         </form>
       </div>
     </td>
@@ -37,9 +37,9 @@
 {{else}}
 <div class="empty rich">
   <div class="empty-ico"><svg class="ico"><use href="#i-target"/></svg></div>
-  <h3>Belum ada program</h3>
-  <p class="muted">Definisikan scope program pertama (in-scope / out-of-scope) untuk mulai memindai dengan aman.</p>
-  <div class="empty-cta"><a class="btn primary" href="/programs/edit"><svg class="ico"><use href="#i-plus"/></svg>Buat program</a></div>
+  <h3>No programs yet</h3>
+  <p class="muted">Define your first program's scope (in-scope / out-of-scope) to start scanning safely.</p>
+  <div class="empty-cta"><a class="btn primary" href="/programs/edit"><svg class="ico"><use href="#i-plus"/></svg>Create a program</a></div>
 </div>
 {{end}}
 {{end}}

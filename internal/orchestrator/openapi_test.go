@@ -8,7 +8,7 @@ import (
 	"bughound/internal/store"
 )
 
-// oaEngine merekam spec yang diterima lewat UseOpenAPISpec (engine.OpenAPIAware).
+// oaEngine records the spec it receives through UseOpenAPISpec (engine.OpenAPIAware).
 type oaEngine struct{ spec []byte }
 
 func (*oaEngine) Name() string { return "oa" }
@@ -17,7 +17,7 @@ func (*oaEngine) Scan(context.Context, string, string, string) ([]*finding.Findi
 }
 func (e *oaEngine) UseOpenAPISpec(spec []byte) { e.spec = spec }
 
-// Spec pada ScanRequest harus diteruskan ke engine OpenAPIAware.
+// The spec on a ScanRequest must be passed on to OpenAPIAware engines.
 func TestRunScanThreadsOpenAPISpec(t *testing.T) {
 	g := newGuard(t, []string{"demo.test"}, nil)
 	eng := &oaEngine{}
@@ -27,11 +27,11 @@ func TestRunScanThreadsOpenAPISpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(eng.spec) != string(spec) {
-		t.Errorf("spec tak diteruskan ke engine OpenAPIAware; dapat %q", eng.spec)
+		t.Errorf("the spec was not passed to the OpenAPIAware engine; got %q", eng.spec)
 	}
 }
 
-// Tanpa spec, UseOpenAPISpec tak dipanggil (engine tak menerima apa pun).
+// Without a spec, UseOpenAPISpec is not called (the engine receives nothing).
 func TestRunScanNoSpecNoCall(t *testing.T) {
 	g := newGuard(t, []string{"demo.test"}, nil)
 	eng := &oaEngine{}
@@ -40,6 +40,6 @@ func TestRunScanNoSpecNoCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	if eng.spec != nil {
-		t.Errorf("tanpa spec, UseOpenAPISpec tak boleh dipanggil; dapat %q", eng.spec)
+		t.Errorf("without a spec, UseOpenAPISpec must not be called; got %q", eng.spec)
 	}
 }

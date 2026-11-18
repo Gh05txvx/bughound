@@ -1,12 +1,12 @@
-// Package sast menambahkan analisis statis (SAST) ke bughound sebagai PLUGIN
-// di balik kontrak engine seragam: tiap adapter menormalkan hasilnya ke Skema
-// Temuan Seragam (BH-SPEC-FINDING), sama seperti engine DAST.
+// Package sast adds static analysis (SAST) to bughound as a PLUGIN behind the
+// uniform engine contract: each adapter normalizes its results into the Uniform
+// Finding Schema (BH-SPEC-FINDING), just like the DAST engines.
 //
-// Perbedaan penting dari DAST: SAST membaca KODE LOKAL, bukan URL. Maka
-// "boundary wajib" (prinsip #1 & #2) di sini berbentuk PATH SCOPE: analisis
-// hanya boleh di dalam satu root yang diizinkan (default-deny; path traversal
-// & escape via symlink ditolak). Tidak ada koneksi jaringan, jadi tak ada
-// egress/scope-URL maupun rate limiter yang relevan.
+// The important difference from DAST: SAST reads LOCAL CODE, not URLs. So the
+// "mandatory boundary" (principles #1 and #2) takes the form of a PATH SCOPE
+// here: analysis may only run inside one allowed root (default deny; path
+// traversal and escapes through symlinks are denied). There are no network
+// connections, so neither egress/URL scope nor the rate limiter applies.
 package sast
 
 import (
@@ -24,22 +24,22 @@ import (
 	"bughound/internal/store"
 )
 
-// ErrDisabled dikembalikan bila SAST tak dikonfigurasi (root kosong).
-var ErrDisabled = errors.New("sast: dinonaktifkan (set -sast-root)")
+// ErrDisabled is returned when SAST is not configured (empty root).
+var ErrDisabled = errors.New("sast: disabled (set -sast-root)")
 
-// ErrOutOfScope dikembalikan bila path yang diminta keluar dari root.
-var ErrOutOfScope = errors.New("sast: path di luar root yang diizinkan (ditolak)")
+// ErrOutOfScope is returned when the requested path leaves the root.
+var ErrOutOfScope = errors.New("sast: path is outside the allowed root (denied)")
 
-// Engine adalah satu adapter SAST. Analyze menganalisis direktori dir (sudah
-// divalidasi in-scope) dan mengembalikan temuan ternormalkan. Adapter mengisi
-// field semantik (type/title/severity/location/evidence/...); store menetapkan
-// id/dedup_key/schema_version/created_at.
+// Engine is one SAST adapter. Analyze analyzes the directory dir (already
+// validated as in scope) and returns normalized findings. The adapter fills in
+// the semantic fields (type/title/severity/location/evidence/...); the store
+// sets id/dedup_key/schema_version/created_at.
 type Engine interface {
 	Name() string
 	Analyze(ctx context.Context, dir, program, runID string) ([]*finding.Finding, error)
 }
 
-// Factory membuat instance Engine (dipakai registry plugin).
+// Factory creates an Engine instance (used by the plugin registry).
 type Factory func() Engine
 
 var (
@@ -47,15 +47,15 @@ var (
 	registry = map[string]Factory{}
 )
 
-// Register mendaftarkan adapter SAST dengan nama unik (dipanggil dari init()).
-// Pendaftaran ganda untuk nama yang sama menimpa yang lama.
+// Register registers a SAST adapter under a unique name (called from init()).
+// Registering the same name twice replaces the old one.
 func Register(name string, f Factory) {
 	regMu.Lock()
 	defer regMu.Unlock()
 	registry[name] = f
 }
 
-// Names mengembalikan nama adapter terdaftar, terurut.
+// Names returns the registered adapter names, sorted.
 func Names() []string {
 	regMu.RLock()
 	defer regMu.RUnlock()
@@ -67,7 +67,7 @@ func Names() []string {
 	return out
 }
 
-// Lookup membuat engine terdaftar bernama name.
+// Lookup creates the registered engine called name.
 func Lookup(name string) (Engine, bool) {
 	regMu.RLock()
 	f, ok := registry[name]
@@ -78,9 +78,9 @@ func Lookup(name string) (Engine, bool) {
 	return f(), true
 }
 
-// Resolve menegakkan PATH SCOPE: mengembalikan path absolut sub di dalam root,
-// atau error. root kosong -> ErrDisabled. Path yang keluar dari root (termasuk
-// lewat ".." atau symlink) -> ErrOutOfScope. Path harus ada.
+// Resolve enforces the PATH SCOPE: it returns the absolute path of sub inside
+// root, or an error. An empty root -> ErrDisabled. A path that leaves the root
+// (including through ".." or a symlink) -> ErrOutOfScope. The path must exist.
 func Resolve(root, sub string) (string, error) {
 	if strings.TrimSpace(root) == "" {
 		return "", ErrDisabled
@@ -92,7 +92,7 @@ func Resolve(root, sub string) (string, error) {
 	if real, err := filepath.EvalSymlinks(absRoot); err == nil {
 		absRoot = real
 	}
-	// filepath.Join membersihkan "..", tapi tetap bisa keluar root; dicek via Rel.
+	// filepath.Join cleans "..", but the result can still leave the root; Rel checks that.
 	target := filepath.Join(absRoot, sub)
 	real, err := filepath.EvalSymlinks(target)
 	if err != nil {
@@ -109,23 +109,24 @@ func Resolve(root, sub string) (string, error) {
 	return target, nil
 }
 
-// Result meringkas satu run SAST.
+// Result summarizes one SAST run.
 type Result struct {
 	Saved      int
 	Duplicates int
-	ByEngine   map[string]int // nama engine -> jumlah temuan mentah
+	ByEngine   map[string]int // engine name -> raw finding count
 }
 
-// Run menjalankan tiap engine pada dir (sudah divalidasi Resolve), menyimpan
-// temuan (dedup oleh store), dan mencatat audit. Tidak menyentuh jaringan.
+// Run runs each engine on dir (already validated by Resolve), saves the
+// findings (the store dedups them) and records the audit. It does not touch
+// the network.
 func Run(ctx context.Context, dir, srcLabel, program, runID string, engines []Engine, st store.Store, al audit.Log) (Result, error) {
 	res := Result{ByEngine: map[string]int{}}
 	if len(engines) == 0 {
-		return res, errors.New("sast: tak ada engine")
+		return res, errors.New("sast: no engines")
 	}
-	// Subpath kosong = seluruh root (lihat UI "kosong = seluruh root"); beri
-	// label "." agar field wajib `target` pada temuan tak pernah kosong —
-	// store menolak target kosong (BH-SPEC-FINDING).
+	// An empty subpath = the whole root (see the UI's "empty = whole root"); label
+	// it "." so the required `target` field of a finding is never empty, since the
+	// store rejects an empty target (BH-SPEC-FINDING).
 	if strings.TrimSpace(srcLabel) == "" {
 		srcLabel = "."
 	}
@@ -149,7 +150,7 @@ func Run(ctx context.Context, dir, srcLabel, program, runID string, engines []En
 			}
 			sr, serr := st.Save(ctx, f)
 			if serr != nil {
-				return res, fmt.Errorf("sast: simpan: %w", serr)
+				return res, fmt.Errorf("sast: save: %w", serr)
 			}
 			if sr.Deduplicated {
 				res.Duplicates++
@@ -161,7 +162,7 @@ func Run(ctx context.Context, dir, srcLabel, program, runID string, engines []En
 	if al != nil {
 		_, _ = al.Append(ctx, audit.Event{
 			Kind: "sast.finish", Program: program, RunID: runID, Target: srcLabel,
-			Message: fmt.Sprintf("%d temuan baru, %d duplikat", res.Saved, res.Duplicates),
+			Message: fmt.Sprintf("%d new findings, %d duplicates", res.Saved, res.Duplicates),
 		})
 	}
 	return res, nil

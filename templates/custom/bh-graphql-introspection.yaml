@@ -5,11 +5,11 @@ info:
   author: bughound
   severity: info
   description: |
-    Endpoint GraphQL mengizinkan query introspection (__schema). Introspection
-    membocorkan seluruh tipe, field, serta query/mutation yang tersedia sehingga
-    memudahkan pemetaan permukaan serang. Umumnya dinonaktifkan di produksi.
-    Deteksi READ-ONLY: introspection adalah query baca (bukan mutation) — tak
-    mengubah keadaan target.
+    The GraphQL endpoint allows introspection queries (__schema). Introspection
+    leaks every type, field, and available query/mutation, which makes
+    attack-surface mapping easier. It is usually disabled in production.
+    READ-ONLY detection: introspection is a read query (not a mutation), it does not
+    change target state.
   reference:
     - https://owasp.org/www-project-web-security-testing-guide/latest/4-Web_Application_Security_Testing/12-API_Testing/01-Testing_GraphQL
     - https://cwe.mitre.org/data/definitions/200.html

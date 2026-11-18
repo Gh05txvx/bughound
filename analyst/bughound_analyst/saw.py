@@ -1,12 +1,12 @@
 """SPK — Simple Additive Weighting (SAW).
 
-Dua lapis:
-  - fungsi MURNI `saw_score` / `normalize_column` (mudah diuji, tanpa domain).
-  - `rank_findings` yang memetakan Finding → baris kriteria (pakai config + analyst)
-    lalu memanggil SAW dan mengembalikan daftar ter-ranking + breakdown explainable.
+Two layers:
+  - PURE functions `saw_score` / `normalize_column` (easy to test, no domain).
+  - `rank_findings`, which maps a Finding -> a criteria row (using config + analyst)
+    then calls SAW and returns a ranked list + an explainable breakdown.
 
-Normalisasi: benefit r=x/max ; cost r=min/x (0 cost = ideal → r=1).
-Skor: V = Σ w·r,  Σ w = 1.
+Normalization: benefit r=x/max ; cost r=min/x (0 cost = ideal -> r=1).
+Score: V = Σ w·r,  Σ w = 1.
 """
 from __future__ import annotations
 
@@ -31,8 +31,8 @@ def normalize_column(values: List[float], ctype: str) -> List[float]:
 
 def saw_score(rows: List[Dict[str, float]], weights: Dict[str, float],
               types: Dict[str, str]) -> List[Dict]:
-    """rows: daftar dict kriteria→nilai mentah. Kembalikan per-baris:
-    {index, score, norm{crit→r}, weighted{crit→w·r}} (urutan input dipertahankan)."""
+    """rows: a list of criterion->raw-value dicts. Return per row:
+    {index, score, norm{crit->r}, weighted{crit->w·r}} (input order is kept)."""
     crits = list(weights.keys())
     norm = {c: normalize_column([r.get(c, 0.0) for r in rows], types[c]) for c in crits}
     out: List[Dict] = []
@@ -47,11 +47,11 @@ def saw_score(rows: List[Dict[str, float]], weights: Dict[str, float],
     return out
 
 
-# ---- Pemetaan domain: Finding → baris kriteria mentah ----
+# ---- Domain mapping: Finding -> raw criteria row ----
 
 def build_row(f: Finding, derived: Dict, cfg: Config) -> Dict[str, float]:
-    """Satu baris matriks keputusan (nilai MENTAH, belum dinormalisasi).
-    Semua metrik turunan (termasuk `freshness`) dihitung di `analyst.derive`."""
+    """One decision-matrix row (RAW values, not yet normalized).
+    Every derived metric (including `freshness`) is computed in `analyst.derive`."""
     return {
         "exploitability": derived.get("exploitability_raw", 0.0),
         "signal": derived.get("signal", 0.5),
@@ -66,7 +66,7 @@ def build_row(f: Finding, derived: Dict, cfg: Config) -> Dict[str, float]:
 
 def rank_findings(findings: List[Finding], derived_map: Dict[str, Dict],
                   cfg: Config) -> List[Dict]:
-    """Kembalikan daftar ter-ranking (skor desc): {finding, rank, score, breakdown, raw}."""
+    """Return a ranked list (score desc): {finding, rank, score, breakdown, raw}."""
     rows = [build_row(f, derived_map.get(f.id, {}), cfg) for f in findings]
     scored = saw_score(rows, cfg.weights, cfg.types)
     merged = [{

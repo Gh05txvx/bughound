@@ -18,34 +18,34 @@ import (
 	"bughound/internal/payload"
 )
 
-// Runner adalah engine nuclei NYATA: mengeksekusi binary nuclei sebagai
-// subprocess lalu menormalkan output JSONL-nya lewat Parse.
+// Runner is the REAL nuclei engine: it runs the nuclei binary as a subprocess
+// then normalizes its JSONL output through Parse.
 //
-// Koneksi keluar wajib lewat proxy egress bughound — orchestrator memanggil
-// UseProxy sebelum Scan sehingga setiap request nuclei diperiksa scope guard
-// SEBELUM koneksi dibuat (internal/egress). Runner ini bukan default; aktifkan
-// secara sadar dan hanya terhadap target yang sah (lihat CLAUDE.md: jangan
-// menjalankan scan nyata di lingkungan dev/test).
+// Outbound connections must go through bughound's egress proxy; the orchestrator
+// calls UseProxy before Scan so every nuclei request is checked by the scope
+// guard BEFORE the connection is made (internal/egress). This Runner is not the
+// default; enable it deliberately and only against a legitimate target (see
+// CLAUDE.md: do not run a real scan in a dev/test environment).
 type Runner struct {
 	Binary    string // default "nuclei"
 	RateLimit int    // -rate-limit (req/dtk); 0 = default nuclei
-	// Tags & Severity menyeleksi SUBSET template yang dijalankan (dari metadata
-	// bank payload, BH-SPEC-PAYLOAD §Seleksi). Kosong = jalankan semua template
-	// terpasang. -tags dan -severity dikombinasikan (template harus cocok
-	// keduanya), memangkas 14k template ke subset terarah → scan jauh lebih cepat.
+	// Tags & Severity select a SUBSET of templates to run (from the payload bank
+	// metadata, BH-SPEC-PAYLOAD §Selection). Empty = run every installed template.
+	// -tags and -severity are combined (a template must match both), trimming 14k
+	// templates to a targeted subset so the scan is far faster.
 	Tags     []string // -tags t1,t2
 	Severity []string // -severity critical,high
-	// TemplatesDir (opsional) membatasi nuclei HANYA ke direktori template ini
-	// via `-t` — dipakai runner "custom" khusus Bank Payload (BH-SPEC-PAYLOAD):
-	// menjalankan template deteksi read-only milik sendiri, TERPISAH dari runner
-	// utama yang menjalankan set resmi penuh. Kosong = set template bawaan nuclei.
+	// TemplatesDir (optional) restricts nuclei to ONLY this template directory via
+	// `-t`, used by the "custom" runner for the Payload Bank (BH-SPEC-PAYLOAD): it
+	// runs its own read-only detection templates, SEPARATE from the main runner that
+	// runs the full official set. Empty = nuclei's default template set.
 	TemplatesDir string
 	proxyAddr    string
-	authHeaders  []string // Lever 1: header auth disuntik via -H (lihat UseAuthHeaders)
+	authHeaders  []string // Lever 1: auth headers injected via -H (see UseAuthHeaders)
 }
 
-// Name memenuhi engine.Engine. Runner ber-TemplatesDir dilabeli "nuclei-custom"
-// agar roster/log membedakannya dari runner nuclei resmi.
+// Name satisfies engine.Engine. A Runner with a TemplatesDir is labeled
+// "nuclei-custom" so the roster/log tells it apart from the official nuclei runner.
 func (r *Runner) Name() string {
 	if strings.TrimSpace(r.TemplatesDir) != "" {
 		return "nuclei-custom"
@@ -53,16 +53,16 @@ func (r *Runner) Name() string {
 	return "nuclei"
 }
 
-// UseProxy memenuhi engine.ProxyAware: mengarahkan nuclei ke proxy egress.
+// UseProxy satisfies engine.ProxyAware: points nuclei at the egress proxy.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
 
-// UseAuthHeaders memenuhi engine.AuthAware: menyuntik header auth (-H) ke tiap
-// request nuclei agar scan menjangkau konten di balik login (Lever 1).
+// UseAuthHeaders satisfies engine.AuthAware: injects the auth headers (-H) into
+// every nuclei request so the scan reaches content behind a login (Lever 1).
 func (r *Runner) UseAuthHeaders(h []string) { r.authHeaders = h }
 
-// headerArgs merender header auth menjadi argumen `-H "Nama: nilai"` (dipakai
-// runner nuclei biasa & -dast). Nilai diteruskan apa adanya ke argv (tanpa
-// shell), jadi spasi/`;` di cookie aman.
+// headerArgs renders the auth headers into `-H "Name: value"` arguments (used by
+// the plain nuclei runner & -dast). Values are passed to argv as-is (no shell),
+// so spaces/`;` in a cookie are safe.
 func headerArgs(headers []string) []string {
 	a := make([]string, 0, 2*len(headers))
 	for _, h := range headers {
@@ -73,13 +73,13 @@ func headerArgs(headers []string) []string {
 	return a
 }
 
-// requestPathRE menangkap path request template: `{{BaseURL}}/x` / `{{RootURL}}/x`
-// atau baris request mentah `GET /x HTTP/1.1`.
+// requestPathRE captures a template's request path: `{{BaseURL}}/x` / `{{RootURL}}/x`
+// or a raw request line `GET /x HTTP/1.1`.
 var requestPathRE = regexp.MustCompile(`(?im)\{\{(?:BaseURL|RootURL)\}\}([^"'\s]*)|^\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)`)
 
-// logoutTemplates mengembalikan template di dir yang me-request route logout
-// (engine.IsLogoutPath; live 2026-11-16: 32 dari ~14k template resmi). Best-effort:
-// dir/berkas tak terbaca dilewati (nuclei pun tak bisa memuatnya).
+// logoutTemplates returns the templates in dir that request a logout route
+// (engine.IsLogoutPath; live 2026-11-16: 32 of ~14k official templates).
+// Best-effort: an unreadable dir/file is skipped (nuclei cannot load it either).
 func logoutTemplates(dir string) []string {
 	var out []string
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -101,7 +101,7 @@ func logoutTemplates(dir string) []string {
 	return out
 }
 
-// Scan memenuhi engine.Engine.
+// Scan satisfies engine.Engine.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
 	bin := r.Binary
 	if bin == "" {
@@ -115,7 +115,7 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("nuclei: eksekusi gagal: %w (%s)", err, stderr.String())
+		return nil, fmt.Errorf("nuclei: execution failed: %w (%s)", err, stderr.String())
 	}
 	return Parse(&stdout, program, runID)
 }
@@ -123,8 +123,8 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 func (r *Runner) buildArgs(target string) []string {
 	args := []string{"-jsonl", "-silent", "-disable-update-check", "-target", target}
 	if dir := strings.TrimSpace(r.TemplatesDir); dir != "" {
-		// Batasi HANYA ke template custom (runner khusus Bank Payload). nuclei
-		// tetap menerapkan -tags/-severity & argumen non-destruktif di bawah.
+		// Restrict to ONLY the custom templates (the Payload Bank runner). nuclei still
+		// applies -tags/-severity & the non-destructive arguments below.
 		args = append(args, "-t", dir)
 	}
 	if r.proxyAddr != "" {
@@ -139,24 +139,24 @@ func (r *Runner) buildArgs(target string) []string {
 	if sev := joinNonEmpty(r.Severity); sev != "" {
 		args = append(args, "-severity", sev)
 	}
-	if h := headerArgs(r.authHeaders); len(h) > 0 { // Lever 1: header auth (bila ada)
+	if h := headerArgs(r.authHeaders); len(h) > 0 { // Lever 1: auth header (if any)
 		args = append(args, h...)
-		// Template yang me-request route logout mematikan sesi login — dan nuclei
-		// jalan PERTAMA di roster, jadi semua engine sesudahnya ikut tanpa login.
-		// shortcut: ditelusuri ulang tiap target (~2 dtk utk 14k template, terukur
-		// 2026-11-16); cache per Runner bila scan berlogin rutin ratusan target.
+		// A template that requests a logout route kills the login session, and nuclei
+		// runs FIRST in the roster, so every engine after it ends up without login.
+		// shortcut: re-scanned per target (~2s for 14k templates, measured
+		// 2026-11-16); cache per Runner if authenticated scans routinely hit hundreds of targets.
 		if ex := logoutTemplates(payload.ResolveNucleiDir(r.TemplatesDir)); len(ex) > 0 {
 			args = append(args, "-exclude-templates", strings.Join(ex, ","))
 		}
 	}
-	// Non-destruktif struktural: berlaku juga di plain runner, bukan hanya -dast.
-	// Tanpa ini, template unsafe destruktif (smuggling, unggah webshell) ikut jalan.
+	// Structural non-destructive: this applies to the plain runner too, not only
+	// -dast. Without it, destructive unsafe templates (smuggling, webshell upload) would run.
 	args = append(args, nonDestructiveArgs()...)
 	return args
 }
 
-// joinNonEmpty menggabungkan nilai ter-trim non-kosong dengan koma (format daftar
-// yang diterima flag -tags/-severity nuclei); mengembalikan "" bila tak ada.
+// joinNonEmpty joins trimmed non-empty values with commas (the list format
+// nuclei's -tags/-severity flags accept); returns "" when there are none.
 func joinNonEmpty(in []string) string {
 	var out []string
 	for _, v := range in {

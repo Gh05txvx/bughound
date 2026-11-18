@@ -7,14 +7,14 @@ import (
 	"bughound/internal/finding"
 )
 
-// Mock adalah engine ZAP palsu: mengembalikan laporan sampel terekam (via Parse)
-// tanpa menyentuh jaringan. Dipakai untuk demo & E2E.
+// Mock is a fake ZAP engine: it returns a recorded sample report (via Parse)
+// without touching the network. Used for demo & E2E.
 type Mock struct{}
 
-// Name memenuhi engine.Engine.
+// Name satisfies engine.Engine.
 func (Mock) Name() string { return "zap (mock)" }
 
-// Scan memenuhi engine.Engine: mengembalikan temuan dari laporan sampel.
+// Scan satisfies engine.Engine: returns findings from the sample report.
 func (Mock) Scan(_ context.Context, _, program, runID string) ([]*finding.Finding, error) {
 	return Parse(bytes.NewReader(sampleJSON), program, runID)
 }

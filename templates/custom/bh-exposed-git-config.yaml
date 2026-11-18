@@ -5,10 +5,10 @@ info:
   author: bughound
   severity: medium
   description: |
-    Direktori .git terekspos di webroot. File .git/config bisa diambil tanpa
-    autentikasi, membocorkan URL remote, nama branch, dan kadang kredensial
-    tertanam. Seluruh source code sering dapat direkonstruksi dari direktori .git.
-    Deteksi READ-ONLY: hanya satu GET, tanpa menulis/mengubah keadaan target.
+    The .git directory is exposed in the webroot. The .git/config file can be fetched without
+    authentication, leaking the remote URL, branch names, and sometimes embedded
+    credentials. The whole source tree can often be reconstructed from the .git directory.
+    READ-ONLY detection: a single GET, with no writing/changing of target state.
   reference:
     - https://owasp.org/www-community/attacks/Code_Review_of_Git_Repositories
     - https://cwe.mitre.org/data/definitions/538.html

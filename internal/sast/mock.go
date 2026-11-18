@@ -6,21 +6,22 @@ import (
 	"bughound/internal/finding"
 )
 
-// Mock adalah adapter SAST palsu: mengembalikan temuan sampel deterministik
-// tanpa membaca berkas atau menyentuh jaringan (untuk demo & E2E — mustahil
-// memicu analisis nyata). Lokasi file:line bersifat ilustratif.
+// Mock is a fake SAST adapter: it returns deterministic sample findings without
+// reading files or touching the network (for demos and E2E, where a real
+// analysis must be impossible to trigger). The file:line locations are
+// illustrative.
 type Mock struct{}
 
-// Name memenuhi Engine.
+// Name implements Engine.
 func (Mock) Name() string { return "semgrep (mock)" }
 
-// Analyze mengembalikan temuan sampel; dir/ctx diabaikan (tanpa I/O nyata).
+// Analyze returns sample findings; dir/ctx are ignored (no real I/O).
 func (Mock) Analyze(_ context.Context, _, _, _ string) ([]*finding.Finding, error) {
 	return []*finding.Finding{
 		{
 			Type:           "hardcoded-credentials",
-			Title:          "Kredensial ter-hardcode di sumber",
-			Description:    "Rahasia tertulis langsung di kode; pindahkan ke secret store / variabel lingkungan.",
+			Title:          "Hardcoded credential in source",
+			Description:    "A secret is written directly in the code; move it to a secret store / environment variable.",
 			Severity:       finding.SeverityHigh,
 			Confidence:     finding.ConfidenceHigh,
 			Status:         finding.StatusNew,
@@ -33,8 +34,8 @@ func (Mock) Analyze(_ context.Context, _, _, _ string) ([]*finding.Finding, erro
 		},
 		{
 			Type:           "insecure-randomness",
-			Title:          "PRNG non-kriptografis untuk nilai sensitif",
-			Description:    "math/rand tidak aman untuk token/secret; gunakan crypto/rand.",
+			Title:          "Non-cryptographic PRNG for a sensitive value",
+			Description:    "math/rand is not safe for tokens/secrets; use crypto/rand.",
 			Severity:       finding.SeverityMedium,
 			Confidence:     finding.ConfidenceMedium,
 			Status:         finding.StatusNew,

@@ -11,7 +11,7 @@ func TestRunnerBuildArgs(t *testing.T) {
 	got := strings.Join(r.buildArgs("https://demo.test"), " ")
 	for _, want := range []string{"-jsonl", "-target https://demo.test", "-proxy http://127.0.0.1:9000", "-rate-limit 20"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("args harus memuat %q; dapat: %s", want, got)
+			t.Errorf("args must contain %q; got: %s", want, got)
 		}
 	}
 }
@@ -20,73 +20,73 @@ func TestRunnerBuildArgsNoProxy(t *testing.T) {
 	r := &Runner{}
 	got := strings.Join(r.buildArgs("https://demo.test"), " ")
 	if strings.Contains(got, "-proxy") {
-		t.Errorf("tanpa proxy tak boleh ada flag -proxy; dapat: %s", got)
+		t.Errorf("without a proxy there must be no -proxy flag; got: %s", got)
 	}
 }
 
 func TestRunnerBuildArgsSelection(t *testing.T) {
-	// Seleksi template: tags & severity → -tags / -severity (koma-join, trim).
+	// Template selection: tags & severity -> -tags / -severity (comma-joined, trimmed).
 	r := &Runner{Tags: []string{"cve", " exposure ", ""}, Severity: []string{"critical", "high"}}
 	got := strings.Join(r.buildArgs("https://demo.test"), " ")
 	for _, want := range []string{"-tags cve,exposure", "-severity critical,high"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("args harus memuat %q; dapat: %s", want, got)
+			t.Errorf("args must contain %q; got: %s", want, got)
 		}
 	}
 }
 
 func TestRunnerBuildArgsNoSelection(t *testing.T) {
-	// Seleksi kosong → tak ada flag -tags/-severity (jalankan semua template).
+	// Empty selection -> no -tags/-severity flags (run every template).
 	r := &Runner{Tags: []string{"", "  "}, Severity: nil}
 	got := strings.Join(r.buildArgs("https://demo.test"), " ")
-	// " -tags " (berspasi awal) membedakan flag seleksi dari "-exclude-tags".
+	// " -tags " (leading space) tells the selection flag apart from "-exclude-tags".
 	if strings.Contains(got, " -tags ") || strings.Contains(got, "-severity") {
-		t.Errorf("seleksi kosong tak boleh memunculkan flag; dapat: %s", got)
+		t.Errorf("an empty selection must not produce a flag; got: %s", got)
 	}
 }
 
-// Non-destruktif berlaku juga di plain runner, dengan atau tanpa seleksi template.
+// Non-destructive applies to the plain runner too, with or without template selection.
 func TestRunnerBuildArgsNonDestructive(t *testing.T) {
 	for _, r := range []*Runner{{}, {Tags: []string{"cve"}, Severity: []string{"high"}}} {
 		got := strings.Join(r.buildArgs("https://demo.test"), " ")
 		for _, want := range []string{"-exclude-tags dos,smuggling", "-exclude-id CVE-2021-30118,CVE-2023-46747"} {
 			if !strings.Contains(got, want) {
-				t.Errorf("buildArgs tak memuat %q; dapat: %s", want, got)
+				t.Errorf("buildArgs does not contain %q; got: %s", want, got)
 			}
 		}
 	}
 }
 
-// Runner custom Bank Payload: TemplatesDir → `-t <dir>` (HANYA template custom).
+// Custom Payload Bank runner: TemplatesDir -> `-t <dir>` (ONLY custom templates).
 func TestRunnerBuildArgsTemplatesDir(t *testing.T) {
 	r := &Runner{TemplatesDir: "./templates/custom"}
 	got := strings.Join(r.buildArgs("https://demo.test"), " ")
 	if !strings.Contains(got, "-t ./templates/custom") {
-		t.Errorf("runner custom harus memuat -t <dir>; dapat: %s", got)
+		t.Errorf("the custom runner must contain -t <dir>; got: %s", got)
 	}
-	// Non-destruktif tetap dipaksa walau runner custom.
+	// Non-destructive is still forced even for the custom runner.
 	if !strings.Contains(got, "-exclude-tags dos,smuggling") {
-		t.Errorf("runner custom tetap wajib non-destruktif; dapat: %s", got)
+		t.Errorf("the custom runner must still be non-destructive; got: %s", got)
 	}
 }
 
-// Tanpa TemplatesDir (runner nuclei resmi) → TIDAK ada flag -t (pakai set penuh).
+// Without TemplatesDir (the official nuclei runner) -> NO -t flag (use the full set).
 func TestRunnerBuildArgsNoTemplatesDir(t *testing.T) {
 	got := strings.Join((&Runner{}).buildArgs("https://demo.test"), " ")
 	if strings.Contains(got, " -t ") {
-		t.Errorf("runner nuclei resmi tak boleh membatasi -t; dapat: %s", got)
+		t.Errorf("the official nuclei runner must not restrict with -t; got: %s", got)
 	}
 }
 
-// Name() membedakan runner custom dari runner nuclei resmi untuk roster/log.
+// Name() tells the custom runner apart from the official nuclei runner for the roster/log.
 func TestRunnerName(t *testing.T) {
 	if n := (&Runner{}).Name(); n != "nuclei" {
-		t.Errorf("tanpa TemplatesDir Name()=%q, mau \"nuclei\"", n)
+		t.Errorf("without TemplatesDir Name()=%q, want \"nuclei\"", n)
 	}
 	if n := (&Runner{TemplatesDir: "  "}).Name(); n != "nuclei" {
-		t.Errorf("TemplatesDir hanya spasi harus dianggap kosong, Name()=%q", n)
+		t.Errorf("a whitespace-only TemplatesDir must count as empty, Name()=%q", n)
 	}
 	if n := (&Runner{TemplatesDir: "./templates/custom"}).Name(); n != "nuclei-custom" {
-		t.Errorf("dengan TemplatesDir Name()=%q, mau \"nuclei-custom\"", n)
+		t.Errorf("with TemplatesDir Name()=%q, want \"nuclei-custom\"", n)
 	}
 }

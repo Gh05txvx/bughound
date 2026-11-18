@@ -29,16 +29,16 @@ func TestDashboardSummary(t *testing.T) {
 		t.Fatalf("GET /dashboard = %d", rec.Code)
 	}
 	b := rec.Body.String()
-	// UI dashboard menaruh angka KPI & labelnya di elemen stat-card terpisah
-	// (bukan frasa "N program"): cek label + nilai KPI, baris program, dan sub
-	// "dari 3 temuan" pada kartu Terkonfirmasi.
+	// The dashboard UI puts the KPI numbers & their labels in separate stat-card elements
+	// (not an "N programs" phrase): check the label + KPI value, the program row, and the
+	// "of 3 findings" sub on the Confirmed card.
 	for _, want := range []string{
-		"acme", "globex", "3 temuan",
+		"acme", "globex", "3 findings",
 		`<span class="sc-label">Programs</span>`, `<div class="sc-kpi">2</div>`, // 2 program
-		`<span class="sc-label">Terkonfirmasi</span>`, `<div class="sc-kpi">1</div>`, // 1 terkonfirmasi
+		`<span class="sc-label">Confirmed</span>`, `<div class="sc-kpi">1</div>`, // 1 confirmed
 	} {
 		if !strings.Contains(b, want) {
-			t.Errorf("dashboard harus memuat %q", want)
+			t.Errorf("the dashboard must contain %q", want)
 		}
 	}
 }
@@ -46,8 +46,8 @@ func TestDashboardSummary(t *testing.T) {
 func TestDashboardEmpty(t *testing.T) {
 	srv, _ := newTestServer(t)
 	b := do(t, srv, "GET", "/dashboard", nil).Body.String()
-	if !strings.Contains(b, "Belum ada program") {
-		t.Errorf("dashboard kosong harus mengarahkan pengguna:\n%s", b)
+	if !strings.Contains(b, "No programs") {
+		t.Errorf("the empty dashboard must guide the user:\n%s", b)
 	}
 }
 
@@ -57,40 +57,40 @@ func TestDashboardDeleteFindings(t *testing.T) {
 	st.Save(ctx, mkWebFinding("acme", "run1", "ssrf", "https://acme.io/a", finding.SeverityCritical))
 	st.Save(ctx, mkWebFinding("acme", "run1", "xss", "https://acme.io/b", finding.SeverityLow))
 	st.Save(ctx, mkWebFinding("globex", "run1", "redir", "https://globex.io/c", finding.SeverityHigh))
-	st.SaveProgram(ctx, store.Program{Name: "acme", InScope: []string{"acme.io"}}) // definisi scope harus bertahan
+	st.SaveProgram(ctx, store.Program{Name: "acme", InScope: []string{"acme.io"}}) // the scope definition must persist
 
-	// Baris bertemuan menampilkan tombol hapus.
-	if b := do(t, srv, "GET", "/dashboard", nil).Body.String(); !strings.Contains(b, "hapus temuan") {
-		t.Fatal("dashboard tak menampilkan tombol 'hapus temuan'")
+	// A row with findings shows the delete button.
+	if b := do(t, srv, "GET", "/dashboard", nil).Body.String(); !strings.Contains(b, "delete findings") {
+		t.Fatal("the dashboard does not show the 'delete findings' button")
 	}
 
 	rec := do(t, srv, "POST", "/dashboard/findings/delete", url.Values{"program": {"acme"}})
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("hapus temuan = %d, ingin 303", rec.Code)
+		t.Fatalf("delete findings = %d, want 303", rec.Code)
 	}
 	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "ok=findings-deleted") || !strings.Contains(loc, "n=2") {
-		t.Errorf("redirect harus membawa ok=findings-deleted & n=2, dapat %q", loc)
+		t.Errorf("the redirect must carry ok=findings-deleted & n=2, got %q", loc)
 	}
-	// Temuan acme habis; globex tetap; definisi scope acme tetap.
+	// acme findings are gone; globex stays; the acme scope definition stays.
 	if fs, _ := st.List(ctx, store.Query{Program: "acme"}); len(fs) != 0 {
-		t.Errorf("temuan acme harus habis, sisa %d", len(fs))
+		t.Errorf("acme findings must be gone, %d left", len(fs))
 	}
 	if fs, _ := st.List(ctx, store.Query{Program: "globex"}); len(fs) != 1 {
-		t.Errorf("temuan globex harus tetap, dapat %d", len(fs))
+		t.Errorf("globex findings must stay, got %d", len(fs))
 	}
 	if _, err := st.GetProgram(ctx, "acme"); err != nil {
-		t.Errorf("definisi scope acme harus tetap (hanya temuan dihapus): %v", err)
+		t.Errorf("the acme scope definition must stay (only findings deleted): %v", err)
 	}
-	// Flash konfirmasi muncul.
+	// The confirmation flash shows up.
 	b := do(t, srv, "GET", "/dashboard?ok=findings-deleted&program=acme&n=2", nil).Body.String()
-	if !strings.Contains(b, "temuan program") || !strings.Contains(b, "dihapus") {
-		t.Error("flash hapus temuan tak muncul")
+	if !strings.Contains(b, "findings of program") || !strings.Contains(b, "deleted") {
+		t.Error("the delete-findings flash did not show")
 	}
 }
 
-// TestDashboardDeleteFindingsPurgesAICache memastikan menghapus temuan sebuah
-// program ikut membuang cache analisis AI-nya (tak ada baris yatim), sementara
-// cache program lain tetap utuh.
+// TestDashboardDeleteFindingsPurgesAICache makes sure deleting a program's
+// findings also drops its AI analysis cache (no orphan rows), while
+// another program's cache stays intact.
 func TestDashboardDeleteFindingsPurgesAICache(t *testing.T) {
 	srv, st := newTestServer(t)
 	ctx := context.Background()
@@ -107,13 +107,13 @@ func TestDashboardDeleteFindingsPurgesAICache(t *testing.T) {
 	}
 
 	if rec := do(t, srv, "POST", "/dashboard/findings/delete", url.Values{"program": {"acme"}}); rec.Code != http.StatusSeeOther {
-		t.Fatalf("hapus temuan = %d, ingin 303", rec.Code)
+		t.Fatalf("delete findings = %d, want 303", rec.Code)
 	}
 	if _, err := st.GetAIAnalysis(ctx, fa.ID); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("cache AI acme harus terbuang bersama temuannya, dapat err=%v", err)
+		t.Errorf("the acme AI cache must be dropped with its findings, got err=%v", err)
 	}
 	if _, err := st.GetAIAnalysis(ctx, fg.ID); err != nil {
-		t.Errorf("cache AI globex tak boleh ikut terhapus: %v", err)
+		t.Errorf("the globex AI cache must not be deleted too: %v", err)
 	}
 }
 
@@ -122,29 +122,29 @@ func TestDashboardDeleteFindingsViewerForbidden(t *testing.T) {
 	st.Save(context.Background(), mkWebFinding("keep", "r", "ssrf", "https://keep.io/a", finding.SeverityLow))
 	csrf, sess := loginAs(t, srv, "view", "viewpw")
 	if rec := authedReq(srv, "POST", "/dashboard/findings/delete", url.Values{"program": {"keep"}}, csrf, sess); rec.Code != http.StatusForbidden {
-		t.Fatalf("viewer POST /dashboard/findings/delete = %d, ingin 403", rec.Code)
+		t.Fatalf("viewer POST /dashboard/findings/delete = %d, want 403", rec.Code)
 	}
 	if fs, _ := st.List(context.Background(), store.Query{Program: "keep"}); len(fs) != 1 {
-		t.Error("temuan terhapus oleh viewer yang seharusnya ditolak")
+		t.Error("findings deleted by a viewer that should have been denied")
 	}
 }
 
 func TestDashboardScansLive(t *testing.T) {
 	srv, _ := newTestServer(t)
 
-	// Kosong: partial menampilkan empty state; dashboard menyematkan loader.
+	// Empty: the partial shows the empty state; the dashboard embeds the loader.
 	empty := do(t, srv, "GET", "/dashboard/scans", nil)
 	if empty.Code != http.StatusOK {
 		t.Fatalf("GET /dashboard/scans = %d", empty.Code)
 	}
-	if b := empty.Body.String(); !strings.Contains(b, "Belum ada scan") || !strings.Contains(b, `id="live-scans"`) {
-		t.Errorf("partial kosong tak sesuai:\n%s", b)
+	if b := empty.Body.String(); !strings.Contains(b, "No scans") || !strings.Contains(b, `id="live-scans"`) {
+		t.Errorf("the empty partial does not match:\n%s", b)
 	}
 	if b := do(t, srv, "GET", "/dashboard", nil).Body.String(); !strings.Contains(b, `hx-get="/dashboard/scans"`) {
-		t.Error("dashboard tak menyematkan loader live-scans")
+		t.Error("the dashboard does not embed the live-scans loader")
 	}
 
-	// Jalankan satu scan (engine mock) sampai selesai → muncul di monitor.
+	// Run one scan (mock engine) to completion → it shows up in the monitor.
 	rec := do(t, srv, "POST", "/scan", url.Values{"program": {"live-demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test"}})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST /scan = %d", rec.Code)
@@ -152,12 +152,12 @@ func TestDashboardScansLive(t *testing.T) {
 	waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
 
 	b := do(t, srv, "GET", "/dashboard/scans", nil).Body.String()
-	if !strings.Contains(b, "live-demo") || !strings.Contains(b, "selesai") {
-		t.Errorf("monitor live tak menampilkan run selesai:\n%s", b)
+	if !strings.Contains(b, "live-demo") || !strings.Contains(b, "done") {
+		t.Errorf("the live monitor does not show the finished run:\n%s", b)
 	}
-	// Semua run sudah selesai → polling idle (interval lambat 6s).
+	// All runs are finished → idle polling (the slow 6s interval).
 	if !strings.Contains(b, "delay:6s") {
-		t.Errorf("interval polling idle harus 6s:\n%s", b)
+		t.Errorf("the idle polling interval must be 6s:\n%s", b)
 	}
 }
 
@@ -172,16 +172,16 @@ func TestHumanDur(t *testing.T) {
 		{2*time.Hour + 10*time.Minute, "2h 10m"},
 	} {
 		if got := humanDur(c.d); got != c.want {
-			t.Errorf("humanDur(%v) = %q, ingin %q", c.d, got, c.want)
+			t.Errorf("humanDur(%v) = %q, want %q", c.d, got, c.want)
 		}
 	}
 }
 
-// Root mengarahkan ke dashboard.
+// Root redirects to the dashboard.
 func TestRootRedirectsToDashboard(t *testing.T) {
 	srv, _ := newTestServer(t)
 	rec := do(t, srv, "GET", "/", nil)
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/dashboard" {
-		t.Fatalf("GET / harus redirect ke /dashboard; dapat %d -> %q", rec.Code, rec.Header().Get("Location"))
+		t.Fatalf("GET / must redirect to /dashboard; got %d -> %q", rec.Code, rec.Header().Get("Location"))
 	}
 }

@@ -1,7 +1,7 @@
 name: release
 
-# Rilis dipicu oleh tag versi (vX.Y.Z). Membangun single binary untuk semua
-# target, lalu membuat GitHub Release berisi arsip + checksum.
+# A release is triggered by a version tag (vX.Y.Z). Builds a single binary for every
+# target, then creates a GitHub Release with the archives + checksums.
 on:
   push:
     tags:

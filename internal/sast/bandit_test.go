@@ -43,36 +43,36 @@ func TestParseBandit(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(fs) != 2 {
-		t.Fatalf("mau 2 temuan, dapat %d", len(fs))
+		t.Fatalf("want 2 findings, got %d", len(fs))
 	}
 	sqli := findByType(fs, "B608")
 	if sqli == nil {
-		t.Fatal("B608 hilang")
+		t.Fatal("B608 is missing")
 	}
-	if sqli.Location.URL != "app/db.py:12" { // relatif thd dir /scan
-		t.Errorf("location: mau app/db.py:12, dapat %s", sqli.Location.URL)
+	if sqli.Location.URL != "app/db.py:12" { // relative to dir /scan
+		t.Errorf("location: want app/db.py:12, got %s", sqli.Location.URL)
 	}
 	if sqli.Severity != finding.SeverityMedium {
-		t.Errorf("severity: mau medium, dapat %s", sqli.Severity)
+		t.Errorf("severity: want medium, got %s", sqli.Severity)
 	}
 	if sqli.Confidence != finding.ConfidenceLow {
-		t.Errorf("confidence: mau low, dapat %s", sqli.Confidence)
+		t.Errorf("confidence: want low, got %s", sqli.Confidence)
 	}
 	if got := strings.Join(sqli.CWE, ","); got != "CWE-89" {
-		t.Errorf("CWE: mau CWE-89, dapat %q", got)
+		t.Errorf("CWE: want CWE-89, got %q", got)
 	}
 	if sqli.SourceEngine != "bandit" {
-		t.Errorf("source engine salah: %s", sqli.SourceEngine)
+		t.Errorf("wrong source engine: %s", sqli.SourceEngine)
 	}
 	if sqli.Evidence == nil || !strings.Contains(sqli.Evidence.Matched, "SELECT") {
-		t.Error("evidence code hilang")
+		t.Error("the evidence code is missing")
 	}
 	if len(sqli.References) != 2 { // more_info + cwe link
-		t.Errorf("mau 2 referensi, dapat %d (%v)", len(sqli.References), sqli.References)
+		t.Errorf("want 2 references, got %d (%v)", len(sqli.References), sqli.References)
 	}
 	md5 := findByType(fs, "B303")
 	if md5 == nil || md5.Severity != finding.SeverityHigh || md5.Confidence != finding.ConfidenceHigh {
-		t.Errorf("B303: mau high/high, dapat %v", md5)
+		t.Errorf("B303: want high/high, got %v", md5)
 	}
 }
 
@@ -82,19 +82,19 @@ func TestParseBanditEmpty(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(fs) != 0 {
-		t.Errorf("mau 0 temuan, dapat %d", len(fs))
+		t.Errorf("want 0 findings, got %d", len(fs))
 	}
 }
 
 func TestParseBanditInvalid(t *testing.T) {
-	if _, err := parseBandit(strings.NewReader("bukan json"), "/scan"); err == nil {
-		t.Error("mau error pada json rusak")
+	if _, err := parseBandit(strings.NewReader("not json"), "/scan"); err == nil {
+		t.Error("want an error on broken json")
 	}
 }
 
 func TestBanditRegistered(t *testing.T) {
 	if _, ok := Lookup("bandit"); !ok {
-		t.Error("adapter bandit tak terdaftar")
+		t.Error("the bandit adapter is not registered")
 	}
 }
 
@@ -105,7 +105,7 @@ func TestMapBanditSeverity(t *testing.T) {
 	}
 	for in, want := range cases {
 		if got := mapBanditSeverity(in); got != want {
-			t.Errorf("mapBanditSeverity(%q): mau %s, dapat %s", in, want, got)
+			t.Errorf("mapBanditSeverity(%q): want %s, got %s", in, want, got)
 		}
 	}
 }

@@ -1,9 +1,9 @@
-// Package jobs menyediakan antrean kerja in-process: scan dijalankan di latar
-// belakang oleh worker pool sehingga request web tidak memblok (prinsip PRD:
-// "eksekusi scan asinkron lewat job queue agar UI tetap responsif").
+// Package jobs provides an in-process work queue: scans run in the background
+// on a worker pool so web requests do not block (PRD principle: "scans run
+// asynchronously through a job queue so the UI stays responsive").
 //
-// Antrean ini sengaja sederhana (in-process, tanpa Redis) sesuai keputusan M0/M1
-// untuk tim kecil.
+// The queue is simple on purpose (in-process, no Redis), following the M0/M1
+// decision for a small team.
 package jobs
 
 import (
@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-// Status adalah keadaan sebuah run.
+// Status is the state of a run.
 type Status string
 
 const (
@@ -24,30 +24,31 @@ const (
 	Running   Status = "running"
 	Done      Status = "done"
 	Failed    Status = "failed"
-	Cancelled Status = "cancelled" // dihentikan pengguna (Stop) sebelum selesai
+	Cancelled Status = "cancelled" // stopped by the user (Stop) before it finished
 )
 
-// Summary adalah ringkasan hasil scan yang disimpan di Run. Sengaja generik
-// (angka + daftar string) agar paket jobs tak bergantung pada orchestrator.
+// Summary is the scan result summary stored on a Run. It is generic on purpose
+// (numbers + string lists) so package jobs does not depend on the orchestrator.
 type Summary struct {
 	Discovered int
 	Scanned    []string
 	Saved      int
 	Duplicates int
-	Denied     []string // "target — alasan (lapis)"
-	Warnings   []string // mis. engine gagal di satu target (run tetap selesai)
+	Denied     []string // "target — reason (layer)"
+	Warnings   []string // e.g. an engine failed on one target (the run still finishes)
 }
 
-// Run melacak satu pekerjaan scan.
+// Run tracks one scan job.
 type Run struct {
 	ID      string
 	Program string
 	Label   string
 	Status  Status
-	// Stopping: Stop diminta saat run berjalan; context-nya sudah dibatalkan
-	// dan worker menunggu task berhenti sebelum memfinalkan Cancelled.
+	// Stopping: Stop was requested while the run was in progress; its context is
+	// already cancelled and the worker is waiting for the task to stop before it
+	// finalizes Cancelled.
 	Stopping bool
-	// Summary juga terisi pada run gagal/dihentikan (hasil parsial).
+	// Summary is also filled in for failed or stopped runs (partial results).
 	Summary    Summary
 	Err        string
 	EnqueuedAt time.Time
@@ -55,9 +56,9 @@ type Run struct {
 	FinishedAt time.Time
 }
 
-// Task adalah pekerjaan yang dijalankan worker. Menerima ctx milik QUEUE (bukan
-// request HTTP) agar scan tetap berjalan setelah response web dikirim; ctx itu
-// dibatalkan hanya oleh Cancel(runID).
+// Task is the work a worker runs. It receives a ctx owned by the QUEUE (not by
+// the HTTP request) so the scan keeps running after the web response is sent;
+// only Cancel(runID) cancels that ctx.
 type Task func(ctx context.Context, runID string) (Summary, error)
 
 type job struct {
@@ -65,25 +66,25 @@ type job struct {
 	task Task
 }
 
-// Store mempersistenkan riwayat run agar selamat dari restart/redeploy proses.
-// Opsional: bila Queue dibuat tanpa store, ia tetap murni in-memory (perilaku
-// lama). Implementasi (store.SQLite / store.Mem) menyerialkan Run; paket jobs
-// tetap tak tahu detail penyimpanan (port, bukan dependensi ke store).
+// Store persists the run history so it survives a process restart or redeploy.
+// It is optional: a Queue created without a store stays in-memory only (the old
+// behaviour). Implementations (store.SQLite / store.Mem) serialize Run; package
+// jobs knows nothing about storage details (a port, not a dependency on store).
 type Store interface {
-	// LoadRuns mengembalikan semua run tersimpan, TERLAMA dulu (urutan enqueue).
+	// LoadRuns returns every stored run, OLDEST first (enqueue order).
 	LoadRuns(ctx context.Context) ([]*Run, error)
-	// SaveRun menyimpan/menimpa satu run (write-through tiap transisi status).
+	// SaveRun saves or overwrites one run (write-through on every status transition).
 	SaveRun(ctx context.Context, r *Run) error
-	// DeleteRun menghapus satu run dari penyimpanan.
+	// DeleteRun removes one run from storage.
 	DeleteRun(ctx context.Context, id string) error
 }
 
-// Option mengonfigurasi Queue saat New.
+// Option configures a Queue at New.
 type Option func(*Queue)
 
-// WithStore membuat Queue mempersistenkan riwayat run: write-through tiap
-// transisi status + memuat ulang saat start (run yatim difinalkan Failed).
-// store nil = no-op (tetap in-memory).
+// WithStore makes the Queue persist the run history: write-through on every
+// status transition, and a reload at start (orphan runs are finalized as
+// Failed). A nil store is a no-op (the queue stays in-memory).
 func WithStore(s Store) Option {
 	return func(q *Queue) {
 		if s != nil {
@@ -92,24 +93,24 @@ func WithStore(s Store) Option {
 	}
 }
 
-// Queue adalah worker pool in-process dengan pelacakan status.
+// Queue is an in-process worker pool with status tracking.
 type Queue struct {
 	ch    chan job
 	base  context.Context
 	now   func() time.Time
-	store Store // opsional: persistensi riwayat run (nil = in-memory saja)
+	store Store // optional: run history persistence (nil = in-memory only)
 
 	mu      sync.RWMutex
 	runs    map[string]*Run
 	order   []string
-	cancels map[string]context.CancelFunc // run berjalan → pembatal context-nya
+	cancels map[string]context.CancelFunc // running run → the cancel func of its context
 
 	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
 
-// New membuat Queue dengan n worker (minimal 1) dan langsung menjalankannya.
-// Dengan WithStore, riwayat run dipersist & dimuat ulang saat start.
+// New creates a Queue with n workers (at least 1) and starts them right away.
+// With WithStore the run history is persisted and reloaded at start.
 func New(workers int, opts ...Option) *Queue {
 	if workers < 1 {
 		workers = 1
@@ -125,7 +126,7 @@ func New(workers int, opts ...Option) *Queue {
 		opt(q)
 	}
 	if q.store != nil {
-		q.loadAndReconcile() // sebelum worker jalan: aman tanpa lock
+		q.loadAndReconcile() // before the workers start: safe without the lock
 	}
 	q.wg.Add(workers)
 	for i := 0; i < workers; i++ {
@@ -134,17 +135,17 @@ func New(workers int, opts ...Option) *Queue {
 	return q
 }
 
-// loadAndReconcile memuat riwayat run tersimpan ke pelacakan in-memory saat start.
-// Run yang tersimpan sebagai Queued/Running adalah YATIM — proses yang
-// menjalankannya sudah mati (restart/redeploy), worker & subprocess engine-nya
-// hilang — jadi difinalkan Failed dengan catatan jelas dan koreksinya dipersist.
-// Dipanggil dari New sebelum worker start (tanpa pesaing → tak perlu lock).
+// loadAndReconcile loads the stored run history into in-memory tracking at
+// start. A run stored as Queued/Running is an ORPHAN: the process that ran it
+// is dead (restart/redeploy) and its worker and engine subprocesses are gone.
+// It is finalized as Failed with a clear note, and the correction is persisted.
+// Called from New before the workers start (no competitors → no lock needed).
 func (q *Queue) loadAndReconcile() {
 	ctx, cancel := context.WithTimeout(q.base, 10*time.Second)
 	defer cancel()
 	runs, err := q.store.LoadRuns(ctx)
 	if err != nil {
-		log.Printf("jobs: muat riwayat run gagal (lanjut tanpa riwayat): %v", err)
+		log.Printf("jobs: loading the run history failed (continuing without it): %v", err)
 		return
 	}
 	for _, r := range runs {
@@ -152,13 +153,13 @@ func (q *Queue) loadAndReconcile() {
 			r.Status = Failed
 			r.Stopping = false
 			if r.Err == "" {
-				r.Err = "terputus saat proses berhenti (restart/redeploy)"
+				r.Err = "interrupted when the process stopped (restart/redeploy)"
 			}
 			if r.FinishedAt.IsZero() {
 				r.FinishedAt = q.now().UTC()
 			}
 			if err := q.store.SaveRun(ctx, r); err != nil {
-				log.Printf("jobs: koreksi run yatim %s gagal dipersist: %v", r.ID, err)
+				log.Printf("jobs: persisting the fix for orphan run %s failed: %v", r.ID, err)
 			}
 		}
 		q.runs[r.ID] = r
@@ -166,11 +167,12 @@ func (q *Queue) loadAndReconcile() {
 	}
 }
 
-// persist menyimpan salinan run ke store (best-effort, DIPANGGIL DI LUAR lock
-// queue). Galat hanya di-log: kegagalan durabilitas tak boleh menggagalkan scan,
-// dan transisi berikutnya menyimpan ulang run utuh. Penulis per-run selalu
-// terurut (Enqueue→begin→finish dalam goroutine worker yang sama; Enqueue persist
-// sebelum kirim ke channel) sehingga tulisan tak saling mendahului.
+// persist saves a copy of the run to the store (best effort, CALLED OUTSIDE the
+// queue lock). Errors are only logged: a durability failure must not fail the
+// scan, and the next transition saves the whole run again. Writes for one run
+// are always ordered (Enqueue→begin→finish in the same worker goroutine;
+// Enqueue persists before sending to the channel), so they cannot overtake
+// each other.
 func (q *Queue) persist(r *Run) {
 	if q.store == nil || r == nil {
 		return
@@ -178,7 +180,7 @@ func (q *Queue) persist(r *Run) {
 	ctx, cancel := context.WithTimeout(q.base, 5*time.Second)
 	defer cancel()
 	if err := q.store.SaveRun(ctx, r); err != nil {
-		log.Printf("jobs: simpan run %s gagal: %v", r.ID, err)
+		log.Printf("jobs: saving run %s failed: %v", r.ID, err)
 	}
 }
 
@@ -189,7 +191,7 @@ func (q *Queue) deleteFromStore(id string) {
 	ctx, cancel := context.WithTimeout(q.base, 5*time.Second)
 	defer cancel()
 	if err := q.store.DeleteRun(ctx, id); err != nil {
-		log.Printf("jobs: hapus run %s gagal: %v", id, err)
+		log.Printf("jobs: deleting run %s failed: %v", id, err)
 	}
 }
 
@@ -205,8 +207,8 @@ func (q *Queue) worker() {
 	}
 }
 
-// begin menandai run berjalan dan mendaftarkan pembatalnya. false = run sudah
-// dihentikan selagi antre, jadi tak dijalankan.
+// begin marks the run as running and registers its cancel func. false = the run
+// was stopped while queued, so it is not run.
 func (q *Queue) begin(id string, cancel context.CancelFunc) bool {
 	q.mu.Lock()
 	r, ok := q.runs[id]
@@ -223,8 +225,8 @@ func (q *Queue) begin(id string, cancel context.CancelFunc) bool {
 	return true
 }
 
-// finish memfinalkan run. Galat setelah Stop diminta = Cancelled, bukan Failed;
-// task yang tetap tuntas walau Stop diminta tetap Done.
+// finish finalizes the run. An error after Stop was requested = Cancelled, not
+// Failed; a task that completes even though Stop was requested is still Done.
 func (q *Queue) finish(id string, sum Summary, err error) {
 	q.mu.Lock()
 	delete(q.cancels, id)
@@ -251,11 +253,11 @@ func (q *Queue) finish(id string, sum Summary, err error) {
 	q.persist(&c)
 }
 
-// Cancel menghentikan run. Run antre langsung Cancelled (tak pernah jalan); run
-// berjalan dibatalkan lewat context-nya (subprocess engine ikut dibunuh
-// exec.CommandContext) lalu difinalkan worker. true hanya bila panggilan INI
-// yang menghentikan; false untuk run tak dikenal, sudah selesai, atau sudah
-// sedang dihentikan (idempoten).
+// Cancel stops a run. A queued run becomes Cancelled right away (it never
+// runs); a running run is cancelled through its context (exec.CommandContext
+// kills the engine subprocesses too) and the worker then finalizes it. It
+// returns true only when THIS call did the stopping; false for an unknown run,
+// a finished run, or one that is already being stopped (idempotent).
 func (q *Queue) Cancel(id string) bool {
 	q.mu.Lock()
 	r, ok := q.runs[id]
@@ -269,7 +271,7 @@ func (q *Queue) Cancel(id string) bool {
 		r.FinishedAt = q.now().UTC()
 		c := *r
 		q.mu.Unlock()
-		q.persist(&c) // terminal; worker melewati begin() → finish() tak jalan, ini satu-satunya penulis
+		q.persist(&c) // terminal; the worker skips begin() → finish() never runs, so this is the only writer
 		return true
 	case r.Status == Running && !r.Stopping:
 		r.Stopping = true
@@ -277,19 +279,20 @@ func (q *Queue) Cancel(id string) bool {
 			cancel()
 		}
 		q.mu.Unlock()
-		// Transisi "stopping" transient TIDAK dipersist: finish() yang menyimpan
-		// status terminal (Cancelled). Menghindari balapan tulis dgn persist finish().
+		// The transient "stopping" transition is NOT persisted: finish() saves the
+		// terminal status (Cancelled). This avoids a write race with finish()'s persist.
 		return true
 	}
 	q.mu.Unlock()
 	return false
 }
 
-// Remove membuang run yang SUDAH BERAKHIR (done/failed/cancelled) dari riwayat
-// in-memory (panel Proses scanning). Run antre/berjalan TAK bisa dihapus — Stop
-// dulu — agar worker & subprocess engine tak jadi yatim (invarian: hanya run
-// non-aktif yang hilang dari pelacakan). false = run tak dikenal atau masih aktif.
-// Tak menyentuh store/temuan/audit; murni housekeeping daftar pemantauan.
+// Remove drops a run that has ALREADY ENDED (done/failed/cancelled) from the
+// in-memory history (the scan progress panel). A queued or running run CANNOT
+// be removed (stop it first), so its worker and engine subprocesses are not
+// orphaned (invariant: only inactive runs leave tracking). false = unknown run
+// or still active. It does not touch the store, findings or audit; it is
+// housekeeping for the monitoring list only.
 func (q *Queue) Remove(id string) bool {
 	q.mu.Lock()
 	r, ok := q.runs[id]
@@ -309,10 +312,11 @@ func (q *Queue) Remove(id string) bool {
 	return true
 }
 
-// RemoveByProgram membuang semua run BERAKHIR (done/failed/cancelled) milik sebuah
-// program dari riwayat (in-memory + store). Run antre/berjalan dilewati (invarian
-// sama dgn Remove: jangan yatimkan worker/subprocess). Dipakai saat temuan program
-// dibersihkan agar riwayat run tak jadi yatim. Mengembalikan jumlah yang dibuang.
+// RemoveByProgram drops every ENDED run (done/failed/cancelled) of a program
+// from the history (in-memory + store). Queued and running runs are skipped
+// (same invariant as Remove: do not orphan workers or subprocesses). It is used
+// when a program's findings are cleared, so the run history is not left
+// orphaned. It returns the number of runs dropped.
 func (q *Queue) RemoveByProgram(program string) int {
 	q.mu.Lock()
 	gone := map[string]bool{}
@@ -340,18 +344,18 @@ func (q *Queue) RemoveByProgram(program string) int {
 	return len(gone)
 }
 
-// runTask menjalankan task dan memulihkan panik menjadi error.
+// runTask runs the task and turns a panic into an error.
 func runTask(ctx context.Context, j job) (sum Summary, err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			err = fmt.Errorf("panic saat scan: %v", p)
+			err = fmt.Errorf("panic during scan: %v", p)
 		}
 	}()
 	return j.task(ctx, j.id)
 }
 
-// Enqueue mendaftarkan pekerjaan dan mengembalikan run id SEKETIKA (tidak
-// menunggu pekerjaan selesai).
+// Enqueue registers a job and returns the run id IMMEDIATELY (it does not wait
+// for the job to finish).
 func (q *Queue) Enqueue(program, label string, task Task) string {
 	id := q.newID()
 	run := &Run{ID: id, Program: program, Label: label, Status: Queued, EnqueuedAt: q.now().UTC()}
@@ -360,12 +364,12 @@ func (q *Queue) Enqueue(program, label string, task Task) string {
 	q.order = append(q.order, id)
 	c := *run
 	q.mu.Unlock()
-	q.persist(&c) // persist SEBELUM kirim ke channel → state queued durable sebelum worker bisa memulai
+	q.persist(&c) // persist BEFORE sending to the channel → the queued state is durable before a worker can start
 	q.ch <- job{id: id, task: task}
 	return id
 }
 
-// Get mengembalikan salinan Run.
+// Get returns a copy of the Run.
 func (q *Queue) Get(id string) (*Run, bool) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -377,8 +381,8 @@ func (q *Queue) Get(id string) (*Run, bool) {
 	return &c, true
 }
 
-// List mengembalikan run (salinan) untuk sebuah program, terbaru dulu. program
-// kosong = semua.
+// List returns the runs (copies) of a program, newest first. An empty program
+// means all runs.
 func (q *Queue) List(program string) []*Run {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
@@ -393,8 +397,8 @@ func (q *Queue) List(program string) []*Run {
 	return out
 }
 
-// Close menghentikan penerimaan pekerjaan baru dan menunggu pekerjaan yang
-// tersisa selesai (menguras antrean). Aman dipanggil berkali-kali.
+// Close stops accepting new jobs and waits for the remaining ones to finish
+// (it drains the queue). It is safe to call more than once.
 func (q *Queue) Close() {
 	q.closeOnce.Do(func() { close(q.ch) })
 	q.wg.Wait()

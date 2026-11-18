@@ -1,14 +1,14 @@
 {{define "content"}}
 <div class="report-head">
   <div>
-    <h2>SAST <span class="muted small">(analisis statis · plugin)</span></h2>
-    <p class="muted small">Membaca kode lokal, bukan URL. Analisis dikurung ke satu root (default-deny, tanpa jaringan). Temuan masuk ke skema yang sama &amp; muncul di Findings.</p>
+    <h2>SAST <span class="muted small">(static analysis · plugin)</span></h2>
+    <p class="muted small">It reads local code, not URLs. Analysis is confined to one root (default-deny, no network). Findings enter the same schema &amp; show up in Findings.</p>
   </div>
 </div>
 
 {{if not .Enabled}}
 <div class="empty">
-  <p class="muted">SAST dinonaktifkan. Jalankan server dengan <code>-sast-root &lt;dir&gt;</code> untuk mengaktifkan dan mengurung analisis ke direktori itu.</p>
+  <p class="muted">SAST is disabled. Run the server with <code>-sast-root &lt;dir&gt;</code> to enable it and confine analysis to that directory.</p>
 </div>
 {{else}}
 
@@ -22,7 +22,7 @@
     <label>Program</label>
     <input type="text" name="program" value="{{.Program}}" autocomplete="off" required>
 
-    <label>Subpath <span class="muted small">(relatif terhadap root; kosong = seluruh root)</span></label>
+    <label>Subpath <span class="muted small">(relative to the root; empty = the whole root)</span></label>
     <input type="text" name="subpath" value="{{.Subpath}}" autocomplete="off" placeholder=".">
 
     <label>Adapter</label>
@@ -31,25 +31,25 @@
     </select>
 
     <div class="actions">
-      <button type="submit" class="btn primary">Jalankan SAST</button>
-      <span class="muted small">lokal · tanpa jaringan · tanpa auto-submit</span>
+      <button type="submit" class="btn primary">Run SAST</button>
+      <span class="muted small">local · no network · no auto-submit</span>
     </div>
   </form>
 
   <div class="card">
-    <h2>Hasil</h2>
+    <h2>Result</h2>
     {{if .Result}}
     <div class="result-summary">
       <span class="chip ok">{{.Result.Engine}}</span>
       <span class="chip">path: {{if .Result.Path}}{{.Result.Path}}{{else}}(root){{end}}</span>
-      <span class="chip good">{{.Result.Saved}} temuan baru</span>
-      <span class="chip">{{.Result.Duplicates}} duplikat</span>
+      <span class="chip good">{{.Result.Saved}} new findings</span>
+      <span class="chip">{{.Result.Duplicates}} duplicates</span>
     </div>
     <div class="actions">
-      <a class="btn" href="/findings?program={{.Program}}">Lihat findings →</a>
+      <a class="btn" href="/findings?program={{.Program}}">View findings →</a>
     </div>
     {{else}}
-    <p class="muted">Pilih program, subpath, dan adapter lalu jalankan. Path di luar root ditolak (dicatat ke audit).</p>
+    <p class="muted">Pick a program, a subpath and an adapter, then run. A path outside the root is denied (recorded to the audit).</p>
     {{end}}
   </div>
 </div>

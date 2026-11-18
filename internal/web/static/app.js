@@ -1,11 +1,12 @@
-// app.js — helper UI kecil (tanpa dependency). Dimuat sekali lewat base.html;
-// fungsi global dipanggil dari atribut onclick, termasuk pada konten yang
-// disisipkan HTMX (handler inline tetap berjalan setelah swap).
+// app.js: small UI helpers (no dependencies). Loaded once through base.html;
+// the global functions are called from onclick attributes, including on content
+// inserted by HTMX (inline handlers still run after a swap).
 
-// bhCopy menyalin teks blok <pre> tepat setelah toolbar tombol (.ev-head) ke
-// clipboard, untuk ditempel ke Burp Repeater saat verifikasi manual. Memakai
-// Clipboard API (tersedia di localhost/HTTPS) dengan fallback execCommand bila
-// diakses lewat IP non-secure. Memberi umpan balik singkat di label tombol.
+// bhCopy copies the text of the <pre> block right after the button toolbar
+// (.ev-head) to the clipboard, to paste into Burp Repeater during manual
+// verification. It uses the Clipboard API (available on localhost/HTTPS) with an
+// execCommand fallback when accessed over a non-secure IP. It gives brief
+// feedback on the button label.
 function bhCopy(btn) {
   var head = btn.closest('.ev-head');
   var pre = head ? head.nextElementSibling : null;
@@ -13,7 +14,7 @@ function bhCopy(btn) {
   var text = pre.innerText;
   var done = function () {
     var old = btn.textContent;
-    btn.textContent = 'Tersalin ✓';
+    btn.textContent = 'Copied ✓';
     btn.disabled = true;
     setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1400);
   };
@@ -37,12 +38,13 @@ function bhCopyFallback(text, done) {
     document.body.removeChild(ta);
     done();
   } catch (e) {
-    // Diam saja: menyalin adalah kemudahan, bukan jalur kritis.
+    // Stay silent: copying is a convenience, not a critical path.
   }
 }
 
-// bhLoadFile memuat berkas ke textarea di sisi browser: server cukup menerima
-// form biasa, dan isi berkas masih bisa dilihat serta disunting sebelum dikirim.
+// bhLoadFile loads a file into a textarea on the browser side: the server only
+// needs to accept an ordinary form, and the file content can still be seen and
+// edited before it is sent.
 function bhLoadFile(input, targetId) {
   var file = input.files && input.files[0];
   if (!file) return;

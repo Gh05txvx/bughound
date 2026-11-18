@@ -14,10 +14,10 @@ import (
 	"bughound/internal/store"
 )
 
-// TestServerRunHistoryPersistsAcrossRestart membuktikan wiring NewServer: queue
-// di-back store, sehingga riwayat run selamat dari "restart" (server baru atas
-// store yang sama memuat ulang run yang sudah selesai). Ini yang hilang sebelum
-// fitur persistensi — tiap redeploy mengosongkan panel Proses.
+// TestServerRunHistoryPersistsAcrossRestart proves the NewServer wiring: the queue
+// is backed by the store, so the run history survives a "restart" (a new server over the
+// same store reloads the finished runs). This is what was lost before the
+// persistence feature — each redeploy emptied the Processes panel.
 func TestServerRunHistoryPersistsAcrossRestart(t *testing.T) {
 	st := store.NewMem()
 	k, _ := secret.NewRandomKey()
@@ -37,9 +37,9 @@ func TestServerRunHistoryPersistsAcrossRestart(t *testing.T) {
 	id := srv1.queue.Enqueue("demo", "scan demo.test", func(context.Context, string) (jobs.Summary, error) {
 		return jobs.Summary{Saved: 2, Scanned: []string{"demo.test"}}, nil
 	})
-	srv1.Close() // menguras + finish() mem-persist status terminal ke store
+	srv1.Close() // drain + finish() persists the terminal status to the store
 
-	// "Restart": server baru di atas store yang SAMA.
+	// "Restart": a new server over the SAME store.
 	srv2, err := NewServer(cfg)
 	if err != nil {
 		t.Fatalf("NewServer 2: %v", err)
@@ -48,12 +48,12 @@ func TestServerRunHistoryPersistsAcrossRestart(t *testing.T) {
 
 	run, ok := srv2.queue.Get(id)
 	if !ok {
-		t.Fatal("riwayat run harus dimuat ulang setelah restart (queue tak di-back store?)")
+		t.Fatal("the run history must be reloaded after a restart (the queue is not backed by the store?)")
 	}
 	if run.Status != jobs.Done {
-		t.Errorf("status dimuat ulang=%s, ingin done", run.Status)
+		t.Errorf("reloaded status=%s, want done", run.Status)
 	}
 	if run.Summary.Saved != 2 || len(run.Summary.Scanned) != 1 {
-		t.Errorf("summary tak bertahan lintas-restart: %+v", run.Summary)
+		t.Errorf("the summary did not survive the restart: %+v", run.Summary)
 	}
 }

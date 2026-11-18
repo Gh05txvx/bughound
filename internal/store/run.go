@@ -1,11 +1,12 @@
 package store
 
-// Persistensi riwayat run scan (jobs.Run) agar panel Proses & detail run selamat
-// dari restart/redeploy. *SQLite dan *Mem mengimplementasikan jobs.Store; web
-// memasang persistensi queue lewat type assertion (degradasi mulus bila store tak
-// mendukung), sama seperti CatalogStore/AIStore. Run disimpan utuh sebagai doc
-// JSON (pola findings), dengan kolom terindeks (program, enqueued_at) untuk list
-// terurut. Tak ada rahasia di sini — hanya metadata & ringkasan hasil scan.
+// Persistence of the scan run history (jobs.Run) so the Processes panel and the
+// run details survive a restart/redeploy. *SQLite and *Mem implement
+// jobs.Store; the web layer wires queue persistence through a type assertion
+// (graceful degradation when the store does not support it), like
+// CatalogStore/AIStore. A run is stored whole as a JSON doc (the findings
+// pattern), with indexed columns (program, enqueued_at) for sorted lists. There
+// are no secrets here, only metadata and scan result summaries.
 
 import (
 	"context"
@@ -22,14 +23,14 @@ import (
 func (s *SQLite) LoadRuns(ctx context.Context) ([]*jobs.Run, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT doc FROM runs ORDER BY enqueued_at ASC, id ASC`)
 	if err != nil {
-		return nil, fmt.Errorf("store: muat run: %w", err)
+		return nil, fmt.Errorf("store: load runs: %w", err)
 	}
 	defer rows.Close()
 	var out []*jobs.Run
 	for rows.Next() {
 		var doc string
 		if err := rows.Scan(&doc); err != nil {
-			return nil, fmt.Errorf("store: baca run: %w", err)
+			return nil, fmt.Errorf("store: read run: %w", err)
 		}
 		var r jobs.Run
 		if err := json.Unmarshal([]byte(doc), &r); err != nil {
@@ -55,20 +56,20 @@ func (s *SQLite) SaveRun(ctx context.Context, r *jobs.Run) error {
 		r.ID, r.Program, string(r.Status), r.Label,
 		runTime(r.EnqueuedAt), runTime(r.StartedAt), runTime(r.FinishedAt), string(doc))
 	if err != nil {
-		return fmt.Errorf("store: simpan run: %w", err)
+		return fmt.Errorf("store: save run: %w", err)
 	}
 	return nil
 }
 
 func (s *SQLite) DeleteRun(ctx context.Context, id string) error {
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM runs WHERE id=?`, id); err != nil {
-		return fmt.Errorf("store: hapus run: %w", err)
+		return fmt.Errorf("store: delete run: %w", err)
 	}
 	return nil
 }
 
-// runTime memformat waktu ke RFC3339 UTC; zero → "" (kolom tak terisi). Nilai
-// kolom hanya untuk urutan/filter — kebenaran penuh ada di doc JSON.
+// runTime formats a time as RFC3339 UTC; zero → "" (the column stays empty). The
+// column values are only for ordering/filtering; the full truth is in the JSON doc.
 func runTime(t time.Time) string {
 	if t.IsZero() {
 		return ""

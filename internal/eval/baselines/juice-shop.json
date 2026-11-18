@@ -1,90 +1,90 @@
 {
   "name": "juice-shop",
   "target": "OWASP Juice Shop (DAST unauth)",
-  "note": "Acuan ground-truth kelas temuan DAST-detectable tanpa auth. Set A di-skor (recall); set B adalah batas inheren DAST unauth (miss = normal, bukan kegagalan). Item 'opsional' butuh engine tertentu di roster atau sebagian true-negative tervalidasi.",
+  "note": "Ground-truth reference for finding classes that DAST can detect without auth. Set A is scored (recall); set B is the inherent limit of unauthenticated DAST (a miss is normal, not a failure). 'Optional' items need a specific engine in the roster, or are partly validated true negatives.",
   "detectable": [
     {
       "id": "ftp-exposed",
-      "name": "Direktori /ftp terekspos + path traversal",
+      "name": "Exposed /ftp directory + path traversal",
       "category": "exposure",
       "any_keyword": ["/ftp", "directory-listing", "directory listing", "dir-listing"],
-      "note": "butuh discovery (ffuf/robots enrichment) menjangkau /ftp"
+      "note": "needs discovery (ffuf/robots enrichment) to reach /ftp"
     },
     {
       "id": "metrics",
-      "name": "Endpoint /metrics Prometheus terekspos",
+      "name": "Exposed Prometheus /metrics endpoint",
       "category": "exposure",
       "any_keyword": ["/metrics", "prometheus"]
     },
     {
       "id": "robots",
-      "name": "robots.txt ada (menunjuk /ftp)",
+      "name": "robots.txt present (points at /ftp)",
       "category": "info",
       "any_keyword": ["robots.txt", "robots-txt"]
     },
     {
       "id": "weak-headers",
-      "name": "Security header lemah/absen (CSP, HSTS, X-Frame, X-Recruiting)",
+      "name": "Weak or missing security headers (CSP, HSTS, X-Frame, X-Recruiting)",
       "category": "misconfig",
       "any_keyword": ["content-security-policy", "strict-transport", "x-frame-options", "x-content-type", "x-recruiting", "missing-security-header", "security headers", "hsts"]
     },
     {
       "id": "cors",
-      "name": "CORS permisif (cross-domain/cross-origin)",
+      "name": "Permissive CORS (cross-domain/cross-origin)",
       "category": "misconfig",
       "any_keyword": ["cors", "cross-domain", "cross-origin"]
     },
     {
       "id": "fingerprint",
-      "name": "Fingerprint teknologi (Express/Node.js)",
+      "name": "Technology fingerprint (Express/Node.js)",
       "category": "info",
       "any_keyword": ["fingerprint", "tech-detect", "express", "node.js", "nodejs", "banner", "x-powered-by"]
     },
     {
       "id": "api-surface",
-      "name": "Permukaan API /rest/*, /api/* ter-discovery",
+      "name": "API surface /rest/*, /api/* discovered",
       "category": "info",
       "any_keyword": ["/rest", "/api/", "swagger", "openapi", "api-docs"]
     },
     {
       "id": "source-exposed",
-      "name": "Sumber SPA terekspos (main.js / source map)",
+      "name": "Exposed SPA source (main.js / source map)",
       "category": "info",
       "optional": true,
       "any_keyword": ["source-map", "sourcemap", ".js.map", "source code", "source leak"],
-      "note": "source map juice-shop sering true-negative (SPA fallback text/html)"
+      "note": "the juice-shop source map is often a true negative (SPA fallback text/html)"
     },
     {
       "id": "cookie-flags",
-      "name": "Cookie tanpa Secure/HttpOnly",
+      "name": "Cookie without Secure/HttpOnly",
       "category": "misconfig",
       "optional": true,
       "any_keyword": ["cookie", "httponly", "http-only", "secure flag", "samesite", "set-cookie"],
-      "note": "sebagian true-negative tervalidasi di juice-shop"
+      "note": "partly validated as true negatives on juice-shop"
     },
     {
       "id": "outdated-js-deps",
-      "name": "Dependensi JS usang (lib rentan)",
+      "name": "Outdated JS dependencies (vulnerable libs)",
       "category": "deps",
       "optional": true,
       "any_keyword": ["retire", "outdated", "vulnerable-dependency", "jquery", "known-vuln", "unpatched"],
       "any_cwe": ["CWE-1104", "CWE-937", "CWE-1035"],
-      "note": "butuh engine retire.js di roster (tak default)"
+      "note": "needs the retire.js engine in the roster (not on by default)"
     },
     {
       "id": "injection-error",
-      "name": "Injeksi/stack-trace pada input malformed (mis. SQLi error-based)",
+      "name": "Injection/stack trace on malformed input (e.g. error-based SQLi)",
       "category": "injection",
       "optional": true,
       "any_keyword": ["sqli", "sql-injection", "sql injection", "error-based", "stack trace", "stacktrace", "injection"],
-      "note": "butuh engine nuclei-dast; confidence sedang"
+      "note": "needs the nuclei-dast engine; medium confidence"
     }
   ],
   "blind_spots": [
-    "SQLi login bypass (' OR 1=1--) — form interaktif",
-    "Broken access control (admin panel, basket user lain), JWT forgery/weak JWT",
-    "Business logic (kupon/basket/qty negatif)",
-    "Stored XSS (feedback/komentar), CSRF, DOM-XSS search /#/search?q=",
-    "Data sensitif via API ber-auth, 2FA/OAuth, mayoritas challenge gamified"
+    "SQLi login bypass (' OR 1=1--) on an interactive form",
+    "Broken access control (admin panel, another user's basket), JWT forgery/weak JWT",
+    "Business logic (coupons/basket/negative qty)",
+    "Stored XSS (feedback/comments), CSRF, DOM-XSS search /#/search?q=",
+    "Sensitive data through authenticated APIs, 2FA/OAuth, most gamified challenges"
   ]
 }

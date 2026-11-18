@@ -9,17 +9,18 @@ import (
 	"bughound/internal/finding"
 )
 
-// NormalizeSARIF menormalkan laporan SARIF 2.1.0 ke Skema Temuan Seragam.
-// Dipakai bersama oleh adapter SAST yang tool-nya bisa emit SARIF (gitleaks,
-// findsecbugs, dan — lewat adapter masa depan — codeql, dll). engine = nama
-// adapter pemanggil, dipakai untuk SourceEngine agar konsisten dengan registry.
+// NormalizeSARIF normalizes a SARIF 2.1.0 report into the Uniform Finding
+// Schema. It is shared by the SAST adapters whose tool can emit SARIF
+// (gitleaks, findsecbugs and, through future adapters, codeql, etc.). engine =
+// the calling adapter's name, used for SourceEngine so it matches the registry.
 //
-// redact (opsional) menyensor cuplikan kode sebelum disimpan sebagai evidence —
-// WAJIB untuk tool secret-scan (Prinsip #5: secret tak pernah bocor ke store/
-// report). Bila redact mengembalikan string kosong, evidence tak diisi. redact
-// nil = cuplikan dipakai apa adanya (aman untuk SAST kode biasa).
+// redact (optional) masks the code snippet before it is stored as evidence. It
+// is REQUIRED for secret-scanning tools (Principle #5: secrets never leak into
+// the store/reports). When redact returns an empty string, the evidence is not
+// filled in. redact nil = the snippet is used as is (safe for ordinary code
+// SAST).
 //
-// program/run_id/target diisi oleh Run. Tak menyentuh jaringan.
+// program/run_id/target are filled in by Run. It does not touch the network.
 func NormalizeSARIF(data []byte, engine string, redact func(string) string) ([]*finding.Finding, error) {
 	var log sarifLog
 	if err := json.Unmarshal(data, &log); err != nil {
@@ -27,7 +28,7 @@ func NormalizeSARIF(data []byte, engine string, redact func(string) string) ([]*
 	}
 	var fs []*finding.Finding
 	for _, run := range log.Runs {
-		// Index rule by id untuk resolusi metadata (severity default, CWE, help).
+		// Index rules by id to resolve metadata (default severity, CWE, help).
 		byID := make(map[string]*sarifRule, len(run.Tool.Driver.Rules))
 		rules := run.Tool.Driver.Rules
 		for i := range rules {
@@ -97,7 +98,7 @@ func NormalizeSARIF(data []byte, engine string, redact func(string) string) ([]*
 	return fs, nil
 }
 
-// firstLocation mengambil uri/baris/cuplikan dari lokasi fisik pertama.
+// firstLocation takes the uri/line/snippet from the first physical location.
 func firstLocation(locs []sarifLocation) (uri string, line int, snippet string) {
 	for _, l := range locs {
 		p := l.PhysicalLocation
@@ -109,9 +110,9 @@ func firstLocation(locs []sarifLocation) (uri string, line int, snippet string) 
 	return "", 0, ""
 }
 
-// sarifSeverity memetakan severity SARIF. Prioritas: security-severity numerik
-// (konvensi GitHub, paling presisi) → level hasil → level default rule. "error"
-// dianggap high untuk SAST (temuan, bukan sekadar gaya).
+// sarifSeverity maps a SARIF severity. Priority: numeric security-severity
+// (GitHub convention, the most precise) → the result level → the rule's default
+// level. "error" counts as high for SAST (a finding, not just style).
 func sarifSeverity(res sarifResult, rule *sarifRule) finding.Severity {
 	ss := strings.TrimSpace(res.Properties.SecuritySeverity)
 	if ss == "" && rule != nil {
@@ -147,8 +148,8 @@ func sarifSeverity(res sarifResult, rule *sarifRule) finding.Severity {
 	}
 }
 
-// sarifCWE mengumpulkan CWE dari properties.cwe (string atau array) dan dari tag
-// gaya CodeQL "external/cwe/cwe-079" → "CWE-79".
+// sarifCWE collects CWEs from properties.cwe (a string or an array) and from
+// CodeQL-style tags "external/cwe/cwe-079" → "CWE-79".
 func sarifCWE(res sarifResult, rule *sarifRule) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -180,7 +181,7 @@ func sarifCWE(res sarifResult, rule *sarifRule) []string {
 	return out
 }
 
-// cweFromTag mengekstrak CWE dari tag "external/cwe/cwe-079" (format CodeQL).
+// cweFromTag extracts a CWE from the tag "external/cwe/cwe-079" (CodeQL format).
 func cweFromTag(tag string) (string, bool) {
 	t := strings.ToLower(strings.TrimSpace(tag))
 	i := strings.LastIndex(t, "cwe-")
@@ -199,7 +200,7 @@ func cweFromTag(tag string) (string, bool) {
 	return "CWE-" + strings.TrimLeft(num, "0"), true
 }
 
-// normalizeCWECode merapikan satu entri CWE ke bentuk "CWE-###".
+// normalizeCWECode tidies one CWE entry into the "CWE-###" form.
 func normalizeCWECode(c string) string {
 	c = strings.TrimSpace(c)
 	if c == "" {
@@ -212,7 +213,7 @@ func normalizeCWECode(c string) string {
 	if strings.HasPrefix(low, "cwe-") {
 		return "CWE-" + strings.TrimLeft(c[4:], "0")
 	}
-	// angka telanjang
+	// bare number
 	allDigit := true
 	for _, r := range c {
 		if r < '0' || r > '9' {
@@ -226,15 +227,15 @@ func normalizeCWECode(c string) string {
 	return c
 }
 
-// sarifTags menggabungkan tag rule + penanda "sast" dan nama engine.
+// sarifTags joins the rule tags + the "sast" marker and the engine name.
 func sarifTags(engine string, rule *sarifRule) []string {
 	seen := map[string]bool{"sast": true, engine: true}
 	out := []string{"sast", engine}
 	if rule != nil {
 		for _, t := range rule.Properties.Tags {
 			t = strings.TrimSpace(t)
-			// Buang tag teknis CodeQL (external/cwe/..., precision/...) dari daftar
-			// tampil; CWE sudah diangkat ke field CWE.
+			// Drop CodeQL's technical tags (external/cwe/..., precision/...) from the
+			// displayed list; the CWE is already lifted into the CWE field.
 			if t == "" || strings.Contains(t, "/") {
 				continue
 			}
@@ -257,7 +258,7 @@ func sarifRefs(rule *sarifRule) []string {
 	return nil
 }
 
-// --- struktur SARIF 2.1.0 (subset yang kita pakai) ---
+// --- SARIF 2.1.0 structures (the subset we use) ---
 
 type sarifLog struct {
 	Runs []sarifRun `json:"runs"`
@@ -314,15 +315,15 @@ type sarifLocation struct {
 	} `json:"physicalLocation"`
 }
 
-// sarifProps memuat properti yang bisa membawa severity/CWE. cwe bisa berupa
-// string tunggal atau array string, jadi disimpan mentah lalu diurai lentur.
+// sarifProps holds the properties that can carry severity/CWE. cwe can be a
+// single string or an array of strings, so it is kept raw and parsed loosely.
 type sarifProps struct {
 	Tags             []string        `json:"tags"`
 	SecuritySeverity string          `json:"security-severity"`
 	CWE              json.RawMessage `json:"cwe"`
 }
 
-// cweList mengurai properties.cwe yang bisa string atau []string.
+// cweList parses properties.cwe, which can be a string or []string.
 func (p sarifProps) cweList() []string {
 	if len(p.CWE) == 0 {
 		return nil

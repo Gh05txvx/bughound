@@ -10,7 +10,7 @@ import (
 	"bughound/internal/payload"
 )
 
-// catalogStores mengembalikan setiap implementasi CatalogStore untuk diuji paritas.
+// catalogStores returns every CatalogStore implementation for parity tests.
 func catalogStores(t *testing.T) map[string]CatalogStore {
 	t.Helper()
 	sq, err := OpenSQLite(filepath.Join(t.TempDir(), "catalog.db"))
@@ -49,7 +49,7 @@ func TestCatalog_ReplaceAndStats(t *testing.T) {
 				t.Fatalf("CatalogStats: %v", err)
 			}
 			if st.Total != 3 || st.Enabled != 2 {
-				t.Errorf("total=%d enabled=%d, ingin 3/2", st.Total, st.Enabled)
+				t.Errorf("total=%d enabled=%d, want 3/2", st.Total, st.Enabled)
 			}
 			if st.ByEngine["nuclei"] != 2 || st.ByEngine["custom"] != 1 {
 				t.Errorf("byEngine=%v", st.ByEngine)
@@ -74,7 +74,7 @@ func TestCatalog_ReplaceIsAtomicSwap(t *testing.T) {
 			if err := cs.ReplaceCatalog(ctx, sampleCatalog()); err != nil {
 				t.Fatal(err)
 			}
-			// Refresh kedua dengan katalog lebih kecil harus MENGGANTI, bukan menambah.
+			// A second refresh with a smaller catalog must REPLACE it, not add to it.
 			smaller := payload.Catalog{
 				BuiltAt: time.Now().UTC(),
 				Entries: []payload.Entry{{TemplateID: "nuclei:only-one", Source: "nuclei-official", Engine: "nuclei", Name: "Only", Type: "only-one", SeverityDefault: finding.SeverityInfo, Trust: payload.TrustTrusted, Version: "sha256:z", Enabled: true}},
@@ -85,11 +85,11 @@ func TestCatalog_ReplaceIsAtomicSwap(t *testing.T) {
 			}
 			st, _ := cs.CatalogStats(ctx)
 			if st.Total != 1 {
-				t.Errorf("total setelah swap=%d, ingin 1 (katalog lama harus terganti)", st.Total)
+				t.Errorf("total after swap=%d, want 1 (the old catalog must be replaced)", st.Total)
 			}
 			srcs, _ := cs.ListCatalogSources(ctx)
 			if len(srcs) != 1 {
-				t.Errorf("sumber setelah swap=%d, ingin 1", len(srcs))
+				t.Errorf("sources after swap=%d, want 1", len(srcs))
 			}
 		})
 	}
@@ -114,7 +114,7 @@ func TestCatalog_ListFilters(t *testing.T) {
 				{CatalogQuery{Enabled: "0"}, 1},
 				{CatalogQuery{Tag: "ssrf"}, 1},
 				{CatalogQuery{Tag: "exposure"}, 1},
-				{CatalogQuery{Search: "redirect"}, 1},   // cocok nama & id
+				{CatalogQuery{Search: "redirect"}, 1},   // matches name and id
 				{CatalogQuery{Search: "PROMETHEUS"}, 1},  // case-insensitive
 				{CatalogQuery{Engine: "nuclei", Enabled: "1"}, 2},
 			}
@@ -124,13 +124,13 @@ func TestCatalog_ListFilters(t *testing.T) {
 					t.Fatalf("ListCatalog(%+v): %v", c.q, err)
 				}
 				if total != c.want || len(got) != c.want {
-					t.Errorf("ListCatalog(%+v) total=%d len=%d, ingin %d", c.q, total, len(got), c.want)
+					t.Errorf("ListCatalog(%+v) total=%d len=%d, want %d", c.q, total, len(got), c.want)
 				}
 			}
-			// Urutan: severity terberat dulu (high, medium, low).
+			// Order: the most severe first (high, medium, low).
 			got, _, _ := cs.ListCatalog(ctx, CatalogQuery{})
 			if got[0].SeverityDefault != finding.SeverityHigh || got[2].SeverityDefault != finding.SeverityLow {
-				t.Errorf("urutan severity salah: %s..%s", got[0].SeverityDefault, got[2].SeverityDefault)
+				t.Errorf("wrong severity order: %s..%s", got[0].SeverityDefault, got[2].SeverityDefault)
 			}
 		})
 	}
@@ -148,14 +148,14 @@ func TestCatalog_Pagination(t *testing.T) {
 				t.Fatal(err)
 			}
 			if total != 3 || len(got) != 2 {
-				t.Errorf("hal 1: total=%d len=%d, ingin 3/2", total, len(got))
+				t.Errorf("page 1: total=%d len=%d, want 3/2", total, len(got))
 			}
 			got2, _, _ := cs.ListCatalog(ctx, CatalogQuery{Limit: 2, Offset: 2})
 			if len(got2) != 1 {
-				t.Errorf("hal 2: len=%d, ingin 1", len(got2))
+				t.Errorf("page 2: len=%d, want 1", len(got2))
 			}
 			if got[0].TemplateID == got2[0].TemplateID {
-				t.Errorf("paginasi tumpang tindih: %s", got[0].TemplateID)
+				t.Errorf("pages overlap: %s", got[0].TemplateID)
 			}
 		})
 	}

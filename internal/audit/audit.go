@@ -1,13 +1,13 @@
-// Package audit menyimpan audit trail yang utuh dan tak bisa dihapus diam-diam
-// (prinsip mengikat bughound #6). Setiap entri mengikat hash entri sebelumnya
-// dalam rantai HMAC-SHA256 ber-kunci; menghapus atau mengubah entri memutus
-// rantai dan terdeteksi oleh Verify. API hanya Append + List + Verify — tidak
-// ada Delete/Update, sehingga append-only secara kontrak.
+// Package audit stores an audit trail that stays intact and cannot be deleted
+// silently (binding bughound principle #6). Each entry binds the hash of the
+// previous entry in a keyed HMAC-SHA256 chain; deleting or changing an entry
+// breaks the chain and Verify detects it. The API is only Append + List +
+// Verify. There is no Delete or Update, so the log is append-only by contract.
 //
-// Kunci HMAC diturunkan dari master key (secret.Keyring.Subkey), jadi rantai
-// tak bisa dihitung ulang tanpa kunci. Penghapusan/trunkasi SELURUH log (di
-// luar aplikasi) menghasilkan rantai pendek yang masih valid internal; itu
-// ditutup oleh anchoring eksternal opsional (lihat anchor.go, BH-F06).
+// The HMAC key is derived from the master key (secret.Keyring.Subkey), so the
+// chain cannot be recomputed without the key. Deleting or truncating the WHOLE
+// log (outside the application) leaves a short chain that is still internally
+// valid; optional external anchoring covers that (see anchor.go, BH-F06).
 package audit
 
 import (
@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-// Event adalah satu entri audit. Hash & PrevHash diisi oleh Append.
+// Event is one audit entry. Append fills in Hash and PrevHash.
 type Event struct {
 	Seq      int64
 	Time     time.Time
@@ -35,7 +35,7 @@ type Event struct {
 	Hash     string
 }
 
-// content mengembalikan byte kanonik entri (TANPA Hash/PrevHash) untuk di-MAC.
+// content returns the canonical bytes of the entry (WITHOUT Hash/PrevHash) to be MACed.
 func (e Event) content() []byte {
 	type payload struct {
 		Seq      int64  `json:"seq"`
@@ -64,7 +64,7 @@ func mac(key []byte, prevHash string, e Event) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Filter membatasi List.
+// Filter narrows List.
 type Filter struct {
 	Program string
 	RunID   string
@@ -72,35 +72,35 @@ type Filter struct {
 	Limit   int
 }
 
-// Result adalah hasil Verify.
+// Result is the outcome of Verify.
 type Result struct {
 	OK       bool
 	Count    int64
-	BrokenAt int64  // seq entri pertama yang rusak (0 bila OK)
-	Reason   string // alasan kerusakan (kosong bila OK)
-	Anchors  int64  // jumlah anchor eksternal yang dicek (0 bila tak ada anchorer)
+	BrokenAt int64  // seq of the first broken entry (0 when OK)
+	Reason   string // why it is broken (empty when OK)
+	Anchors  int64  // number of external anchors checked (0 when there is no anchorer)
 }
 
-// Log adalah audit trail append-only.
+// Log is the append-only audit trail.
 type Log interface {
 	Append(ctx context.Context, e Event) (Event, error)
-	List(ctx context.Context, f Filter) ([]Event, error) // terbaru dulu
+	List(ctx context.Context, f Filter) ([]Event, error) // newest first
 	Verify(ctx context.Context) (Result, error)
 	Close() error
 }
 
-// verifyChain memeriksa rantai pada entri terurut seq menaik.
+// verifyChain checks the chain over entries ordered by ascending seq.
 func verifyChain(key []byte, events []Event) Result {
 	prev := ""
 	for i, e := range events {
 		if e.Seq != int64(i)+1 {
-			return Result{OK: false, BrokenAt: e.Seq, Reason: "urutan seq tidak kontigu (entri mungkin dihapus)"}
+			return Result{OK: false, BrokenAt: e.Seq, Reason: "seq order is not contiguous (an entry may have been deleted)"}
 		}
 		if e.PrevHash != prev {
-			return Result{OK: false, BrokenAt: e.Seq, Reason: "mata rantai prev_hash putus"}
+			return Result{OK: false, BrokenAt: e.Seq, Reason: "prev_hash link is broken"}
 		}
 		if e.Hash != mac(key, prev, e) {
-			return Result{OK: false, BrokenAt: e.Seq, Reason: "hash tidak cocok (entri diubah)"}
+			return Result{OK: false, BrokenAt: e.Seq, Reason: "hash mismatch (the entry was changed)"}
 		}
 		prev = e.Hash
 	}
@@ -129,7 +129,7 @@ func applyFilter(events []Event, f Filter) []Event {
 		}
 		out = append(out, e)
 	}
-	out = reversed(out) // terbaru dulu
+	out = reversed(out) // newest first
 	if f.Limit > 0 && len(out) > f.Limit {
 		out = out[:f.Limit]
 	}

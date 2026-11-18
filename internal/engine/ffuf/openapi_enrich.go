@@ -10,15 +10,14 @@ import (
 	"bughound/internal/openapi"
 )
 
-// Enrichment OpenAPI/Swagger. Banyak API memublikasikan spec di lokasi well-known
-// (atau menyematkannya di swagger-ui-init.js). Endpoint terdokumentasi adalah
-// kandidat probe bernilai tinggi. bughound mengambil spec lewat proxy egress yang
-// SAMA dengan ffuf (scope-enforced), mem-parse-nya via paket internal/openapi,
-// lalu menggabungkan PATH endpoint ke wordlist (diprobe ffuf -> temuan
-// exposed-path). Best-effort: tak ada spec/parse gagal = tanpa enrichment, bukan
-// error.
+// OpenAPI/Swagger enrichment. Many APIs publish a spec at a well-known location
+// (or embed it in swagger-ui-init.js). Documented endpoints are high-value probe
+// candidates. bughound fetches the spec through the SAME scope-enforced egress
+// proxy as ffuf, parses it with the internal/openapi package, then merges the
+// endpoint PATHs into the wordlist (probed by ffuf into exposed-path findings).
+// Best-effort: no spec or a failed parse means no enrichment, not an error.
 
-// Lokasi spec well-known (standalone JSON/YAML) + swagger-ui-init.js (JS-embedded).
+// Well-known spec locations (standalone JSON/YAML) plus swagger-ui-init.js (JS-embedded).
 var specLocations = []string{
 	"/openapi.json",
 	"/swagger.json",
@@ -26,14 +25,14 @@ var specLocations = []string{
 	"/v2/api-docs",
 	"/api-docs.json",
 	"/swagger/v1/swagger.json",
-	"/api-docs/swagger-ui-init.js", // swagger-ui menyematkan "swaggerDoc": {...}
+	"/api-docs/swagger-ui-init.js", // swagger-ui embeds "swaggerDoc": {...}
 }
 
-const maxSpecPaths = 300 // batas endpoint yang diambil dari spec
+const maxSpecPaths = 300 // cap on endpoints taken from the spec
 
-// specPaths mengambil spec dari lokasi well-known lewat proxy egress lalu
-// mengembalikan PATH endpoint (bentuk FUZZ). Tanpa proxy -> nil (fail-safe:
-// tak pernah ada koneksi ke target yang memintas scope guard).
+// specPaths fetches the spec from well-known locations through the egress proxy
+// and returns the endpoint PATHs (FUZZ form). Without a proxy it returns nil
+// (fail-safe: no connection to the target ever bypasses the scope guard).
 func (r *Runner) specPaths(ctx context.Context, target string) []string {
 	if r.proxyAddr == "" {
 		return nil
@@ -49,9 +48,9 @@ func (r *Runner) specPaths(ctx context.Context, target string) []string {
 	return specPathsFrom(ctx, client, base, r.authHeaders...)
 }
 
-// specPathsFrom mencoba tiap lokasi well-known dengan client apa adanya dan
-// mengembalikan path dari spec pertama yang valid. Dipisah agar bisa diuji tanpa
-// proxy (client langsung ke server uji).
+// specPathsFrom tries each well-known location with the given client and returns
+// the paths from the first valid spec. Split out so it can be tested without a
+// proxy (the client talks straight to the test server).
 func specPathsFrom(ctx context.Context, client *http.Client, base string, hdrs ...string) []string {
 	base = strings.TrimRight(base, "/")
 	for _, loc := range specLocations {
@@ -60,10 +59,10 @@ func specPathsFrom(ctx context.Context, client *http.Client, base string, hdrs .
 			continue
 		}
 		if strings.HasSuffix(loc, ".js") {
-			body = extractSwaggerDoc(body) // ambil objek swaggerDoc dari JS swagger-ui
+			body = extractSwaggerDoc(body) // pull the swaggerDoc object out of the swagger-ui JS
 		}
 		if !looksLikeSpec(body) {
-			continue // hindari mem-parse HTML catch-all SPA sebagai spec
+			continue // avoid parsing a catch-all SPA's HTML as a spec
 		}
 		eps, err := openapi.Endpoints(body, base)
 		if err != nil {
@@ -76,7 +75,7 @@ func specPathsFrom(ctx context.Context, client *http.Client, base string, hdrs .
 	return nil
 }
 
-// fetchBody GET sebuah URL dan mengembalikan body (dibatasi) hanya bila 200.
+// fetchBody GETs a URL and returns the (capped) body only on a 200.
 func fetchBody(ctx context.Context, client *http.Client, u string, hdrs []string) []byte {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -91,23 +90,23 @@ func fetchBody(ctx context.Context, client *http.Client, u string, hdrs []string
 	if resp.StatusCode != http.StatusOK {
 		return nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*maxRobotsBytes)) // spec bisa > robots
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*maxRobotsBytes)) // a spec can be larger than robots
 	return body
 }
 
-// looksLikeSpec: sniff cepat supaya HTML catch-all SPA tak diumpankan ke parser.
-// Semua spec OpenAPI/Swagger punya objek "paths".
+// looksLikeSpec: a quick sniff so a catch-all SPA's HTML is not fed to the parser.
+// Every OpenAPI/Swagger spec has a "paths" object.
 func looksLikeSpec(body []byte) bool {
 	s := strings.TrimSpace(string(body))
 	if s == "" || strings.HasPrefix(s, "<") {
-		return false // kosong atau HTML
+		return false // empty or HTML
 	}
 	return strings.Contains(s, "\"paths\"") || strings.Contains(s, "paths:")
 }
 
-// extractSwaggerDoc mengekstrak objek JSON setelah "swaggerDoc": dari isi
-// swagger-ui-init.js (penghitungan kurung berimbang, abai kurung di dalam string).
-// Kosong bila tak ditemukan.
+// extractSwaggerDoc extracts the JSON object after "swaggerDoc": from the body
+// of swagger-ui-init.js (balanced-brace counting, ignoring braces inside strings).
+// Empty when not found.
 func extractSwaggerDoc(js []byte) []byte {
 	s := string(js)
 	i := strings.Index(s, "\"swaggerDoc\"")
@@ -148,9 +147,10 @@ func extractSwaggerDoc(js []byte) []byte {
 	return nil
 }
 
-// endpointPaths mengubah URL endpoint absolut (keluaran openapi.Endpoints) menjadi
-// PATH bentuk FUZZ (tanpa slash tepi). Host diabaikan — path tetap diprobe thd
-// target scan & ditegakkan scope guard saat probe. Ter-dedup & dibatasi.
+// endpointPaths turns absolute endpoint URLs (from openapi.Endpoints) into
+// FUZZ-form PATHs (no edge slashes). The host is ignored; the path is still
+// probed against the scan target and enforced by the scope guard at probe time.
+// Deduped and capped.
 func endpointPaths(urls []string) []string {
 	seen := map[string]bool{}
 	var out []string

@@ -1,6 +1,6 @@
 import { type Page, type Locator } from '@playwright/test';
 
-/** Daftar program (definisi scope tersimpan). */
+/** Program list (the stored scope definitions). */
 export class ProgramsPage {
   constructor(private readonly page: Page) {}
 
@@ -9,7 +9,7 @@ export class ProgramsPage {
   }
 
   async newProgram() {
-    await this.page.getByRole('link', { name: '+ Program baru' }).click();
+    await this.page.getByRole('link', { name: '+ New program' }).click();
   }
 
   row(name: string): Locator {

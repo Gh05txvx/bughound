@@ -1,51 +1,51 @@
-# E2E (Playwright) — BugHound
+# E2E (Playwright): BugHound
 
-Pengujian end-to-end alur pengguna lewat browser (persona **BH-P05-E2E**).
+End-to-end testing of the user flow through the browser (persona **BH-P05-E2E**).
 
-> **Garis merah keamanan.** E2E **tidak pernah** memicu scan nyata atau menyentuh
-> aset eksternal. Dijamin berlapis:
-> 1. Server dijalankan dengan **engine mock** (`-engine mock`) — tak ada koneksi keluar.
-> 2. Store **in-memory ephemeral** (`-db ""`) — tak ada file/secret tertinggal.
-> 3. Bind **localhost** saja.
-> 4. **Egress diblok** di dua tempat: env proxy mati pada proses server, dan
->    pengaman di browser (`fixtures/test.ts`) meng-abort request non-lokal.
-> Target yang dipakai hanya domain dummy (`demo.test`, `acme.test`; spec impor
-> memakai `example.com` karena importer menolak TLD tak dikenal).
+> **Security red line.** E2E **never** triggers a real scan or touches an
+> external asset. It is guaranteed in layers:
+> 1. The server runs with **mock engines** (`-engine mock`): no outbound connection.
+> 2. The store is **ephemeral in-memory** (`-db ""`): no file/secret left behind.
+> 3. It binds **localhost** only.
+> 4. **Egress is blocked** in two places: a dead proxy env on the server process, and
+>    a guard in the browser (`fixtures/test.ts`) that aborts non-local requests.
+> The only targets used are dummy domains (`demo.test`, `acme.test`; the import spec
+> uses `example.com` because the importer rejects an unknown TLD).
 
-## Jalankan
+## Run
 
-Butuh Go di PATH + Node 18+.
+Needs Go on PATH + Node 18+.
 
 ```bash
 cd e2e
-npm install                 # sekali
-npx playwright install chromium   # sekali (unduh browser)
-npm test                    # jalankan semua skenario
-npm run test:headed         # dengan browser terlihat
-npm run report              # buka laporan HTML terakhir
+npm install                 # once
+npx playwright install chromium   # once (downloads the browser)
+npm test                    # run every scenario
+npm run test:headed         # with the browser visible
+npm run report              # open the last HTML report
 ```
 
-`webServer` di `playwright.config.ts` membangun binary `bughound-e2e` dari
-`./cmd/bughound` lalu menjalankannya (port `8799`). Tak perlu start server manual.
+`webServer` in `playwright.config.ts` builds the `bughound-e2e` binary from
+`./cmd/bughound` then runs it (port `8799`). No need to start the server by hand.
 
-## Struktur
+## Structure
 
 ```
-tests/    skenario per alur (2 teratas = kritis, selalu dijalankan)
-  scope-guard.spec.ts       KRITIS: tolak target luar scope (pratinjau)
-  no-auto-submit.spec.ts    KRITIS: report draft, tanpa auto-submit
-  scan-flow.spec.ts         happy-path scan (engine mock)
-  triage.spec.ts            filter severity + konfirmasi massal
-  program-scope.spec.ts     buat program + scope, prefill scan
-  program-import.spec.ts    impor scope platform: tinjau dulu, tahan eksklusi tak terwakili
-pages/    page object per layar (selector berbasis peran/teks)
-fixtures/ fixture test + pengaman egress browser
-utils/    helper seed (scan mock, konfirmasi)
+tests/    one scenario per flow (the top 2 = critical, always run)
+  scope-guard.spec.ts       CRITICAL: deny an out-of-scope target (preview)
+  no-auto-submit.spec.ts    CRITICAL: draft report, no auto-submit
+  scan-flow.spec.ts         scan happy-path (mock engines)
+  triage.spec.ts            filter by severity + bulk confirm
+  program-scope.spec.ts     create a program + scope, prefill the scan
+  program-import.spec.ts    import platform scope: review first, hold an unrepresentable exclusion
+pages/    one page object per screen (role/text-based selectors)
+fixtures/ test fixture + browser egress guard
+utils/    seed helpers (mock scan, confirm)
 ```
 
-## Catatan
+## Notes
 
-- Selector berbasis **peran/teks** dan atribut `name` form yang stabil; tanpa XPath/indeks rapuh.
-- **Auto-wait** Playwright, tanpa `sleep` tetap.
-- Isolasi: tiap test memakai **nama program unik** sehingga tak saling bergantung.
-- Kredensial tidak pernah ditulis di test; happy-path berjalan tanpa auth (localhost).
+- Selectors are **role/text**-based with stable form `name` attributes; no fragile XPath/indexes.
+- Playwright **auto-wait**, no fixed `sleep`.
+- Isolation: each test uses a **unique program name** so they do not depend on each other.
+- Credentials are never written in a test; the happy path runs without auth (localhost).

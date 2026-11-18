@@ -12,19 +12,19 @@ func TestEvidenceRedactHeaders(t *testing.T) {
 	}
 	e.RedactHeaders([]string{"Cookie", "Authorization"})
 	if strings.Contains(e.Request, "SECRET") || strings.Contains(e.Request, "TOKEN") {
-		t.Errorf("nilai header auth harus tersensor: %q", e.Request)
+		t.Errorf("the auth header value must be redacted: %q", e.Request)
 	}
 	if !strings.Contains(e.Request, "Cookie: [REDACTED]") || !strings.Contains(e.Request, "Authorization: [REDACTED]") {
-		t.Errorf("nama header harus tetap + nilai [REDACTED]: %q", e.Request)
+		t.Errorf("the header name must stay, with the value [REDACTED]: %q", e.Request)
 	}
 	for _, keep := range []string{"GET /a HTTP/1.1", "Host: h", "Accept: */*"} {
 		if !strings.Contains(e.Request, keep) {
-			t.Errorf("baris non-target harus utuh (%q): %q", keep, e.Request)
+			t.Errorf("non-target lines must be intact (%q): %q", keep, e.Request)
 		}
 	}
-	// Hanya nama yang diminta yang diredaksi; Set-Cookie di response tak diminta.
+	// Only the requested names are redacted; Set-Cookie in the response was not requested.
 	if !strings.Contains(e.ResponseExcerpt, "Set-Cookie: s=NEW") {
-		t.Errorf("response: hanya nama diminta yang diredaksi: %q", e.ResponseExcerpt)
+		t.Errorf("response: only the requested names are redacted: %q", e.ResponseExcerpt)
 	}
 }
 
@@ -32,20 +32,20 @@ func TestEvidenceRedactHeadersCaseInsensitiveCRLF(t *testing.T) {
 	e := &Evidence{Request: "cookie: a=b\r\nCOOKIE: c=d\n"}
 	e.RedactHeaders([]string{"Cookie"})
 	if strings.Contains(e.Request, "a=b") || strings.Contains(e.Request, "c=d") {
-		t.Errorf("cocok case-insensitive: %q", e.Request)
+		t.Errorf("case-insensitive match: %q", e.Request)
 	}
 	if first, _, _ := strings.Cut(e.Request, "\n"); !strings.HasSuffix(first, "\r") {
-		t.Errorf("CRLF harus dipertahankan: %q", e.Request)
+		t.Errorf("CRLF must be preserved: %q", e.Request)
 	}
 }
 
 func TestEvidenceRedactHeadersNoop(t *testing.T) {
 	orig := "Cookie: keep=me\r\n"
 	e := &Evidence{Request: orig}
-	e.RedactHeaders(nil) // tanpa names → tak berubah
+	e.RedactHeaders(nil) // no names → unchanged
 	if e.Request != orig {
-		t.Errorf("tanpa names tak boleh berubah; dapat %q", e.Request)
+		t.Errorf("without names nothing must change; got %q", e.Request)
 	}
 	var ne *Evidence
-	ne.RedactHeaders([]string{"Cookie"}) // nil receiver tak boleh panik
+	ne.RedactHeaders([]string{"Cookie"}) // a nil receiver must not panic
 }

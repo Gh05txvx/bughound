@@ -6,16 +6,18 @@ import (
 	"bughound/internal/finding"
 )
 
-// bugcrowdVRT mengembalikan KANDIDAT kategori Bugcrowd VRT (Vulnerability Rating
-// Taxonomy) untuk sebuah temuan, best-effort. Tujuannya memandu hunter ke simpul
-// VRT yang tepat di draft export — alih-alih membiarkan form memakai default yang
-// sering meng-auto-downgrade prioritas (mis. P4 untuk sesuatu yang semestinya P3).
+// bugcrowdVRT returns a CANDIDATE Bugcrowd VRT (Vulnerability Rating Taxonomy)
+// category for a finding, best effort. The aim is to guide the hunter to the
+// right VRT node in the draft export, so the form does not fall back to a
+// default that often auto-downgrades the priority (e.g. P4 for something that
+// should be P3).
 //
-// CWE lebih kuat daripada kata kunci (seperti ClassifyOWASP). Mengembalikan ""
-// bila tak cukup yakin. ID mengikuti taksonomi resmi
-// bugcrowd/vulnerability-rating-taxonomy; karena VRT berubah antar-versi & tiap
-// program bisa memakai subset/override, hunter WAJIB verifikasi ke VRT program
-// sebelum submit (export menandainya "kandidat").
+// CWE is stronger than keywords (as in ClassifyOWASP). It returns "" when it is
+// not confident enough. The IDs follow the official
+// bugcrowd/vulnerability-rating-taxonomy; because the VRT changes between
+// versions and each program can use a subset/override, the hunter MUST check
+// against the program's VRT before submitting (the export marks it as a
+// "candidate").
 func bugcrowdVRT(f *finding.Finding) string {
 	for _, raw := range f.CWE {
 		n := strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(raw)), "CWE-")
@@ -26,8 +28,8 @@ func bugcrowdVRT(f *finding.Finding) string {
 	return vrtFromKeywords(strings.ToLower(strings.Join(f.Tags, " ") + " " + f.Type))
 }
 
-// cweVRT memetakan CWE yang benar-benar dipancarkan adapter → kategori VRT.
-// Kuratif (bukan seluruh CWE), sejajar dengan cweOWASP di internal/finding.
+// cweVRT maps the CWEs that adapters actually emit → a VRT category. Curated
+// (not every CWE), parallel to cweOWASP in internal/finding.
 var cweVRT = map[string]string{
 	// server_side_injection
 	"89":  "server_side_injection.sql_injection",
@@ -64,16 +66,16 @@ var cweVRT = map[string]string{
 	"538": "sensitive_data_exposure.disclosure_of_secrets.for_publicly_accessible_asset",
 	"540": "sensitive_data_exposure",
 	"548": "server_security_misconfiguration.directory_listing_enabled",
-	// komponen usang
+	// outdated components
 	"937":  "using_components_with_known_vulnerabilities.outdated_software_version",
 	"1035": "using_components_with_known_vulnerabilities.outdated_software_version",
 	"1104": "using_components_with_known_vulnerabilities.outdated_software_version",
 }
 
-// vrtFromKeywords mencocokkan string (tags+type, huruf kecil) ke kategori VRT,
-// dari paling spesifik ke paling umum (best-effort). Dipakai untuk temuan tanpa
-// CWE yang terpetakan (mis. tipe alert ZAP). Sengaja TIDAK memakai "rce" telanjang
-// (cocok palsu dgn "force" pada "brute-force").
+// vrtFromKeywords matches a string (tags+type, lowercase) to a VRT category,
+// from the most specific to the most general (best effort). It is used for
+// findings without a mapped CWE (e.g. ZAP alert types). It deliberately does
+// NOT use a bare "rce" (a false match with "force" in "brute-force").
 func vrtFromKeywords(hay string) string {
 	has := func(subs ...string) bool {
 		for _, s := range subs {

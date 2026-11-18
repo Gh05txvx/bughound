@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# build-release.sh — cross-compile bughound sebagai SINGLE BINARY untuk semua
-# target rilis, lalu paket (tar.gz/zip) + checksum.
+# build-release.sh, cross-compile bughound as a SINGLE BINARY for every
+# release target, then package (tar.gz/zip) + checksums.
 #
-# Single binary dimungkinkan karena templates & static di-embed (go:embed) dan
-# SQLite-nya pure-Go (modernc.org/sqlite), jadi CGO_ENABLED=0 + cross-compile
-# bersih tanpa toolchain C.
+# The single binary works because templates & static are embedded (go:embed) and
+# its SQLite is pure-Go (modernc.org/sqlite), so CGO_ENABLED=0 + cross-compile
+# cleanly with no C toolchain.
 #
-# Pakai:  VERSION=v0.1.0 bash scripts/build-release.sh
-# Tanpa VERSION, dipakai `git describe`.
+# Use:  VERSION=v0.1.0 bash scripts/build-release.sh
+# Without VERSION, `git describe` is used.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -16,10 +16,10 @@ VERSION="${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo d
 LDFLAGS="-s -w -X main.version=${VERSION}"
 TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
 
-# Preflight: 'zip' dibutuhkan untuk arsip Windows (tersedia di CI/Ubuntu).
+# Preflight: 'zip' is needed for the Windows archive (available on CI/Ubuntu).
 if ! command -v zip >/dev/null 2>&1; then
-  echo "error: 'zip' tidak ditemukan (dibutuhkan untuk arsip Windows)." >&2
-  echo "       Di CI/Ubuntu sudah ada; lokal tanpa zip: pakai 'make build' untuk binary tunggal." >&2
+  echo "error: 'zip' not found (needed for the Windows archive)." >&2
+  echo "       On CI/Ubuntu it is present; locally without zip: use 'make build' for a single binary." >&2
   exit 1
 fi
 
@@ -47,5 +47,5 @@ done
 ( cd dist && sha256sum ./*.tar.gz ./*.zip > SHA256SUMS.txt )
 
 echo
-echo "Artefak rilis (versi ${VERSION}) di dist/:"
+echo "Release artifacts (version ${VERSION}) in dist/:"
 ls -1 dist

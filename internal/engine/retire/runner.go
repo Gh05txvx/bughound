@@ -1,14 +1,14 @@
-// Package retire adalah adapter engine retire.js: mendeteksi library JavaScript
-// sisi-klien yang usang/rentan (CVE) pada aset yang DISAJIKAN target.
+// Package retire is the retire.js engine adapter: it detects outdated/vulnerable
+// client-side JavaScript libraries (CVE) on assets the target SERVES.
 //
-// retire.js adalah pemindai berbasis berkas (tak meng-crawl URL), jadi adapter
-// ini: ambil HTML target -> ekstrak <script src> SAME-ORIGIN -> unduh tiap JS
-// lewat proxy egress (scope-enforced) ke dir sementara -> jalankan
-// `retire --jspath` -> normalkan output JSON ke Skema Temuan Seragam.
+// retire.js is a file-based scanner (it does not crawl URLs), so this adapter:
+// fetch the target HTML -> extract SAME-ORIGIN <script src> -> download each JS
+// through the egress proxy (scope-enforced) to a temp dir -> run
+// `retire --jspath` -> normalize the JSON output to the Uniform Finding Schema.
 //
-// Hanya JS SAME-ORIGIN (in-scope) yang diunduh; library CDN pihak ketiga tidak
-// diambil — itu di luar aset target dan akan diblok scope guard. Seperti engine
-// lain, koneksi keluar wajib lewat proxy egress (UseProxy dipanggil orchestrator).
+// Only SAME-ORIGIN JS (in-scope) is downloaded; a third-party CDN library is not
+// fetched — it is outside the target's assets and would be blocked by the scope guard. Like the other
+// engines, an outbound connection must go through the egress proxy (UseProxy is called by the orchestrator).
 package retire
 
 import (
@@ -29,33 +29,33 @@ import (
 	"bughound/internal/finding"
 )
 
-// Runner adalah engine retire.js NYATA.
+// Runner is the REAL retire.js engine.
 type Runner struct {
 	Binary    string // default "retire"
-	RateLimit int    // disimpan utk konsistensi factory; unduhan sedikit, tak dijepit
+	RateLimit int    // kept for factory consistency; few downloads, not clamped
 	proxyAddr string
 }
 
-// Name memenuhi engine.Engine.
+// Name satisfies engine.Engine.
 func (r *Runner) Name() string { return "retire" }
 
-// UseProxy memenuhi engine.ProxyAware: koneksi (fetch HTML + unduh JS) diarahkan
-// ke proxy egress sehingga tiap koneksi ditegakkan scope guard.
+// UseProxy satisfies engine.ProxyAware: connections (fetch HTML + download JS) are routed
+// to the egress proxy so every connection enforces the scope guard.
 func (r *Runner) UseProxy(addr string) { r.proxyAddr = addr }
 
 const (
-	maxJSFiles   = 40              // batas berkas JS yang diunduh per target
-	maxJSBytes   = 8 * 1024 * 1024 // batas ukuran tiap berkas JS
-	maxHTMLBytes = 4 * 1024 * 1024 // batas baca HTML target
+	maxJSFiles   = 40              // cap on JS files downloaded per target
+	maxJSBytes   = 8 * 1024 * 1024 // size cap per JS file
+	maxHTMLBytes = 4 * 1024 * 1024 // cap on reading the target HTML
 	fetchTimeout = 20 * time.Second
 )
 
-// Scan memenuhi engine.Engine.
+// Scan satisfies engine.Engine.
 func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error) {
-	// Fail-safe: tanpa proxy egress, JANGAN buat koneksi apa pun. Semua egress
-	// engine wajib lewat proxy scope-enforced (orchestrator memanggil UseProxy
-	// sebelum Scan); proxyAddr kosong = misconfigurasi -> tak ada fetch, selaras
-	// prinsip "tidak pernah memicu koneksi yang memintas scope guard".
+	// Fail-safe: without the egress proxy, make NO connection at all. Every engine
+	// egress must go through the scope-enforced proxy (the orchestrator calls UseProxy
+	// before Scan); an empty proxyAddr = misconfiguration -> no fetch, in line with the
+	// principle "never trigger a connection that bypasses the scope guard".
 	if r.proxyAddr == "" {
 		return nil, nil
 	}
@@ -65,7 +65,7 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 	}
 	html := fetchBody(ctx, client, target, maxHTMLBytes)
 	if len(html) == 0 {
-		return nil, nil // target tak terjangkau/kosong -> tak ada yang dianalisis
+		return nil, nil // target unreachable/empty -> nothing to analyze
 	}
 	jsURLs := sameOriginScriptURLs(target, html)
 	if len(jsURLs) == 0 {
@@ -74,7 +74,7 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 
 	dir, err := os.MkdirTemp("", "retire-js-*")
 	if err != nil {
-		return nil, fmt.Errorf("retire: dir sementara: %w", err)
+		return nil, fmt.Errorf("retire: temp dir: %w", err)
 	}
 	defer os.RemoveAll(dir)
 
@@ -101,7 +101,7 @@ func (r *Runner) Scan(ctx context.Context, target, program, runID string) ([]*fi
 
 	out, err := r.runRetire(ctx, dir)
 	if err != nil {
-		return nil, fmt.Errorf("retire: eksekusi gagal: %w", err)
+		return nil, fmt.Errorf("retire: execution failed: %w", err)
 	}
 	return Parse(out, fileToURL, target, program, runID)
 }
@@ -113,9 +113,9 @@ func (r *Runner) bin() string {
 	return "retire"
 }
 
-// runRetire menjalankan retire.js atas dir berisi berkas JS yang sudah diunduh.
-// --exitwith 0: ditemukannya kerentanan JANGAN membuat exit non-zero (kita baca
-// JSON-nya sendiri), agar cmd.Run tak salah mengira itu kegagalan eksekusi.
+// runRetire runs retire.js over a dir holding the downloaded JS files.
+// --exitwith 0: finding a vulnerability must NOT make a non-zero exit (we read
+// the JSON ourselves), so cmd.Run does not mistake it for an execution failure.
 func (r *Runner) runRetire(ctx context.Context, dir string) ([]byte, error) {
 	outFile := filepath.Join(dir, "retire-out.json")
 	args := []string{"--jspath", dir, "--outputformat", "json", "--outputpath", outFile, "--exitwith", "0"}
@@ -128,9 +128,9 @@ func (r *Runner) runRetire(ctx context.Context, dir string) ([]byte, error) {
 	return os.ReadFile(outFile)
 }
 
-// httpClient membuat client yang menyalurkan request lewat proxy egress bila ada.
-// Sertifikat tak diverifikasi, sama seperti engine: proxy membuka TLS host yang punya
-// eksklusi ber-path, dan klien yang memverifikasi akan gagal diam-diam di sana.
+// httpClient builds a client that routes requests through the egress proxy when present.
+// The certificate is not verified, like the engines: the proxy opens TLS for a host that has
+// a path-based exclusion, and a verifying client would fail silently there.
 func (r *Runner) httpClient() (*http.Client, error) {
 	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
 	if r.proxyAddr != "" {
@@ -145,9 +145,9 @@ func (r *Runner) httpClient() (*http.Client, error) {
 
 var scriptSrc = regexp.MustCompile(`(?i)<script[^>]+src\s*=\s*["']([^"']+)["']`)
 
-// sameOriginScriptURLs mengekstrak URL <script src> dan menyaring hanya yang
-// SAME-ORIGIN dgn target (host sama). JS CDN pihak ketiga tidak diambil — di luar
-// aset target & akan diblok scope guard.
+// sameOriginScriptURLs extracts <script src> URLs and keeps only the ones
+// SAME-ORIGIN with the target (same host). A third-party CDN JS is not fetched — outside
+// the target's assets & would be blocked by the scope guard.
 func sameOriginScriptURLs(target string, html []byte) []string {
 	base, err := url.Parse(target)
 	if err != nil {
@@ -160,12 +160,12 @@ func sameOriginScriptURLs(target string, html []byte) []string {
 		if raw == "" {
 			continue
 		}
-		u, err := base.Parse(raw) // resolve relatif terhadap target
+		u, err := base.Parse(raw) // resolve relative to the target
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 			continue
 		}
 		if !strings.EqualFold(u.Host, base.Host) {
-			continue // bukan same-origin
+			continue // not same-origin
 		}
 		u.Fragment = ""
 		s := u.String()
@@ -177,7 +177,7 @@ func sameOriginScriptURLs(target string, html []byte) []string {
 	return out
 }
 
-// fetchBody GET sebuah URL dan mengembalikan body (dibatasi) hanya bila 200.
+// fetchBody GETs a URL and returns the (capped) body only when 200.
 func fetchBody(ctx context.Context, client *http.Client, u string, limit int64) []byte {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

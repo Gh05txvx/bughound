@@ -14,11 +14,11 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 
-// ApiClient berbicara ke API JSON BACA-SAJA bughound (internal/web/api.go).
+// ApiClient talks to bughound's READ-ONLY JSON API (internal/web/api.go).
 //
-// - Autentikasi: HTTP Basic (jalur otomasi yang memang sudah ada di bughound).
-// - Hanya GET — klien ini tidak pernah menulis/mengubah apa pun di bughound,
-//   dan tidak pernah menyentuh target.
+// - Auth: HTTP Basic (the automation path bughound already has).
+// - GET only, this client never writes/changes anything in bughound,
+//   and never touches a target.
 class ApiClient {
     private final Gson gson = new GsonBuilder()
             .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
@@ -27,7 +27,7 @@ class ApiClient {
             .connectTimeout(Duration.ofSeconds(10))
             .build();
 
-    // listFindings mengambil temuan satu program dari bughound.
+    // listFindings pulls one program's findings from bughound.
     List<Finding> listFindings(String baseUrl, String user, String pass, String program) throws Exception {
         String base = baseUrl.replaceAll("/+$", "");
         String url = base + "/api/v1/findings?program="
@@ -45,7 +45,7 @@ class ApiClient {
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         int code = resp.statusCode();
         if (code == 401) {
-            throw new RuntimeException("401 — autentikasi gagal; cek user/password bughound");
+            throw new RuntimeException("401: auth failed; check the bughound user/password");
         }
         if (code != 200) {
             throw new RuntimeException("HTTP " + code + ": " + trim(resp.body()));

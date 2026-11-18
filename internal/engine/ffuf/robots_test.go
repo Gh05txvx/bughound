@@ -15,22 +15,22 @@ import (
 )
 
 func TestParseRobotsPaths(t *testing.T) {
-	body := []byte("# komentar awal\n" +
+	body := []byte("# leading comment\n" +
 		"User-agent: *\n" +
 		"Disallow: /ftp\n" +
-		"Disallow: /ftp/\n" + // sama dgn /ftp setelah trim -> dedup
+		"Disallow: /ftp/\n" + // same as /ftp after trim -> dedup
 		"Allow: /public\n" +
-		"Disallow:            # kosong -> seluruh diizinkan, lewati\n" +
-		"Disallow: /\n" + // seluruh situs, bukan path probe
+		"Disallow:            # empty -> everything allowed, skip\n" +
+		"Disallow: /\n" + // whole site, not a probe path
 		"Disallow: /admin/secret/\n" +
-		"Disallow: /*.bak$\n" + // pola wildcard, dibuang
-		"Disallow: https://evil.test/x\n" + // URL absolut, dibuang
-		"Disallow: /search?q=1   # ada query\n" +
+		"Disallow: /*.bak$\n" + // wildcard pattern, dropped
+		"Disallow: https://evil.test/x\n" + // absolute URL, dropped
+		"Disallow: /search?q=1   # has a query\n" +
 		"Sitemap: https://x.test/sitemap.xml\n")
 	got := parseRobotsPaths(body, 200)
 	want := []string{"ftp", "public", "admin/secret", "search"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("parseRobotsPaths = %v; mau %v", got, want)
+		t.Fatalf("parseRobotsPaths = %v; want %v", got, want)
 	}
 }
 
@@ -40,7 +40,7 @@ func TestParseRobotsPathsCap(t *testing.T) {
 		fmt.Fprintf(&b, "Disallow: /dir%d\n", i)
 	}
 	if got := parseRobotsPaths([]byte(b.String()), 5); len(got) != 5 {
-		t.Fatalf("cap tak dihormati: dapat %d, mau 5", len(got))
+		t.Fatalf("cap not honored: got %d, want 5", len(got))
 	}
 }
 
@@ -55,7 +55,7 @@ func TestRobotsPathsFromFetchesAndParses(t *testing.T) {
 	defer srv.Close()
 	got := robotsPathsFrom(context.Background(), srv.Client(), srv.URL)
 	if strings.Join(got, ",") != "ftp,hidden" {
-		t.Fatalf("robotsPathsFrom = %v; mau [ftp hidden]", got)
+		t.Fatalf("robotsPathsFrom = %v; want [ftp hidden]", got)
 	}
 }
 
@@ -65,16 +65,16 @@ func TestRobotsPathsFromNon200(t *testing.T) {
 	}))
 	defer srv.Close()
 	if got := robotsPathsFrom(context.Background(), srv.Client(), srv.URL); got != nil {
-		t.Fatalf("robots.txt 404 harus nil; dapat %v", got)
+		t.Fatalf("robots.txt 404 must be nil; got %v", got)
 	}
 }
 
-// TestRobotsPathsNoProxyNoFetch: tanpa proxy egress, TIDAK boleh ada fetch —
-// jaminan tak pernah ada koneksi ke target yang memintas scope guard.
+// TestRobotsPathsNoProxyNoFetch: without an egress proxy there must be NO fetch,
+// a guarantee that no connection to the target ever bypasses the scope guard.
 func TestRobotsPathsNoProxyNoFetch(t *testing.T) {
-	r := &Runner{} // proxyAddr kosong
+	r := &Runner{} // proxyAddr empty
 	if got := r.robotsPaths(context.Background(), "http://demo.test"); got != nil {
-		t.Fatalf("tanpa proxy tak boleh fetch; dapat %v", got)
+		t.Fatalf("without a proxy there must be no fetch; got %v", got)
 	}
 }
 
@@ -98,19 +98,19 @@ func TestMergeWordlistDedupsAndAppends(t *testing.T) {
 	}
 	for _, want := range []string{"admin", "ftp", "hidden", "secret"} {
 		if !strings.Contains(string(s), want) {
-			t.Errorf("merged harus memuat %q; isi:\n%s", want, s)
+			t.Errorf("merged must contain %q; contents:\n%s", want, s)
 		}
 	}
 	if n := strings.Count(string(s), "ftp\n"); n != 1 {
-		t.Errorf("ftp tak boleh dobel (dedup thd base); muncul %dx:\n%s", n, s)
+		t.Errorf("ftp must not be doubled (deduped against base); appears %dx:\n%s", n, s)
 	}
 }
 
-// Proxy egress membuka TLS host yang punya eksklusi ber-path dengan sertifikat
-// sekali pakai. Klien yang memverifikasi akan gagal diam-diam dan recall turun.
+// The egress proxy opens TLS for a host with a path-based exclusion using a
+// single-use certificate. A verifying client would fail silently and recall would drop.
 func TestProxiedClientWorksThroughOpenedTunnel(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "User-agent: *\nDisallow: /rahasia\n")
+		fmt.Fprint(w, "User-agent: *\nDisallow: /secret\n")
 	}))
 	defer srv.Close()
 	host := strings.TrimPrefix(srv.URL, "https://")
@@ -128,18 +128,18 @@ func TestProxiedClientWorksThroughOpenedTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := robotsPathsFrom(context.Background(), client, srv.URL); len(got) != 1 || got[0] != "rahasia" {
-		t.Errorf("robotsPathsFrom = %v, ingin [rahasia]", got)
+	if got := robotsPathsFrom(context.Background(), client, srv.URL); len(got) != 1 || got[0] != "secret" {
+		t.Errorf("robotsPathsFrom = %v, want [secret]", got)
 	}
 }
 
-// Lever 1: robots.txt & spec di balik login hanya terbaca dengan sesi, jadi
-// enrichment wajib membawa header auth yang sama dengan probe ffuf (-H). Dulu
-// tanpa header → di target berlogin hasilnya selalu kosong.
+// Lever 1: robots.txt & spec behind a login are only readable with a session, so
+// enrichment must carry the same auth headers as the ffuf probe (-H). Before,
+// without the headers, the result on an authenticated target was always empty.
 func TestEnrichmentCarriesAuthHeaders(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Cookie") != "s=rahasia" {
-			http.Error(w, "login dulu", http.StatusUnauthorized)
+		if r.Header.Get("Cookie") != "s=secret" {
+			http.Error(w, "log in first", http.StatusUnauthorized)
 			return
 		}
 		switch r.URL.Path {
@@ -164,11 +164,11 @@ func TestEnrichmentCarriesAuthHeaders(t *testing.T) {
 
 	r := &Runner{}
 	r.UseProxy(addr)
-	r.UseAuthHeaders([]string{"Cookie: s=rahasia"})
+	r.UseAuthHeaders([]string{"Cookie: s=secret"})
 	if got := r.robotsPaths(context.Background(), srv.URL); strings.Join(got, ",") != "internal" {
-		t.Errorf("robots.txt berlogin: dapat %v, mau [internal]", got)
+		t.Errorf("authenticated robots.txt: got %v, want [internal]", got)
 	}
 	if got := r.specPaths(context.Background(), srv.URL); strings.Join(got, ",") != "api/admin" {
-		t.Errorf("spec berlogin: dapat %v, mau [api/admin]", got)
+		t.Errorf("authenticated spec: got %v, want [api/admin]", got)
 	}
 }

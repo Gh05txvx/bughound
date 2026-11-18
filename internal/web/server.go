@@ -1,7 +1,7 @@
-// Package web menyajikan antarmuka bughound (Go + HTMX + html/template).
-// Semua aset di-embed sehingga aplikasi tetap satu binary. UI M0 membuktikan
-// gate: input scope, jalankan scan (engine mock), lihat target yang ditolak
-// scope guard, dan triase temuan.
+// Package web serves the bughound interface (Go + HTMX + html/template).
+// Every asset is embedded so the app stays a single binary. The M0 UI proves
+// the gate: enter a scope, run a scan (mock engine), see targets denied by the
+// scope guard, and triage findings.
 package web
 
 import (
@@ -51,111 +51,111 @@ var tmplFS embed.FS
 //go:embed static
 var staticFS embed.FS
 
-// Server adalah handler HTTP utama bughound.
+// Server is bughound's main HTTP handler.
 type Server struct {
 	mux     *http.ServeMux
 	store   store.Store
-	users   store.UserStore // akun RBAC (nil bila authDisabled)
+	users   store.UserStore // RBAC accounts (nil when authDisabled)
 	engines []engine.Engine
 	recon   recon.Engine
-	// newEngines, bila diset, membangun instance engine + recon BARU untuk tiap
-	// scan (laju request dijepit ke rps scan). Dipakai mode engine nyata agar tiap
-	// run punya engine sendiri: menjepit laju per-engine DAN mencegah proxy egress
-	// antar-run saling tumpang-tindih (tiap run menegakkan scope guard-nya sendiri).
-	// nil (mock/test) = pakai instance tetap di `engines`/`recon`.
+	// newEngines, when set, builds a NEW engine + recon instance for each
+	// scan (request rate clamped to the scan rps). Used in real-engine mode so each
+	// run has its own engines: it clamps the rate per engine AND keeps the egress
+	// proxies of concurrent runs from overlapping (each run enforces its own scope guard).
+	// nil (mock/test) = use the fixed instances in `engines`/`recon`.
 	newEngines func(rps float64, sel Selection) ([]engine.Engine, recon.Engine)
-	// catalog mempersist Bank Payload (BH-SPEC-PAYLOAD); nil bila store tak
-	// mendukung (mendeteksi lewat type assertion, seperti users). payloadSources
-	// adalah sumber yang di-scan saat refresh katalog.
+	// catalog persists the Payload Bank (BH-SPEC-PAYLOAD); nil when the store does not
+	// support it (detected through a type assertion, like users). payloadSources
+	// are the sources scanned when the catalog is refreshed.
 	catalog        store.CatalogStore
 	payloadSources []payload.Source
 	vault          secret.Vault
 	audit          audit.Log
-	authDisabled   bool // true = akses terbuka tanpa login (hanya -no-auth / test)
+	authDisabled   bool // true = open access without login (only -no-auth / test)
 	queue          *jobs.Queue
 	version        string
-	sastRoot       string         // root kode yang diizinkan untuk SAST; kosong = SAST nonaktif
-	grpcEngine     grpc.Scanner   // enumerasi/fuzz gRPC (mock default; grpcurl bila -grpc real)
-	geo            geoip.Resolver // lookup negara/ASN IP egress (offline; Nop bila DB tak dimuat)
-	aistore        store.AIStore  // cache analisis AI + setelan model; nil bila store tak mendukung
-	aiGen          sync.Map       // id temuan → *sync.Mutex: satu generate AI in-flight per temuan
+	sastRoot       string         // the code root allowed for SAST; empty = SAST off
+	grpcEngine     grpc.Scanner   // gRPC enumeration/fuzz (mock by default; grpcurl when -grpc real)
+	geo            geoip.Resolver // country/ASN lookup of the egress IP (offline; Nop when the DB is not loaded)
+	aistore        store.AIStore  // AI analysis cache + model settings; nil when the store does not support it
+	aiGen          sync.Map       // finding id → *sync.Mutex: one AI generation in flight per finding
 
 	captureMu sync.Mutex
-	captures  map[string]*captureSession // sesi capture reverse-proxy aktif per program
+	captures  map[string]*captureSession // active reverse-proxy capture session per program
 
 	specMu    sync.Mutex
-	specs     map[string]scanSpec // run id → parameter scan, untuk "Run ulang"
-	specOrder []string            // urutan masuk; dipangkas ke rerunKeep
+	specs     map[string]scanSpec // run id → scan parameters, for "Rerun"
+	specOrder []string            // insertion order; trimmed to rerunKeep
 
 	sessMu   sync.Mutex
-	sessions map[string]sessionInfo // token sesi login → pengguna+peran
+	sessions map[string]sessionInfo // login session token → user+role
 
 	pages map[string]*template.Template
 }
 
-// Selection menyeleksi subset template nuclei yang dijalankan sebuah scan,
-// berdasarkan metadata bank payload (BH-SPEC-PAYLOAD §Seleksi). Kosong = semua
-// template terpasang. Tags/Severity hanya memengaruhi engine nuclei; Stealth
-// memengaruhi engine DAST (low-and-slow) dan laju scan keseluruhan.
+// Selection picks the subset of nuclei templates a scan runs,
+// based on the payload bank metadata (BH-SPEC-PAYLOAD §Selection). Empty = all
+// installed templates. Tags/Severity only affect the nuclei engine; Stealth
+// affects the DAST engine (low-and-slow) and the overall scan rate.
 type Selection struct {
 	Tags     []string
 	Severity []string
-	// Stealth meminta profil low-and-slow: laju scan dijepit sangat rendah dan
-	// engine DAST memakai satu koneksi + UA browser (jejak minimal pada target
-	// ber-SOC). Non-destruktif selalu aktif terlepas dari ini.
+	// Stealth asks for a low-and-slow profile: the scan rate is clamped very low and
+	// the DAST engine uses one connection + a browser UA (a minimal footprint on a
+	// SOC-monitored target). Non-destructive is always on regardless of this.
 	Stealth bool
-	// APIRoutes menambahkan wordlist route API ter-bundle (Assetnote apiroutes)
-	// ke engine ffuf — brute path API bervolume besar (opt-in per scan).
+	// APIRoutes adds the bundled API-route wordlist (Assetnote apiroutes)
+	// to the ffuf engine — large-volume API path brute (opt-in per scan).
 	APIRoutes bool
 }
 
-// Config mengonfigurasi server: store, engine DAST (minimal 1), recon & vault opsional.
+// Config configures the server: store, DAST engines (at least 1), optional recon & vault.
 type Config struct {
 	Store   store.Store
 	Engines []engine.Engine
 	Recon   recon.Engine
-	// NewEngines (opsional) membangun engine + recon BARU per scan dengan laju
-	// request dijepit ke rps scan. Bila diset, dipakai menggantikan Engines/Recon
-	// untuk tiap run (lihat Server.newEngines). Engines tetap wajib (≥1) sebagai
-	// fallback & validasi; Recon boleh nil.
+	// NewEngines (optional) builds NEW engines + recon per scan with the request
+	// rate clamped to the scan rps. When set, it is used instead of Engines/Recon
+	// for each run (see Server.newEngines). Engines is still required (≥1) as a
+	// fallback & validation; Recon may be nil.
 	NewEngines func(rps float64, sel Selection) ([]engine.Engine, recon.Engine)
-	// PayloadSources adalah sumber Bank Payload yang di-scan saat refresh katalog
-	// (BH-SPEC-PAYLOAD). Kosong = tombol refresh nonaktif; katalog tetap bisa
-	// ditampilkan dari data tersimpan. Men-scan hanya berkas lokal (tanpa jaringan).
+	// PayloadSources are the Payload Bank sources scanned when the catalog is refreshed
+	// (BH-SPEC-PAYLOAD). Empty = the refresh button is off; the catalog can still
+	// be shown from stored data. It scans local files only (no network).
 	PayloadSources []payload.Source
 	Vault          secret.Vault
 	Audit          audit.Log
-	// Users adalah store akun RBAC. Wajib kecuali AuthDisabled=true. Login
-	// (sesi) & HTTP Basic (otomasi) diverifikasi terhadapnya; peran menentukan
-	// hak (viewer baca, operator ubah, admin kelola user).
+	// Users is the RBAC account store. Required unless AuthDisabled=true. Login
+	// (session) & HTTP Basic (automation) are verified against it; the role decides
+	// the rights (viewer reads, operator changes, admin manages users).
 	Users store.UserStore
-	// AuthDisabled membuka akses tanpa autentikasi (TANPA login, TANPA RBAC).
-	// Hanya untuk test dan flag eksplisit -no-auth di localhost tepercaya.
-	// Default false: login WAJIB.
+	// AuthDisabled opens access without authentication (NO login, NO RBAC).
+	// For tests and the explicit -no-auth flag on a trusted localhost only.
+	// Default false: login is REQUIRED.
 	AuthDisabled bool
-	// Version adalah versi build (di-inject lewat ldflags); kosong = "dev".
-	// Ditampilkan di footer UI agar rilis mudah dikenali.
+	// Version is the build version (injected through ldflags); empty = "dev".
+	// Shown in the UI footer so releases are easy to recognize.
 	Version string
-	// SASTRoot, bila diset, mengaktifkan SAST dan MENGURUNG analisis ke dalam
-	// direktori ini (path scope, default-deny). Kosong = SAST nonaktif.
+	// SASTRoot, when set, enables SAST and CONFINES analysis to this
+	// directory (a scope path, default-deny). Empty = SAST off.
 	SASTRoot string
-	// GRPCReal memakai grpcurl nyata untuk enumerasi gRPC (butuh binary);
-	// default mock. GRPCPlaintext mengirim -plaintext (gRPC tanpa TLS).
+	// GRPCReal uses real grpcurl for gRPC enumeration (needs the binary);
+	// default mock. GRPCPlaintext sends -plaintext (gRPC without TLS).
 	GRPCReal      bool
 	GRPCPlaintext bool
-	// GeoIP (opsional) melabeli IP egress di menu Proxy dengan negara & ASN dari
-	// database GeoLite2 LOKAL (offline — tak pernah memanggil layanan pihak
-	// ketiga). nil = fitur mati; menu Proxy tetap menampilkan IP tanpa negara.
+	// GeoIP (optional) labels the egress IP in the Proxy menu with the country & ASN from
+	// a LOCAL GeoLite2 database (offline — it never calls a third-party
+	// service). nil = feature off; the Proxy menu still shows the IP without a country.
 	GeoIP geoip.Resolver
 }
 
-// NewServer menyiapkan server dengan store dan engine yang diberikan.
+// NewServer sets up the server with the given store and engines.
 func NewServer(cfg Config) (*Server, error) {
 	if len(cfg.Engines) == 0 {
-		return nil, fmt.Errorf("web: minimal satu engine DAST")
+		return nil, fmt.Errorf("web: at least one DAST engine")
 	}
 	if !cfg.AuthDisabled && cfg.Users == nil {
-		return nil, fmt.Errorf("web: Users wajib kecuali AuthDisabled=true")
+		return nil, fmt.Errorf("web: Users required unless AuthDisabled=true")
 	}
 	version := cfg.Version
 	if version == "" {
@@ -165,10 +165,10 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Riwayat run persisten: bila store mendukung jobs.Store, queue menyimpan tiap
-	// transisi & memuat ulang saat start (run yatim difinalkan Failed) → panel
-	// Proses selamat dari restart/redeploy. Degradasi mulus: store tanpa dukungan
-	// → queue tetap in-memory (perilaku lama).
+	// Persistent run history: when the store supports jobs.Store, the queue saves each
+	// transition & reloads it at start (an orphaned run is finalized Failed) → the
+	// Processes panel survives a restart/redeploy. Graceful degradation: a store without
+	// support → the queue stays in-memory (the old behavior).
 	var queueOpts []jobs.Option
 	if rs, ok := cfg.Store.(jobs.Store); ok {
 		queueOpts = append(queueOpts, jobs.WithStore(rs))
@@ -194,20 +194,20 @@ func NewServer(cfg Config) (*Server, error) {
 		geo:            cfg.GeoIP,
 	}
 	if s.geo == nil {
-		s.geo = geoip.Nop{} // fitur mati tanpa nil-check di jalur request
+		s.geo = geoip.Nop{} // feature off without a nil-check in the request path
 	}
 	if cfg.GRPCReal {
 		s.grpcEngine = &grpc.Runner{Plaintext: cfg.GRPCPlaintext}
 	} else {
 		s.grpcEngine = grpc.Mock{}
 	}
-	// Bank Payload: store yang mendukung katalog dipakai; bila tidak, halaman
-	// /payloads menampilkan pesan "tak didukung" (fitur degradasi mulus).
+	// Payload Bank: a store that supports the catalog is used; if not, the /payloads
+	// page shows a "not supported" message (the feature degrades gracefully).
 	if cs, ok := cfg.Store.(store.CatalogStore); ok {
 		s.catalog = cs
 	}
-	// Cache analisis AI + setelan model (AIStore). Bila store tak mendukung, menu
-	// MCP/AI & kartu what-if degradasi mulus (nonaktif) tanpa nil-panic.
+	// AI analysis cache + model settings (AIStore). When the store does not support it, the
+	// MCP/AI menu & what-if card degrade gracefully (off) without a nil panic.
 	if as, ok := cfg.Store.(store.AIStore); ok {
 		s.aistore = as
 	}
@@ -215,8 +215,8 @@ func NewServer(cfg Config) (*Server, error) {
 	return s, nil
 }
 
-// Close menghentikan sesi capture yang aktif lalu worker pool (menunggu scan
-// yang berjalan selesai).
+// Close stops the active capture sessions, then the worker pool (waiting for the
+// running scans to finish).
 func (s *Server) Close() error {
 	s.captureMu.Lock()
 	for _, sess := range s.captures {
@@ -228,7 +228,7 @@ func (s *Server) Close() error {
 	s.captureMu.Unlock()
 	s.queue.Close()
 	if c, ok := s.geo.(io.Closer); ok {
-		_ = c.Close() // tutup reader GeoIP bila DB dimuat (Nop bukan Closer)
+		_ = c.Close() // close the GeoIP reader when the DB is loaded (Nop is not a Closer)
 	}
 	return nil
 }
@@ -244,50 +244,50 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 
-	// CSRF: pastikan cookie token ada lebih dulu (juga agar form login punya token),
-	// dan sediakan ke handler lewat context untuk di-render ke form/hx-headers.
+	// CSRF: make sure the token cookie exists first (also so the login form has a token),
+	// and provide it to the handler through the context to render into the form/hx-headers.
 	token := s.ensureCSRFCookie(w, r)
 	r = r.WithContext(context.WithValue(r.Context(), csrfCtxKey{}, token))
 
-	// Auth: login WAJIB (kecuali AuthDisabled). Manusia memakai sesi login;
-	// otomasi/CLI boleh HTTP Basic. Peran pengguna dibawa lewat context.
+	// Auth: login is REQUIRED (unless AuthDisabled). People use a login session;
+	// automation/CLI may use HTTP Basic. The user's role rides on the context.
 	if !s.authDisabled && !authExempt(r) {
 		user, role, ok := s.authUser(r)
 		if !ok {
-			// Klien API (mesin) selalu dapat galat JSON 401, tak pernah redirect HTML.
+			// API (machine) clients always get a 401 JSON error, never an HTML redirect.
 			if isAPIPath(r) {
-				writeAPIError(w, http.StatusUnauthorized, "autentikasi diperlukan (sesi login atau HTTP Basic)")
+				writeAPIError(w, http.StatusUnauthorized, "authentication required (login session or HTTP Basic)")
 				return
 			}
-			// Kredensial Basic eksplisit yang gagal → 401 untuk otomasi/CLI.
+			// An explicit Basic credential that fails → 401 for automation/CLI.
 			if r.Header.Get("Authorization") != "" {
-				http.Error(w, "autentikasi gagal", http.StatusUnauthorized)
+				http.Error(w, "authentication failed", http.StatusUnauthorized)
 				return
 			}
-			// Browser tanpa sesi: arahkan ke halaman login untuk GET; tolak selain itu.
+			// A browser without a session: send a GET to the login page; reject anything else.
 			if r.Method == http.MethodGet {
 				http.Redirect(w, r, "/login", http.StatusFound)
 				return
 			}
-			http.Error(w, "sesi tidak valid — silakan login", http.StatusUnauthorized)
+			http.Error(w, "invalid session — please sign in", http.StatusUnauthorized)
 			return
 		}
 		r = r.WithContext(context.WithValue(
 			context.WithValue(r.Context(), userCtxKey{}, user), roleCtxKey{}, role))
 	}
 
-	// Tiap permintaan state-changing wajib mengirim token yang cocok (double-submit)
-	// — memblok CSRF lintas-situs. Berlaku juga untuk POST /login.
+	// Every state-changing request must send a matching token (double-submit),
+	// which blocks cross-site CSRF. It applies to POST /login too.
 	if isStateChanging(r.Method) && !validCSRF(r, token) {
-		http.Error(w, "CSRF: token tidak valid atau permintaan lintas-situs", http.StatusForbidden)
+		http.Error(w, "CSRF: invalid token or cross-site request", http.StatusForbidden)
 		return
 	}
 
-	// Otorisasi RBAC: peran menentukan apa yang boleh diakses (default-deny bila
-	// peran tak cukup). Dilewati saat auth dinonaktifkan atau path dikecualikan.
+	// RBAC authorization: the role decides what may be accessed (default-deny when
+	// the role is not enough). Skipped when auth is disabled or the path is exempt.
 	if !s.authDisabled && !authExempt(r) {
 		if !authorize(s.roleOf(r), r) {
-			http.Error(w, "akses ditolak: peran tidak cukup untuk aksi ini", http.StatusForbidden)
+			http.Error(w, "access denied: your role is not enough for this action", http.StatusForbidden)
 			return
 		}
 	}
@@ -295,14 +295,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-// authExempt: halaman login & aset statis boleh diakses tanpa sesi.
+// authExempt: the login page & static assets may be reached without a session.
 func authExempt(r *http.Request) bool {
 	return r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/static/")
 }
 
-// authUser mengautentikasi permintaan lewat sesi login ATAU HTTP Basic
-// (username+password diverifikasi terhadap UserStore). Mengembalikan pengguna,
-// peran, dan apakah berhasil.
+// authUser authenticates the request through a login session OR HTTP Basic
+// (username+password verified against the UserStore). It returns the user,
+// the role, and whether it succeeded.
 func (s *Server) authUser(r *http.Request) (string, auth.Role, bool) {
 	if info, ok := s.validSession(r); ok {
 		return info.User, info.Role, true
@@ -313,20 +313,20 @@ func (s *Server) authUser(r *http.Request) (string, auth.Role, bool) {
 				return u.Username, auth.Role(u.Role), true
 			}
 		} else {
-			auth.VerifyPassword(dummyHash, pass) // seragamkan waktu utk user tak dikenal
+			auth.VerifyPassword(dummyHash, pass) // even out the timing for an unknown user
 		}
 	}
 	return "", auth.Role(""), false
 }
 
-// authorize menegakkan RBAC: area /users hanya admin; aksi state-changing (selain
-// logout) butuh operator ke atas; GET boleh untuk semua peran valid (default-deny).
+// authorize enforces RBAC: the /users area is admin-only; a state-changing action (other
+// than logout) needs operator or above; GET is allowed for every valid role (default-deny).
 func authorize(role auth.Role, r *http.Request) bool {
 	switch {
 	case r.URL.Path == "/users" || strings.HasPrefix(r.URL.Path, "/users/"):
 		return auth.CanAdmin(role)
-	// Setelan AI menyimpan API key (secret) → khusus admin. Kartu what-if
-	// (/ai/finding/...) tak di sini: ikut aturan default (GET=baca, regen POST=tulis).
+	// AI settings store an API key (secret) → admin only. The what-if card
+	// (/ai/finding/...) is not here: it follows the default rule (GET=read, regen POST=write).
 	case r.URL.Path == "/ai/settings" || strings.HasPrefix(r.URL.Path, "/ai/key/"):
 		return auth.CanAdmin(role)
 	case r.URL.Path == "/logout":
@@ -338,8 +338,8 @@ func authorize(role auth.Role, r *http.Request) bool {
 	}
 }
 
-// currentUser mengembalikan pengguna & peran dari context (kosong bila auth
-// nonaktif atau belum terautentikasi).
+// currentUser returns the user & role from the context (empty when auth is
+// off or not yet authenticated).
 func (s *Server) currentUser(r *http.Request) (string, auth.Role) {
 	user, _ := r.Context().Value(userCtxKey{}).(string)
 	role, _ := r.Context().Value(roleCtxKey{}).(auth.Role)
@@ -351,8 +351,8 @@ func (s *Server) roleOf(r *http.Request) auth.Role {
 	return role
 }
 
-// dummyHash menyeragamkan waktu verifikasi saat username tak dikenal (lawan
-// enumerasi via timing). Dihitung sekali; tak pernah cocok kata sandi apa pun.
+// dummyHash evens out the verification timing when a username is unknown (against
+// timing enumeration). Computed once; it never matches any password.
 var dummyHash = func() string {
 	h, _ := auth.HashPassword(randToken())
 	return h
@@ -361,7 +361,7 @@ var dummyHash = func() string {
 const sessionCookie = "bh_session"
 const sessionTTL = 12 * time.Hour
 
-// sessionInfo adalah state satu sesi login: pengguna, peran, waktu dibuat.
+// sessionInfo is the state of one login session: user, role, creation time.
 type sessionInfo struct {
 	User    string
 	Role    auth.Role
@@ -432,7 +432,7 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
@@ -445,12 +445,12 @@ func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		auth.VerifyPassword(dummyHash, password) // seragamkan waktu utk user tak dikenal
+		auth.VerifyPassword(dummyHash, password) // even out the timing for an unknown user
 	}
 	s.auditAppend(r.Context(), audit.Event{Kind: "auth.login", Allowed: false, Message: username})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusUnauthorized)
-	_ = s.pages["login"].ExecuteTemplate(w, "login", loginPage{CSRF: s.csrfToken(r), Error: "Username atau password salah.", Version: s.version})
+	_ = s.pages["login"].ExecuteTemplate(w, "login", loginPage{CSRF: s.csrfToken(r), Error: "Wrong username or password.", Version: s.version})
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -498,28 +498,28 @@ func (s *Server) usersPageFor(r *http.Request) usersPage {
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	if s.users == nil {
-		http.Error(w, "manajemen user nonaktif (auth dinonaktifkan)", http.StatusServiceUnavailable)
+		http.Error(w, "user management off (auth disabled)", http.StatusServiceUnavailable)
 		return
 	}
 	page := s.usersPageFor(r)
 	switch r.URL.Query().Get("ok") {
 	case "created":
-		page.Note = "Pengguna dibuat."
+		page.Note = "User created."
 	case "deleted":
-		page.Note = "Pengguna dihapus."
+		page.Note = "User deleted."
 	case "password":
-		page.Note = "Kata sandi diperbarui."
+		page.Note = "Password updated."
 	}
 	s.render(w, r, "users", "base", page)
 }
 
 func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 	if s.users == nil {
-		http.Error(w, "manajemen user nonaktif", http.StatusServiceUnavailable)
+		http.Error(w, "user management off", http.StatusServiceUnavailable)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
@@ -528,42 +528,42 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 
 	page := s.usersPageFor(r)
 	if username == "" || password == "" {
-		page.Error = "Username dan kata sandi wajib diisi."
+		page.Error = "Username and password are required."
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
 	if !role.Valid() {
-		page.Error = "Peran tidak dikenal."
+		page.Error = "Unknown role."
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		page.Error = "Gagal meng-hash kata sandi: " + err.Error()
+		page.Error = "Could not hash the password: " + err.Error()
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
 	if err := s.users.CreateUser(r.Context(), store.User{Username: username, Role: string(role), PassHash: hash}); err != nil {
 		if errors.Is(err, store.ErrUserExists) {
-			page.Error = "Username sudah dipakai."
+			page.Error = "Username already taken."
 		} else {
-			page.Error = "Gagal membuat pengguna: " + err.Error()
+			page.Error = "Could not create the user: " + err.Error()
 		}
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
 	actor, _ := s.currentUser(r)
-	s.auditAppend(r.Context(), audit.Event{Kind: "user.create", Allowed: true, Message: fmt.Sprintf("%s membuat %s (%s)", actor, username, role)})
+	s.auditAppend(r.Context(), audit.Event{Kind: "user.create", Allowed: true, Message: fmt.Sprintf("%s created %s (%s)", actor, username, role)})
 	http.Redirect(w, r, "/users?ok=created", http.StatusSeeOther)
 }
 
 func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 	if s.users == nil {
-		http.Error(w, "manajemen user nonaktif", http.StatusServiceUnavailable)
+		http.Error(w, "user management off", http.StatusServiceUnavailable)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
@@ -571,32 +571,32 @@ func (s *Server) handleUserDelete(w http.ResponseWriter, r *http.Request) {
 
 	page := s.usersPageFor(r)
 	if username == me {
-		page.Error = "Tidak bisa menghapus akun yang sedang login."
+		page.Error = "Cannot delete the account that is currently signed in."
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
-	// Jangan sampai sistem kehilangan admin terakhir (anti kunci-diri).
+	// Do not let the system lose its last admin (anti self-lockout).
 	if s.isLastAdmin(r, username) {
-		page.Error = "Tidak bisa menghapus admin terakhir."
+		page.Error = "Cannot delete the last admin."
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
 	if err := s.users.DeleteUser(r.Context(), username); err != nil {
-		page.Error = "Gagal menghapus: " + err.Error()
+		page.Error = "Could not delete: " + err.Error()
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
-	s.auditAppend(r.Context(), audit.Event{Kind: "user.delete", Allowed: true, Message: fmt.Sprintf("%s menghapus %s", me, username)})
+	s.auditAppend(r.Context(), audit.Event{Kind: "user.delete", Allowed: true, Message: fmt.Sprintf("%s deleted %s", me, username)})
 	http.Redirect(w, r, "/users?ok=deleted", http.StatusSeeOther)
 }
 
 func (s *Server) handleUserPassword(w http.ResponseWriter, r *http.Request) {
 	if s.users == nil {
-		http.Error(w, "manajemen user nonaktif", http.StatusServiceUnavailable)
+		http.Error(w, "user management off", http.StatusServiceUnavailable)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	username := strings.TrimSpace(r.FormValue("username"))
@@ -604,28 +604,28 @@ func (s *Server) handleUserPassword(w http.ResponseWriter, r *http.Request) {
 
 	page := s.usersPageFor(r)
 	if username == "" || password == "" {
-		page.Error = "Username dan kata sandi baru wajib diisi."
+		page.Error = "Username and new password are required."
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
-		page.Error = "Gagal meng-hash kata sandi: " + err.Error()
+		page.Error = "Could not hash the password: " + err.Error()
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
 	if err := s.users.SetPassword(r.Context(), username, hash); err != nil {
-		page.Error = "Gagal memperbarui kata sandi: " + err.Error()
+		page.Error = "Could not update the password: " + err.Error()
 		s.renderUsers(w, r, page, http.StatusBadRequest)
 		return
 	}
 	me, _ := s.currentUser(r)
-	s.auditAppend(r.Context(), audit.Event{Kind: "user.password", Allowed: true, Message: fmt.Sprintf("%s mereset kata sandi %s", me, username)})
+	s.auditAppend(r.Context(), audit.Event{Kind: "user.password", Allowed: true, Message: fmt.Sprintf("%s reset the password of %s", me, username)})
 	http.Redirect(w, r, "/users?ok=password", http.StatusSeeOther)
 }
 
-// renderUsers merender halaman Users dengan kode status tertentu (mis. 400 saat
-// validasi gagal) tanpa mengganggu pembungkus chrome base.
+// renderUsers renders the Users page with a given status code (e.g. 400 on a
+// validation failure) without disturbing the base chrome wrapper.
 func (s *Server) renderUsers(w http.ResponseWriter, r *http.Request, page usersPage, code int) {
 	user, role := s.currentUser(r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -635,11 +635,11 @@ func (s *Server) renderUsers(w http.ResponseWriter, r *http.Request, page usersP
 	})
 }
 
-// isLastAdmin melaporkan apakah username adalah satu-satunya admin tersisa.
+// isLastAdmin reports whether username is the only admin left.
 func (s *Server) isLastAdmin(r *http.Request, username string) bool {
 	list, err := s.users.ListUsers(r.Context())
 	if err != nil {
-		return true // fail closed: bila ragu, jangan izinkan penghapusan
+		return true // fail closed: when in doubt, do not allow the deletion
 	}
 	admins, isAdmin := 0, false
 	for _, u := range list {
@@ -684,15 +684,15 @@ func validCSRF(r *http.Request, cookieTok string) bool {
 	if cookieTok == "" {
 		return false
 	}
-	if r.Header.Get("Sec-Fetch-Site") == "cross-site" { // browser modern: tolak lintas-situs
+	if r.Header.Get("Sec-Fetch-Site") == "cross-site" { // modern browser: reject cross-site
 		return false
 	}
-	// Origin "null" diperlakukan seperti tak ada Origin: di bawah
-	// Referrer-Policy: no-referrer, Chromium mengirim `Origin: null` untuk POST
-	// form navigasi same-origin yang SAH. Menolaknya akan mematahkan semua form
-	// non-HTMX. Pertahanan tetap utuh: token double-submit (di bawah) tak bisa
-	// dipalsukan lintas-situs, dan POST lintas-situs sudah ditolak oleh
-	// Sec-Fetch-Site di atas.
+	// Origin "null" is treated like no Origin: under
+	// Referrer-Policy: no-referrer, Chromium sends `Origin: null` for a VALID
+	// same-origin navigation form POST. Rejecting it would break every
+	// non-HTMX form. The defense stays intact: the double-submit token (below) cannot
+	// be forged cross-site, and a cross-site POST is already rejected by
+	// Sec-Fetch-Site above.
 	if o := r.Header.Get("Origin"); o != "" && o != "null" {
 		if u, err := url.Parse(o); err != nil || u.Host != r.Host {
 			return false
@@ -758,8 +758,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /findings/{id}", s.handleFindingDetail)
 	s.mux.HandleFunc("POST /findings/{id}/status", s.handleTriage)
 	s.mux.HandleFunc("POST /findings/{id}/edit", s.handleFindingEdit)
-	// API JSON baca-saja untuk konsumen mesin (extension Burp). Lihat api.go.
-	// Terlindungi otomatis oleh front controller (auth+RBAC baca); GET murni.
+	// Read-only JSON API for machine consumers (the Burp extension). See api.go.
+	// Automatically protected by the front controller (auth+RBAC read); pure GET.
 	s.mux.HandleFunc("GET /api/v1/findings", s.handleAPIFindings)
 	s.mux.HandleFunc("GET /api/v1/findings/{id}", s.handleAPIFinding)
 	s.mux.HandleFunc("GET /burp", s.handleBurp)
@@ -770,7 +770,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /settings", s.handleSettings)
 	s.mux.HandleFunc("POST /settings/secrets", s.handleAddSecret)
 	s.mux.HandleFunc("POST /settings/secrets/delete", s.handleDeleteSecret)
-	// MCP/AI: setelan (admin — menyentuh secret) + kartu what-if per temuan (baca).
+	// MCP/AI: settings (admin — touches secrets) + a per-finding what-if card (read).
 	s.mux.HandleFunc("GET /ai/settings", s.handleAISettings)
 	s.mux.HandleFunc("POST /ai/settings", s.handleAISettingsSave)
 	s.mux.HandleFunc("POST /ai/key/delete", s.handleAIKeyDelete)
@@ -793,17 +793,17 @@ type scanPage struct {
 	OpenAPI       string
 	UpstreamProxy string
 	RPS           string
-	Tags          string   // seleksi template: -tags (dipisah koma/spasi)
-	Severity      []string // seleksi template: -severity (checkbox tercentang)
-	Stealth       bool     // profil low-and-slow (DAST + laju scan)
-	APIRoutes     bool     // ikutkan wordlist route API ter-bundle (ffuf)
-	SavePreset    bool     // simpan seleksi ini sebagai preset program
-	// Sesi terautentikasi (Lever 1). NILAI header TAK pernah di-echo ke form
-	// (secret); hanya status & toggle yang dibawa.
-	HasSavedAuth bool // vault punya sesi tersimpan utk program ini
-	UseSavedAuth bool // centang: pakai sesi tersimpan
-	SaveAuth     bool // centang: simpan sesi yang ditempel ke vault
-	AuthRoE      bool // centang: pernyataan RoE (berwenang authenticated-scan)
+	Tags          string   // template selection: -tags (comma/space separated)
+	Severity      []string // template selection: -severity (checked checkboxes)
+	Stealth       bool     // low-and-slow profile (DAST + scan rate)
+	APIRoutes     bool     // include the bundled API-route wordlist (ffuf)
+	SavePreset    bool     // save this selection as the program preset
+	// Authenticated session (Lever 1). The header VALUE is never echoed to the form
+	// (secret); only the status & toggle are carried.
+	HasSavedAuth bool // the vault has a saved session for this program
+	UseSavedAuth bool // checked: use the saved session
+	SaveAuth     bool // checked: save the pasted session to the vault
+	AuthRoE      bool // checked: RoE statement (authorized for an authenticated scan)
 	Errors       []string
 	Result       *scanView
 }
@@ -828,29 +828,29 @@ type denialView struct {
 func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 	page := scanPage{Nav: "scan", Title: "Scan", CSRF: s.csrfToken(r), RPS: "10"}
 
-	// Bila diberi ?program=, prefill scope DAN preset seleksi dari program tersimpan.
+	// Given ?program=, prefill the scope AND the selection preset from the saved program.
 	if prog := strings.TrimSpace(r.URL.Query().Get("program")); prog != "" {
 		if p, err := s.store.GetProgram(r.Context(), prog); err == nil {
 			page.Program = p.Name
 			page.InScope = strings.Join(p.InScope, "\n")
 			page.OutScope = strings.Join(p.OutScope, "\n")
-			// Preset seleksi template per program (ditimpa query eksplisit di bawah).
+			// The per-program template selection preset (overridden by an explicit query below).
 			page.Tags = strings.Join(p.Preset.Tags, ",")
 			page.Severity = p.Preset.Severity
 			page.Stealth = p.Preset.Stealth
 			page.APIRoutes = p.Preset.APIRoutes
-			page.HasSavedAuth = s.hasSavedAuth(r.Context(), p.Name) // sesi terautentikasi tersimpan?
+			page.HasSavedAuth = s.hasSavedAuth(r.Context(), p.Name) // a saved authenticated session?
 		}
 	}
-	// Query eksplisit mengalahkan preset — dipakai tautan "Scan pakai filter ini"
-	// di Bank Payload (membawa ?tags= / ?severity= dari filter katalog yang aktif).
+	// An explicit query beats the preset — used by the "Scan with this filter" link
+	// in the Payload Bank (it carries ?tags= / ?severity= from the active catalog filter).
 	if q := strings.TrimSpace(r.URL.Query().Get("tags")); q != "" {
 		page.Tags = q
 	}
 	if sv := filterSeverities(r.URL.Query()["severity"]); len(sv) > 0 {
 		page.Severity = sv
 	}
-	// Default contoh (langsung mendemokan gate) bila tak ada program.
+	// Example defaults (demonstrate the gate directly) when there is no program.
 	if page.Program == "" {
 		page.Program = "demo"
 		page.Seeds = "demo.test"
@@ -861,13 +861,13 @@ func (s *Server) handleScanForm(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "scan", "base", page)
 }
 
-// authSessionScope adalah scope vault untuk sesi terautentikasi per-program
-// (Lever 1): satu entri bernama = nama program, berisi baris header "Nama: nilai"
-// terenkripsi. Terpisah dari secret lain; akses tercatat via reveal-hook audit.
+// authSessionScope is the vault scope for the per-program authenticated session
+// (Lever 1): one named entry = the program name, holding encrypted "Name: value"
+// header lines. Separate from other secrets; access is logged via the audit reveal hook.
 const authSessionScope = "authsession"
 
-// hasSavedAuth melaporkan apakah vault menyimpan sesi untuk program — hanya
-// List metadata, TANPA me-reveal nilainya (tak memicu audit reveal).
+// hasSavedAuth reports whether the vault holds a session for the program — only a
+// metadata List, WITHOUT revealing its value (it does not trigger a reveal audit).
 func (s *Server) hasSavedAuth(ctx context.Context, program string) bool {
 	if s.vault == nil || strings.TrimSpace(program) == "" {
 		return false
@@ -884,9 +884,9 @@ func (s *Server) hasSavedAuth(ctx context.Context, program string) bool {
 	return false
 }
 
-// validAuthHeaderLine memastikan baris berbentuk "Nama: nilai" dengan nama token
-// tanpa spasi (menolak teks acak yang salah tempel). Nilai bebas (cookie/token),
-// diteruskan apa adanya ke argv engine (tanpa shell).
+// validAuthHeaderLine makes sure the line has the shape "Name: value" with a token
+// name and no spaces (rejecting random text pasted in the wrong place). The value is
+// free (cookie/token), passed as-is to the engine argv (no shell).
 func validAuthHeaderLine(line string) bool {
 	name, val, ok := strings.Cut(line, ":")
 	if !ok {
@@ -895,9 +895,9 @@ func validAuthHeaderLine(line string) bool {
 	return strings.TrimSpace(name) != "" && strings.TrimSpace(val) != "" && !strings.ContainsAny(name, " \t")
 }
 
-// clampHeaderForErr memberi label aman untuk pesan galat: hanya nama header
-// (sebelum ':'), atau potongan pendek bila tak ada ':'. TAK pernah menampilkan
-// nilai header (secret) di respons.
+// clampHeaderForErr gives a safe label for an error message: only the header name
+// (before ':'), or a short slice when there is no ':'. It NEVER shows the header
+// value (secret) in a response.
 func clampHeaderForErr(line string) string {
 	if name, _, ok := strings.Cut(line, ":"); ok {
 		return strings.TrimSpace(name)
@@ -911,7 +911,7 @@ func clampHeaderForErr(line string) string {
 
 func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	program := strings.TrimSpace(r.FormValue("program"))
@@ -920,17 +920,17 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	outScope := splitLines(r.FormValue("out_scope"))
 	targets := splitLines(r.FormValue("targets"))
 	rps := parseRPS(r.FormValue("rps"))
-	proxyChain := splitLines(r.FormValue("upstream_proxy")) // satu hop per baris
-	// Sesi terautentikasi (Lever 1): header yang ditempel, toggle pakai-tersimpan,
-	// simpan, dan pernyataan RoE. Nilai header TAK pernah di-echo kembali ke form.
+	proxyChain := splitLines(r.FormValue("upstream_proxy")) // one hop per line
+	// Authenticated session (Lever 1): the pasted headers, the use-saved toggle,
+	// save, and the RoE statement. The header value is NEVER echoed back to the form.
 	pastedAuth := splitLines(r.FormValue("auth_headers"))
 	useSavedAuth := r.FormValue("use_saved_auth") != ""
 	saveAuth := r.FormValue("save_auth") != ""
 	authRoE := r.FormValue("auth_roe") != ""
 	sel := Selection{Tags: splitList(r.FormValue("tags")), Severity: filterSeverities(r.Form["severity"]), Stealth: r.FormValue("stealth") != "", APIRoutes: r.FormValue("api_routes") != ""}
-	// Stealth = low-and-slow: jepit laju scan keseluruhan ke mode senyap (≤
-	// stealthScanRPS). Ini MENAMBAH pembatasan (arah aman), rate limiter tetap
-	// wajib di jalur eksekusi — tak pernah dimatikan.
+	// Stealth = low-and-slow: clamp the overall scan rate to quiet mode (≤
+	// stealthScanRPS). This ADDS a restriction (the safe direction); the rate limiter stays
+	// required in the execution path — it is never turned off.
 	if sel.Stealth {
 		rps = stealthScanRPS(rps)
 	}
@@ -955,9 +955,9 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		AuthRoE:       authRoE,
 	}
 
-	// Scan ter-arah spec: perluas OpenAPI/Swagger jadi endpoint → target. Tiap
-	// endpoint TETAP lewat scope guard di bawah (spec tak memintas batas). Spec
-	// mentah juga diteruskan ke engine DAST utk fuzz request+body (`-im openapi`).
+	// Spec-directed scan: expand OpenAPI/Swagger into endpoints → targets. Each
+	// endpoint STILL goes through the scope guard below (the spec does not bypass the boundary). The raw
+	// spec is also passed to the DAST engine to fuzz the request+body (`-im openapi`).
 	var openapiSpec []byte
 	if spec := strings.TrimSpace(r.FormValue("openapi")); spec != "" {
 		openapiSpec = []byte(spec)
@@ -973,46 +973,46 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolusi sesi terautentikasi (Lever 1). Precedence: header yang ditempel >
-	// sesi tersimpan di vault. Wajib RoE saat dipakai; nilainya diredaksi dari
-	// evidence di hilir (orchestrator) dan tak pernah di-echo ke form.
+	// Resolving the authenticated session (Lever 1). Precedence: pasted headers >
+	// the session saved in the vault. RoE is required when used; its value is redacted from
+	// evidence downstream (orchestrator) and never echoed to the form.
 	authHeaders := pastedAuth
 	if len(authHeaders) == 0 && useSavedAuth && program != "" && s.vault != nil {
 		if raw, err := s.vault.Reveal(r.Context(), authSessionScope, program); err == nil {
 			authHeaders = splitLines(string(raw))
 		} else {
-			page.Errors = append(page.Errors, "Sesi tersimpan tak bisa dibaca untuk program ini.")
+			page.Errors = append(page.Errors, "The saved session could not be read for this program.")
 		}
 	}
 	for _, h := range authHeaders {
 		if !validAuthHeaderLine(h) {
-			page.Errors = append(page.Errors, "Header sesi tak sah (format 'Nama: nilai'): "+clampHeaderForErr(h))
+			page.Errors = append(page.Errors, "Invalid session header (format 'Name: value'): "+clampHeaderForErr(h))
 		}
 	}
 	if len(authHeaders) > 0 && !authRoE {
-		page.Errors = append(page.Errors, "Authenticated scan: centang pernyataan RoE (berwenang) sebelum menjalankan.")
+		page.Errors = append(page.Errors, "Authenticated scan: tick the RoE statement (authorized) before running.")
 	}
 
 	if program == "" {
-		page.Errors = append(page.Errors, "Nama program wajib diisi.")
+		page.Errors = append(page.Errors, "The program name is required.")
 	}
 	if len(targets) == 0 && len(seeds) == 0 {
-		page.Errors = append(page.Errors, "Isi minimal satu target, atau satu seed domain untuk recon.")
+		page.Errors = append(page.Errors, "Enter at least one target, or one seed domain for recon.")
 	}
 
 	guard, errs := scope.New(inScope, outScope)
 	for _, e := range errs {
-		// Fail closed: entri scope tak terurai menghalangi scan (khususnya out-of-scope).
-		page.Errors = append(page.Errors, "Scope tak valid: "+e.Error())
+		// Fail closed: an unparsed scope entry blocks the scan (especially an out-of-scope one).
+		page.Errors = append(page.Errors, "Invalid scope: "+e.Error())
 	}
 	if len(page.Errors) > 0 {
 		s.renderPartial(w, r, "scan", "scan_result_errors", page)
 		return
 	}
 
-	// Simpan/perbarui definisi scope program (persisten lintas-restart). Preset
-	// seleksi dipertahankan apa adanya kecuali pengguna mencentang "simpan preset",
-	// agar scan biasa tak diam-diam menimpa preset program.
+	// Save/update the program scope definition (persistent across restarts). The selection
+	// preset is kept as-is unless the user ticks "save preset", so an ordinary scan does
+	// not silently overwrite the program preset.
 	prog := store.Program{Name: program, InScope: inScope, OutScope: outScope}
 	if existing, err := s.store.GetProgram(r.Context(), program); err == nil {
 		prog.Preset = existing.Preset
@@ -1022,14 +1022,14 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SaveProgram(r.Context(), prog)
 
-	// Simpan sesi terautentikasi (Lever 1) ke vault bila diminta — HANYA header
-	// yang ditempel (bukan yang sudah tersimpan). Terenkripsi; non-fatal bila gagal
-	// (scan tetap jalan memakai header untuk run ini).
+	// Save the authenticated session (Lever 1) to the vault if asked — ONLY the pasted
+	// headers (not the already-saved one). Encrypted; non-fatal on failure
+	// (the scan still runs using the headers for this run).
 	if saveAuth && len(pastedAuth) > 0 && s.vault != nil {
 		_ = s.vault.Put(r.Context(), authSessionScope, program, []byte(r.FormValue("auth_headers")))
 	}
 
-	// Enqueue: scan berjalan di latar belakang; handler membalas run_id seketika.
+	// Enqueue: the scan runs in the background; the handler replies with the run_id at once.
 	runID := s.enqueueScan(program, guard, scanSpec{
 		seeds: seeds, targets: targets, rps: rps, proxyChain: proxyChain, sel: sel, openapiSpec: openapiSpec,
 		authHeaders: authHeaders,
@@ -1040,27 +1040,27 @@ func (s *Server) handleScanRun(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// scanSpec adalah parameter satu scan selain scope, disimpan in-memory agar run
-// bisa dijalankan ulang dari panel Proses scanning (seumur riwayat run di queue,
-// hilang saat restart). Scope sengaja TIDAK disimpan: Run ulang menilai ulang
-// scope program terkini dari store.
+// scanSpec holds one scan's parameters other than scope, kept in-memory so the run
+// can be rerun from the Scanning processes panel (for the lifetime of the run history in the queue,
+// lost on restart). Scope is deliberately NOT stored: Rerun re-evaluates the
+// current program scope from the store.
 type scanSpec struct {
 	seeds, targets []string
 	rps            float64
-	proxyChain     []string // bisa memuat kredensial user:pass: jangan dirender/di-log
+	proxyChain     []string // may hold user:pass credentials: do not render/log it
 	sel            Selection
 	openapiSpec    []byte
-	authHeaders    []string // sesi auth (Lever 1): secret, jangan dirender/di-log (String meredaksi seluruh spec)
+	authHeaders    []string // auth session (Lever 1): secret, do not render/log it (String redacts the whole spec)
 }
 
-// String/GoString meredaksi isi spec (rantai proxy bisa memuat kredensial) agar
-// tak bocor bila tak sengaja diformat ke log/galat (Prinsip #5). fmt tak
-// memanggil String() milik field unexported, jadi penjaganya di holder ini.
+// String/GoString redact the spec's content (the proxy chain may hold credentials) so it
+// does not leak if accidentally formatted to a log/error (Principle #5). fmt does not
+// call the String() of an unexported field, so the guard lives on this holder.
 func (scanSpec) String() string      { return "scanSpec{redacted}" }
 func (sp scanSpec) GoString() string { return sp.String() }
 
-// rerunKeep membatasi spec yang diingat (spec bisa memuat OpenAPI besar); cukup
-// untuk semua baris panel Proses scanning.
+// rerunKeep caps the remembered specs (a spec may hold a large OpenAPI); enough
+// for every row of the Scanning processes panel.
 const rerunKeep = 2 * scansLiveLimit
 
 func (s *Server) rememberSpec(runID string, sp scanSpec) {
@@ -1081,8 +1081,8 @@ func (s *Server) specFor(runID string) (scanSpec, bool) {
 	return sp, ok
 }
 
-// forgetSpec membuang spec run-ulang yang tersimpan untuk sebuah run (dipakai
-// saat run dihapus dari monitor agar tak menyisakan parameter yatim).
+// forgetSpec drops the saved rerun spec for a run (used
+// when a run is removed from the monitor so no orphan parameters are left).
 func (s *Server) forgetSpec(runID string) {
 	s.specMu.Lock()
 	defer s.specMu.Unlock()
@@ -1098,19 +1098,19 @@ func (s *Server) forgetSpec(runID string) {
 	}
 }
 
-// enqueueScan menjalankan satu scan di latar belakang (worker pool) dan
-// mengembalikan run id seketika. Satu jalur peluncuran scan dipakai bersama oleh
-// form Scan, "promote" dari Capture, dan Run ulang. Task memakai ctx milik queue
-// (bukan r.Context()) agar tak dibatalkan saat response web dikirim; ctx itu
-// hanya dibatalkan oleh Stop. Rate limiter selalu dipasang (tak bisa
-// dimatikan); scope guard menjadi satu-satunya gate.
+// enqueueScan runs one scan in the background (worker pool) and
+// returns a run id at once. One scan-launch path is shared by the
+// Scan form, "promote" from Capture, and Rerun. The task uses the queue's ctx
+// (not r.Context()) so it is not cancelled when the web response is sent; that ctx
+// is only cancelled by Stop. The rate limiter is always installed (it cannot be
+// turned off); the scope guard is the only gate.
 func (s *Server) enqueueScan(program string, guard *scope.Guard, sp scanSpec) string {
 	storeRef := s.store
 	seeds, targets, rps, sel := sp.seeds, sp.targets, sp.rps, sp.sel
 	runID := s.queue.Enqueue(program, scanLabel(seeds, targets), func(ctx context.Context, runID string) (jobs.Summary, error) {
-		// Audit memakai ctx TANPA pembatalan: Stop membatalkan ctx run (engine
-		// dibunuh), tetapi jejak audit wajib tetap utuh (Prinsip #6). Store
-		// SQLite menolak query pada ctx yang sudah batal.
+		// The audit uses a ctx WITHOUT cancellation: Stop cancels the run's ctx (the engines
+		// are killed), but the audit trail must stay intact (Principle #6). The
+		// SQLite store rejects a query on an already-cancelled ctx.
 		actx := context.WithoutCancel(ctx)
 		s.auditAppend(actx, audit.Event{Kind: "run.start", Program: program, RunID: runID, Message: scanLabel(seeds, targets)})
 
@@ -1120,10 +1120,10 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, sp scanSpec) st
 				Allowed: e.Allowed, Reason: string(e.Reason), Layer: string(e.Layer), Message: e.MatchedEntry,
 			})
 		}
-		// Engine per-run: mode nyata membangun instance BARU dengan laju dijepit
-		// ke rps (throttle per-engine di jalur eksekusi) sehingga tiap run punya
-		// engine + proxy egress sendiri; mock/test pakai instance tetap. Seleksi
-		// template (tags/severity) diteruskan ke engine agar hanya subset yang jalan.
+		// Engines per run: real mode builds a NEW instance with the rate clamped
+		// to rps (per-engine throttle in the execution path) so each run has its own
+		// engines + egress proxy; mock/test use the fixed instances. The template
+		// selection (tags/severity) is passed to the engines so only a subset runs.
 		engines, rec := s.engines, s.recon
 		if s.newEngines != nil {
 			engines, rec = s.newEngines(rps, sel)
@@ -1139,9 +1139,9 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, sp scanSpec) st
 		res, err := o.RunScan(ctx, orchestrator.ScanRequest{Program: program, RunID: runID, Seeds: seeds, Targets: targets, ProxyChain: sp.proxyChain, OpenAPISpec: sp.openapiSpec, AuthHeaders: sp.authHeaders})
 		sum := runSummary(res)
 		if err != nil {
-			msg := "gagal: " + err.Error()
+			msg := "failed: " + err.Error()
 			if ctx.Err() != nil {
-				msg = fmt.Sprintf("dihentikan: saved=%d dup=%d denied=%d", res.FindingsSaved, res.Duplicates, len(res.Denied))
+				msg = fmt.Sprintf("stopped: saved=%d dup=%d denied=%d", res.FindingsSaved, res.Duplicates, len(res.Denied))
 			}
 			s.auditAppend(actx, audit.Event{Kind: "run.finish", Program: program, RunID: runID, Message: msg})
 			return sum, err
@@ -1150,7 +1150,7 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, sp scanSpec) st
 			Message: fmt.Sprintf("saved=%d dup=%d denied=%d", res.FindingsSaved, res.Duplicates, len(res.Denied))})
 		for _, ee := range res.EngineErrors {
 			s.auditAppend(actx, audit.Event{Kind: "run.engine_error", Program: program, RunID: runID,
-				Message: fmt.Sprintf("engine %s gagal di %s: %s", ee.Engine, ee.Target, ee.Err)})
+				Message: fmt.Sprintf("engine %s failed at %s: %s", ee.Engine, ee.Target, ee.Err)})
 		}
 		return sum, nil
 	})
@@ -1158,8 +1158,8 @@ func (s *Server) enqueueScan(program string, guard *scope.Guard, sp scanSpec) st
 	return runID
 }
 
-// runSummary meringkas hasil orchestrator untuk queue. Pada run yang gagal atau
-// dihentikan, res berisi hasil parsial (temuan yang sudah tersimpan tetap ada).
+// runSummary summarizes the orchestrator result for the queue. On a failed or
+// stopped run, res holds a partial result (findings already saved stay).
 func runSummary(res orchestrator.ScanResult) jobs.Summary {
 	sum := jobs.Summary{
 		Discovered: res.Discovered,
@@ -1179,27 +1179,27 @@ func runSummary(res orchestrator.ScanResult) jobs.Summary {
 func (s *Server) handleRunStatus(w http.ResponseWriter, r *http.Request) {
 	run, ok := s.queue.Get(r.PathValue("id"))
 	if !ok {
-		http.Error(w, "run tidak ditemukan", http.StatusNotFound)
+		http.Error(w, "run not found", http.StatusNotFound)
 		return
 	}
 	s.renderPartial(w, r, "scan", "run_status", s.runViewFor(r, run))
 }
 
-// handleRunStop menghentikan run yang antre/berjalan. Context run dibatalkan
-// sehingga subprocess engine ikut dibunuh; temuan yang sudah tersimpan tetap
-// ada. State-changing → operator+ & CSRF lewat middleware. Audit run.stop
-// hanya bila panggilan ini yang menghentikan (Stop berulang = no-op).
+// handleRunStop stops a queued/running run. The run's context is cancelled
+// so the engine subprocess is killed too; findings already saved stay.
+// State-changing → operator+ & CSRF through middleware. Audit run.stop
+// only when this call is the one that stopped it (a repeated Stop = no-op).
 func (s *Server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	run, ok := s.queue.Get(id)
 	if !ok {
-		http.Error(w, "run tidak ditemukan", http.StatusNotFound)
+		http.Error(w, "run not found", http.StatusNotFound)
 		return
 	}
 	if s.queue.Cancel(id) {
 		me, _ := s.currentUser(r)
 		s.auditAppend(r.Context(), audit.Event{Kind: "run.stop", Program: run.Program, RunID: id, Allowed: true,
-			Message: fmt.Sprintf("%s menghentikan run (%s)", me, run.Status)})
+			Message: fmt.Sprintf("%s stopped the run (%s)", me, run.Status)})
 	}
 	if r.FormValue("view") == "dashboard" {
 		s.renderScansLive(w, r, "")
@@ -1209,76 +1209,76 @@ func (s *Server) handleRunStop(w http.ResponseWriter, r *http.Request) {
 	s.renderPartial(w, r, "scan", "run_status", s.runViewFor(r, run))
 }
 
-// handleRunRerun menjalankan ulang run yang sudah berakhir dengan parameter scan
-// yang sama. Scope TIDAK diambil dari run asal: dinilai ulang dari definisi
-// program terkini di store (fail closed bila program hilang atau scope tak
-// valid), lalu lewat enqueueScan sehingga scope guard, rate limiter, dan egress
-// sama persis dengan scan biasa. Membalas panel Proses scanning.
+// handleRunRerun reruns a finished run with the same scan
+// parameters. Scope is NOT taken from the original run: it is re-evaluated from the
+// current program definition in the store (fail closed if the program is gone or the scope is
+// invalid), then goes through enqueueScan so the scope guard, rate limiter, and egress
+// are exactly the same as an ordinary scan. It replies with the Scanning processes panel.
 func (s *Server) handleRunRerun(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	run, ok := s.queue.Get(id)
 	if !ok {
-		s.renderScansLive(w, r, "Run tidak ditemukan; riwayat run hilang bila server di-restart.")
+		s.renderScansLive(w, r, "Run not found; the run history is lost when the server restarts.")
 		return
 	}
 	if run.Status == jobs.Queued || run.Status == jobs.Running {
-		s.renderScansLive(w, r, "Run masih berjalan. Hentikan dulu atau tunggu selesai.")
+		s.renderScansLive(w, r, "The run is still running. Stop it first or wait for it to finish.")
 		return
 	}
 	sp, ok := s.specFor(id)
 	if !ok {
-		s.renderScansLive(w, r, "Parameter run ini sudah tak tersimpan. Jalankan dari menu Scan.")
+		s.renderScansLive(w, r, "This run's parameters are no longer stored. Run it from the Scan menu.")
 		return
 	}
 	me, _ := s.currentUser(r)
 	reason := ""
 	var guard *scope.Guard
 	if prog, err := s.store.GetProgram(r.Context(), run.Program); err != nil {
-		reason = "program tak punya scope tersimpan"
+		reason = "the program has no saved scope"
 	} else if g, errs := scope.New(prog.InScope, prog.OutScope); len(errs) > 0 {
-		reason = "scope program tak valid: " + errs[0].Error()
+		reason = "invalid program scope: " + errs[0].Error()
 	} else {
 		guard = g
 	}
 	if guard == nil {
 		s.auditAppend(r.Context(), audit.Event{Kind: "run.rerun", Program: run.Program, RunID: id, Allowed: false,
-			Reason: reason, Message: fmt.Sprintf("%s: run ulang ditolak", me)})
-		s.renderScansLive(w, r, "Run ulang ditolak: "+reason+".")
+			Reason: reason, Message: fmt.Sprintf("%s: rerun denied", me)})
+		s.renderScansLive(w, r, "Rerun denied: "+reason+".")
 		return
 	}
 	newID := s.enqueueScan(run.Program, guard, sp)
 	s.auditAppend(r.Context(), audit.Event{Kind: "run.rerun", Program: run.Program, RunID: newID, Allowed: true,
-		Message: fmt.Sprintf("%s menjalankan ulang %s", me, id)})
+		Message: fmt.Sprintf("%s reran %s", me, id)})
 	s.renderScansLive(w, r, "")
 }
 
-// handleRunDelete membuang satu run yang SUDAH BERAKHIR dari panel Proses
-// scanning (riwayat in-memory queue + spec run-ulang). HANYA membersihkan entri
-// pemantauan — temuan yang sudah tersimpan di store TIDAK ikut terhapus (itu
-// lewat Dashboard ▸ hapus temuan). Run aktif harus di-Stop dulu agar engine tak
-// jadi yatim. operator+ & CSRF lewat middleware. Membalas panel Proses scanning.
+// handleRunDelete drops one FINISHED run from the Scanning processes
+// panel (the in-memory queue history + the rerun spec). It only clears the
+// monitoring entry — findings already saved in the store are NOT removed (that
+// goes through Dashboard ▸ delete findings). An active run must be Stopped first so the engine is
+// not orphaned. operator+ & CSRF through middleware. It replies with the Scanning processes panel.
 func (s *Server) handleRunDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	run, ok := s.queue.Get(id)
 	if !ok {
-		s.renderScansLive(w, r, "Run tidak ditemukan; mungkin sudah dihapus atau hilang saat server di-restart.")
+		s.renderScansLive(w, r, "Run not found; it may already be deleted or lost when the server restarts.")
 		return
 	}
 	if run.Status == jobs.Queued || run.Status == jobs.Running {
-		s.renderScansLive(w, r, "Run masih berjalan. Hentikan dulu (Stop), lalu hapus dari daftar.")
+		s.renderScansLive(w, r, "The run is still running. Stop it first, then delete it from the list.")
 		return
 	}
 	if s.queue.Remove(id) {
 		s.forgetSpec(id)
 		me, _ := s.currentUser(r)
 		s.auditAppend(r.Context(), audit.Event{Kind: "run.delete", Program: run.Program, RunID: id, Allowed: true,
-			Message: fmt.Sprintf("%s menghapus entri run (%s) dari monitor; temuan tetap", me, run.Status)})
+			Message: fmt.Sprintf("%s removed the run entry (%s) from the monitor; findings stay", me, run.Status)})
 	}
 	s.renderScansLive(w, r, "")
 }
 
-// canControl: operator+ (atau auth nonaktif) boleh Stop / Run ulang; viewer
-// hanya melihat. Gerbang sebenarnya tetap middleware authorize().
+// canControl: operator+ (or auth off) may Stop / Rerun; a viewer
+// only watches. The real gate is still the authorize() middleware.
 func (s *Server) canControl(r *http.Request) bool {
 	return s.authDisabled || auth.CanWrite(s.roleOf(r))
 }
@@ -1296,8 +1296,8 @@ type runView struct {
 	Label      string
 	Err        string
 	Active     bool
-	Stopping   bool // Stop diminta, engine sedang dihentikan
-	CanControl bool // peran boleh Stop
+	Stopping   bool // Stop requested, the engine is being stopped
+	CanControl bool // the role may Stop
 	Discovered int
 	Scanned    int
 	Saved      int
@@ -1345,7 +1345,7 @@ type findingsPage struct {
 	Programs []string
 	Findings []*finding.Finding
 	Selected *finding.Finding
-	// filter aktif (untuk mengisi ulang kontrol & mempertahankan di query).
+	// the active filter (to repopulate the controls & keep it in the query).
 	FSeverity string
 	FStatus   string
 	FType     string
@@ -1398,12 +1398,12 @@ type priorityPage struct {
 	CSRF     string
 	Programs []string
 	Scored   []triage.Scored
-	Total    int // jumlah temuan program sebelum prefilter (konteks "N dari M")
+	Total    int // number of program findings before the prefilter ("N of M" context)
 }
 
-// handlePriority menampilkan peringkat "prioritas verifikasi" (SAW/SPK) temuan
-// sebuah program — sama dengan tool MCP `rank`, dihitung in-process (paket
-// triage). Baca-saja: tak menyentuh target, tak mengubah store.
+// handlePriority shows the "verification priority" ranking (SAW/DSS) of a
+// program's findings — the same as the MCP `rank` tool, computed in-process (the
+// triage package). Read-only: it does not touch the target, does not change the store.
 func (s *Server) handlePriority(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	progs := s.programNames(r.Context())
@@ -1415,7 +1415,7 @@ func (s *Server) handlePriority(w http.ResponseWriter, r *http.Request) {
 		all, _ = s.store.List(r.Context(), store.Query{Program: program})
 	}
 	page := priorityPage{
-		Nav: "priority", Title: "Prioritas", Program: program, CSRF: s.csrfToken(r),
+		Nav: "priority", Title: "Priority", Program: program, CSRF: s.csrfToken(r),
 		Programs: progs, Scored: triage.Rank(all), Total: len(all),
 	}
 	s.render(w, r, "priority", "base", page)
@@ -1423,14 +1423,14 @@ func (s *Server) handlePriority(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBulkTriage(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	status := finding.Status(strings.TrimSpace(r.FormValue("status")))
 	switch status {
 	case finding.StatusConfirmed, finding.StatusFalsePositive, finding.StatusIgnored, finding.StatusNew:
 	default:
-		http.Error(w, "status triase tidak diizinkan", http.StatusBadRequest)
+		http.Error(w, "triage status not allowed", http.StatusBadRequest)
 		return
 	}
 	for _, id := range r.Form["ids"] {
@@ -1442,7 +1442,7 @@ func (s *Server) handleBulkTriage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleFindingDetail(w http.ResponseWriter, r *http.Request) {
 	f, err := s.store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
+		http.Error(w, "finding not found", http.StatusNotFound)
 		return
 	}
 	s.renderPartial(w, r, "findings", "finding_detail", f)
@@ -1451,17 +1451,17 @@ func (s *Server) handleFindingDetail(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleTriage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	status := finding.Status(strings.TrimSpace(r.FormValue("status")))
 	verifiedBy := strings.TrimSpace(r.FormValue("verified_by"))
 
-	// Triase manual tak boleh menetapkan duplicate (itu jalur dedup store).
+	// Manual triage may not set duplicate (that is the store's dedup path).
 	switch status {
 	case finding.StatusConfirmed, finding.StatusFalsePositive, finding.StatusIgnored, finding.StatusNew:
 	default:
-		http.Error(w, "status triase tidak diizinkan", http.StatusBadRequest)
+		http.Error(w, "triage status not allowed", http.StatusBadRequest)
 		return
 	}
 
@@ -1471,20 +1471,20 @@ func (s *Server) handleTriage(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := s.store.Get(r.Context(), id)
 	if err != nil {
-		http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
+		http.Error(w, "finding not found", http.StatusNotFound)
 		return
 	}
 	s.renderPartial(w, r, "findings", "finding_detail", f)
 }
 
-// handleFindingEdit menyimpan field naratif report (deskripsi, langkah
-// reproduksi, dampak) yang dilengkapi hunter saat triase, agar draft report &
-// export platform lengkap (prinsip: report selalu draft, dilengkapi+diverifikasi
-// manual sebelum submit). Tak mengubah status/severity/dedup.
+// handleFindingEdit saves the narrative report fields (description, reproduction
+// steps, impact) that the hunter completes during triage, so the draft report &
+// platform export are complete (principle: the report is always a draft, completed+verified
+// manually before submitting). It does not change status/severity/dedup.
 func (s *Server) handleFindingEdit(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	description := strings.TrimSpace(r.FormValue("description"))
@@ -1497,12 +1497,12 @@ func (s *Server) handleFindingEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := s.store.Get(r.Context(), id)
 	if err != nil {
-		http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
+		http.Error(w, "finding not found", http.StatusNotFound)
 		return
 	}
 	me, _ := s.currentUser(r)
 	s.auditAppend(r.Context(), audit.Event{Kind: "finding.edit", Program: f.Program, Allowed: true,
-		Message: fmt.Sprintf("%s melengkapi draft temuan %s (deskripsi/langkah/dampak)", me, id)})
+		Message: fmt.Sprintf("%s completed the draft of finding %s (description/steps/impact)", me, id)})
 	s.renderPartial(w, r, "findings", "finding_detail", f)
 }
 
@@ -1532,7 +1532,7 @@ func (s *Server) handleReport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReportDownload(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	if program == "" {
-		http.Error(w, "program wajib", http.StatusBadRequest)
+		http.Error(w, "program required", http.StatusBadRequest)
 		return
 	}
 	findings, _ := s.store.List(r.Context(), store.Query{Program: program})
@@ -1545,7 +1545,7 @@ func (s *Server) handleReportDownload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleReportPrint(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	if program == "" {
-		http.Error(w, "program wajib", http.StatusBadRequest)
+		http.Error(w, "program required", http.StatusBadRequest)
 		return
 	}
 	findings, _ := s.store.List(r.Context(), store.Query{Program: program})
@@ -1553,19 +1553,19 @@ func (s *Server) handleReportPrint(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "report_print", "report_print", rep)
 }
 
-// handleReportExport mengunduh draft terformat template platform (HackerOne /
-// Bugcrowd). Dengan ?id= -> satu temuan terkonfirmasi; tanpa id -> seluruh
-// report. Hanya menghasilkan berkas untuk disalin/submit MANUAL — tanpa
-// auto-submit, tanpa koneksi keluar.
+// handleReportExport downloads the draft formatted to a platform template (HackerOne /
+// Bugcrowd). With ?id= -> one confirmed finding; without id -> the whole
+// report. It only produces a file to copy/submit MANUALLY — no
+// auto-submit, no outbound connection.
 func (s *Server) handleReportExport(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	platform := report.Platform(strings.TrimSpace(r.URL.Query().Get("platform")))
 	if program == "" {
-		http.Error(w, "program wajib", http.StatusBadRequest)
+		http.Error(w, "program required", http.StatusBadRequest)
 		return
 	}
 	if !platform.Valid() {
-		http.Error(w, "platform export tidak didukung", http.StatusBadRequest)
+		http.Error(w, "export platform not supported", http.StatusBadRequest)
 		return
 	}
 
@@ -1573,11 +1573,11 @@ func (s *Server) handleReportExport(w http.ResponseWriter, r *http.Request) {
 	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
 		f, err := s.store.Get(r.Context(), id)
 		if err != nil || f.Program != program {
-			http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
+			http.Error(w, "finding not found", http.StatusNotFound)
 			return
 		}
 		if f.Status != finding.StatusConfirmed {
-			http.Error(w, "hanya temuan terkonfirmasi yang bisa diekspor", http.StatusBadRequest)
+			http.Error(w, "only confirmed findings can be exported", http.StatusBadRequest)
 			return
 		}
 		md = report.ExportFinding(f, platform)
@@ -1599,7 +1599,7 @@ type programsPage struct {
 	Title    string
 	Program  string
 	CSRF     string
-	Note     string // flash setelah aksi (mis. hapus)
+	Note     string // flash after an action (e.g. delete)
 	Programs []*store.Program
 }
 
@@ -1607,7 +1607,7 @@ func (s *Server) handlePrograms(w http.ResponseWriter, r *http.Request) {
 	progs, _ := s.store.ListPrograms(r.Context())
 	note := ""
 	if r.URL.Query().Get("ok") == "deleted" {
-		note = "Program dihapus (temuan & audit tetap tersimpan)."
+		note = "Program deleted (findings & audit stay saved)."
 	}
 	s.render(w, r, "programs", "base", programsPage{
 		Nav: "programs", Title: "Programs", CSRF: s.csrfToken(r), Note: note, Programs: progs,
@@ -1626,8 +1626,8 @@ type programEditPage struct {
 	IsNew    bool
 	Errors   []string
 
-	PlatformData string        // data platform yang ditempel, dipertahankan saat impor ditahan
-	Import       *importReport // ringkasan impor untuk ditinjau; nil bila tak ada
+	PlatformData string        // the pasted platform data, kept when an import is held
+	Import       *importReport // the import summary to review; nil when there is none
 }
 
 func (s *Server) handleProgramEdit(w http.ResponseWriter, r *http.Request) {
@@ -1645,7 +1645,7 @@ func (s *Server) handleProgramEdit(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleProgramSave(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -1658,12 +1658,12 @@ func (s *Server) handleProgramSave(w http.ResponseWriter, r *http.Request) {
 		IsNew: false,
 	}
 	if name == "" {
-		page.Errors = append(page.Errors, "Nama program wajib.")
+		page.Errors = append(page.Errors, "The program name is required.")
 	}
-	// Fail-closed: tolak simpan bila ada entri scope tak terurai (khususnya out-of-scope).
+	// Fail-closed: refuse to save when there is an unparsed scope entry (especially out-of-scope).
 	if _, errs := scope.New(inScope, outScope); len(errs) > 0 {
 		for _, e := range errs {
-			page.Errors = append(page.Errors, "Scope tak valid: "+e.Error())
+			page.Errors = append(page.Errors, "Invalid scope: "+e.Error())
 		}
 	}
 	if len(page.Errors) > 0 {
@@ -1676,30 +1676,30 @@ func (s *Server) handleProgramSave(w http.ResponseWriter, r *http.Request) {
 	}
 	me, _ := s.currentUser(r)
 	s.auditAppend(r.Context(), audit.Event{Kind: "program.save", Program: name, Allowed: true,
-		Message: fmt.Sprintf("%s menyimpan scope: %d in-scope, %d out-of-scope", me, len(inScope), len(outScope))})
+		Message: fmt.Sprintf("%s saved the scope: %d in-scope, %d out-of-scope", me, len(inScope), len(outScope))})
 	http.Redirect(w, r, "/programs", http.StatusSeeOther)
 }
 
-// importReport adalah ringkasan impor yang ditinjau di scope editor.
+// importReport is the import summary reviewed in the scope editor.
 type importReport struct {
 	scope.ImportResult
-	Held     bool     // ditahan: Unresolved belum disetujui, form tak diisi
-	Replaced []string // entri in-scope lama di form yang digantikan hasil impor
+	Held     bool     // held: Unresolved not yet agreed, the form is not filled
+	Replaced []string // old in-scope entries in the form replaced by the import
 }
 
-// handleProgramImport mengonversi data scope platform lalu mengisi form scope
-// editor untuk ditinjau. Handler ini TIDAK menyimpan apa pun: entri baru berlaku
-// hanya setelah pengguna menekan Simpan, lewat handleProgramSave yang fail-closed.
+// handleProgramImport converts platform scope data, then fills the scope editor
+// form to review. This handler does NOT save anything: new entries take effect
+// only after the user presses Save, through the fail-closed handleProgramSave.
 //
-// Penggabungan mengikuti arah aman yang sama dengan importer: in-scope DIGANTI
-// (entri lama bisa jadi aset yang sudah dicabut program), out-of-scope DIGABUNG
-// (eksklusi yang ditulis pengguna tak boleh hilang karena impor).
+// Merging follows the same safe direction as the importer: in-scope is REPLACED
+// (old entries may be assets the program has dropped), out-of-scope is MERGED
+// (an exclusion the user wrote must not be lost to the import).
 //
-// Bila ada eksklusi tak terwakili, form tak diisi sampai pengguna menyetujui
-// daftarnya. Persetujuan terikat ke Digest, jadi tak berlaku untuk data lain.
+// When an exclusion cannot be represented, the form is not filled until the user agrees
+// to the list. The agreement is bound to the Digest, so it does not apply to other data.
 func (s *Server) handleProgramImport(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -1718,21 +1718,21 @@ func (s *Server) handleProgramImport(w http.ResponseWriter, r *http.Request) {
 
 	res, err := scope.ImportPlatform(raw)
 	if err != nil {
-		page.Errors = append(page.Errors, "Impor gagal: "+err.Error())
+		page.Errors = append(page.Errors, "Import failed: "+err.Error())
 		s.auditAppend(r.Context(), audit.Event{Kind: "program.import", Program: name, Allowed: false,
-			Reason: err.Error(), Message: me + " gagal mengimpor scope platform"})
+			Reason: err.Error(), Message: me + " failed to import platform scope"})
 		s.render(w, r, "program_edit", "base", page)
 		return
 	}
 
-	summary := fmt.Sprintf("%s · %d in-scope, %d out-of-scope, %d eksklusi tak terwakili · sha256 %s",
+	summary := fmt.Sprintf("%s · %d in-scope, %d out-of-scope, %d unrepresented exclusions · sha256 %s",
 		res.Format, len(res.InScope), len(res.OutScope), len(res.Unresolved), res.Digest)
 	report := &importReport{ImportResult: res}
 	page.Import = report
 	if len(res.Unresolved) > 0 && r.FormValue("ack_unresolved") != res.Digest {
 		report.Held = true
 		s.auditAppend(r.Context(), audit.Event{Kind: "program.import", Program: name, Allowed: false,
-			Reason: "eksklusi tak terwakili belum disetujui", Message: me + " · " + summary})
+			Reason: "unrepresented exclusions not yet agreed", Message: me + " · " + summary})
 		s.render(w, r, "program_edit", "base", page)
 		return
 	}
@@ -1753,8 +1753,8 @@ func (s *Server) handleProgramImport(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "program_edit", "base", page)
 }
 
-// appendMissingLines menambahkan entri yang belum ada ke isi textarea, tanpa
-// mengubah baris yang sudah ditulis pengguna (termasuk komentar).
+// appendMissingLines adds the entries not yet present to the textarea content, without
+// changing lines the user already wrote (including comments).
 func appendMissingLines(text string, entries []string) string {
 	have := map[string]bool{}
 	for _, line := range splitLines(text) {
@@ -1772,13 +1772,13 @@ func appendMissingLines(text string, entries []string) string {
 	return strings.Join(lines, "\n")
 }
 
-// handleProgramDelete menghapus definisi scope sebuah program. Yang dibuang HANYA
-// definisi program (agar daftar tak menumpuk); temuan tetap tersimpan sebagai
-// hasil kerja dan audit append-only tidak disentuh — penghapusan ini sendiri
-// DICATAT di audit. State-changing → butuh operator+ & CSRF (middleware authorize).
+// handleProgramDelete deletes a program's scope definition. Only the program
+// definition is removed (so the list does not pile up); findings stay saved as
+// work product and the append-only audit is untouched — this deletion itself is
+// RECORDED in the audit. State-changing → needs operator+ & CSRF (authorize middleware).
 func (s *Server) handleProgramDelete(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("name"))
@@ -1788,12 +1788,12 @@ func (s *Server) handleProgramDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	me, _ := s.currentUser(r)
 	err := s.store.DeleteProgram(r.Context(), name)
-	if err != nil && err != store.ErrNotFound { // idempoten: sudah tak ada = sukses senyap
-		http.Error(w, "gagal menghapus program: "+err.Error(), http.StatusInternalServerError)
+	if err != nil && err != store.ErrNotFound { // idempotent: already gone = silent success
+		http.Error(w, "could not delete the program: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if err == nil {
-		s.auditAppend(r.Context(), audit.Event{Kind: "program.delete", Program: name, Allowed: true, Message: fmt.Sprintf("%s menghapus definisi program (temuan & audit tetap)", me)})
+		s.auditAppend(r.Context(), audit.Event{Kind: "program.delete", Program: name, Allowed: true, Message: fmt.Sprintf("%s deleted the program definition (findings & audit stay)", me)})
 	}
 	http.Redirect(w, r, "/programs?ok=deleted", http.StatusSeeOther)
 }
@@ -1811,7 +1811,7 @@ type previewRow struct {
 
 func (s *Server) handleProgramPreview(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	guard, errs := scope.New(splitLines(r.FormValue("in_scope")), splitLines(r.FormValue("out_scope")))
@@ -1835,22 +1835,22 @@ type payloadsPage struct {
 	Title      string
 	Program    string
 	CSRF       string
-	Supported  bool // store mendukung katalog
-	CanRefresh bool // ada sumber & peran operator ke atas
+	Supported  bool // the store supports the catalog
+	CanRefresh bool // there are sources & an operator-or-above role
 	HasSources bool
 	Sources    []payload.SourceInfo
 	Stats      store.CatalogStats
 	Entries    []payload.Entry
 
-	// filter aktif (untuk mengisi ulang form)
+	// the active filter (to repopulate the form)
 	Q, Engine, Trust, Severity, Tag, Enabled string
 
-	// paginasi
+	// pagination
 	Total, Page, Pages, From, To int
 	HasPrev, HasNext             bool
 	PrevURL, NextURL             string
 
-	Flash string // banner setelah refresh
+	Flash string // banner after a refresh
 }
 
 func (s *Server) handlePayloads(w http.ResponseWriter, r *http.Request) {
@@ -1920,9 +1920,9 @@ func (s *Server) handlePayloads(w http.ResponseWriter, r *http.Request) {
 	page.CanRefresh = page.HasSources && (s.authDisabled || auth.CanWrite(role))
 	if q.Get("refreshed") == "1" {
 		if t := q.Get("total"); t != "" {
-			page.Flash = "Katalog diperbarui — " + t + " template dikatalogkan."
+			page.Flash = "Catalog updated — " + t + " templates cataloged."
 		} else {
-			page.Flash = "Katalog diperbarui."
+			page.Flash = "Catalog updated."
 		}
 	}
 	s.render(w, r, "payloads", "base", page)
@@ -1930,17 +1930,17 @@ func (s *Server) handlePayloads(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handlePayloadsRefresh(w http.ResponseWriter, r *http.Request) {
 	if s.catalog == nil {
-		http.Error(w, "katalog tak didukung oleh store ini", http.StatusServiceUnavailable)
+		http.Error(w, "the catalog is not supported by this store", http.StatusServiceUnavailable)
 		return
 	}
 	if len(s.payloadSources) == 0 {
-		http.Error(w, "tak ada sumber payload terkonfigurasi (set -nuclei-templates / -custom-templates)", http.StatusServiceUnavailable)
+		http.Error(w, "no payload sources configured (set -nuclei-templates / -custom-templates)", http.StatusServiceUnavailable)
 		return
 	}
 	ctx := r.Context()
 	before, _ := s.catalog.CatalogStats(ctx)
-	// Build men-scan berkas lokal sumber (tanpa jaringan) lalu ReplaceCatalog
-	// mengganti katalog secara atomik.
+	// Build scans the sources' local files (no network), then ReplaceCatalog
+	// swaps the catalog atomically.
 	cat := payload.Build(ctx, s.payloadSources)
 	if err := s.catalog.ReplaceCatalog(ctx, cat); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1950,8 +1950,8 @@ func (s *Server) handlePayloadsRefresh(w http.ResponseWriter, r *http.Request) {
 	s.auditAppend(ctx, audit.Event{
 		Kind:    "catalog.refresh",
 		Allowed: true,
-		Message: fmt.Sprintf("bank payload di-refresh oleh %s: %d template dari %d sumber (sebelumnya %d)",
-			firstNonEmptyStr(user, "sistem"), len(cat.Entries), len(cat.Sources), before.Total),
+		Message: fmt.Sprintf("payload bank refreshed by %s: %d templates from %d sources (previously %d)",
+			firstNonEmptyStr(user, "system"), len(cat.Entries), len(cat.Sources), before.Total),
 	})
 	v := url.Values{}
 	v.Set("refreshed", "1")
@@ -1959,7 +1959,7 @@ func (s *Server) handlePayloadsRefresh(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/payloads?"+v.Encode(), http.StatusSeeOther)
 }
 
-// payloadFilterQuery menyusun query string filter (tanpa page) untuk link paginasi.
+// payloadFilterQuery builds the filter query string (without page) for the pagination links.
 func payloadFilterQuery(cq store.CatalogQuery) string {
 	v := url.Values{}
 	set := func(k, val string) {
@@ -2037,7 +2037,7 @@ type dashRow struct {
 	Total       int
 	Confirmed   int
 	New         int
-	Severities  []dashSev // urut critical..info (termasuk 0 untuk penjajaran kolom)
+	Severities  []dashSev // ordered critical..info (including 0 for column alignment)
 	Runs        int
 	LastRun     string
 	LastAt      time.Time
@@ -2049,15 +2049,15 @@ type dashboardPage struct {
 	Title          string
 	Program        string
 	CSRF           string
-	Note           string // flash setelah aksi (mis. hapus temuan)
+	Note           string // flash after an action (e.g. delete findings)
 	Rows           []dashRow
 	TotalPrograms  int
 	TotalFindings  int
 	TotalConfirmed int
 	TotalNew       int
 	TotalRuns      int
-	SevTotals      []dashSev    // total per severity lintas-program (untuk bar ringkasan)
-	SevDonut       template.CSS // conic-gradient komposisi severity (aman: template.CSS)
+	SevTotals      []dashSev    // total per severity across programs (for the summary bar)
+	SevDonut       template.CSS // conic-gradient of the severity composition (safe: template.CSS)
 }
 
 var dashSevOrder = []finding.Severity{
@@ -2065,15 +2065,15 @@ var dashSevOrder = []finding.Severity{
 	finding.SeverityLow, finding.SeverityInfo,
 }
 
-// handleDashboard menampilkan ringkasan lintas-program (hitungan dari store;
-// read-only, tanpa jaringan). Duplikat dikecualikan (List default).
+// handleDashboard shows the cross-program summary (counts from the store;
+// read-only, no network). Duplicates are excluded (List default).
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	page := dashboardPage{Nav: "dashboard", Title: "Dashboard", CSRF: s.csrfToken(r)}
 	if r.URL.Query().Get("ok") == "findings-deleted" {
 		prog := strings.TrimSpace(r.URL.Query().Get("program"))
 		n := strings.TrimSpace(r.URL.Query().Get("n"))
-		page.Note = fmt.Sprintf("%s temuan program %q dihapus. Definisi scope & audit tetap.", n, prog)
+		page.Note = fmt.Sprintf("%s findings of program %q deleted. The scope definition & audit stay.", n, prog)
 	}
 	sevTotal := map[finding.Severity]int{}
 
@@ -2140,7 +2140,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		page.SevDonut = template.CSS("conic-gradient(" + strings.Join(parts, ", ") + ")")
 	}
 
-	// Paling baru aktif di atas; tanpa aktivitas di bawah (urut nama).
+	// Most recently active on top; those with no activity below (ordered by name).
 	sort.SliceStable(page.Rows, func(i, j int) bool {
 		a, b := page.Rows[i], page.Rows[j]
 		if a.HasActivity != b.HasActivity {
@@ -2155,14 +2155,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "dashboard", "base", page)
 }
 
-// handleDashboardDeleteFindings menghapus SEMUA temuan sebuah program (aksi dari
-// baris "Temuan per program"). Sesuai pilihan: HANYA temuan — definisi scope
-// program tetap (dikelola di menu Programs) dan audit append-only tak disentuh;
-// penghapusan ini sendiri dicatat (findings.delete). State-changing → operator+
-// & CSRF via middleware authorize(). Idempoten: program tanpa temuan → 0, 303.
+// handleDashboardDeleteFindings deletes ALL findings of a program (the action from
+// a "Findings per program" row). As chosen: findings ONLY — the program scope
+// definition stays (managed in the Programs menu) and the append-only audit is untouched;
+// this deletion itself is recorded (findings.delete). State-changing → operator+
+// & CSRF via the authorize() middleware. Idempotent: a program with no findings → 0, 303.
 func (s *Server) handleDashboardDeleteFindings(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	program := strings.TrimSpace(r.FormValue("program"))
@@ -2173,21 +2173,21 @@ func (s *Server) handleDashboardDeleteFindings(w http.ResponseWriter, r *http.Re
 	me, _ := s.currentUser(r)
 	n, err := s.store.DeleteFindingsByProgram(r.Context(), program)
 	if err != nil {
-		http.Error(w, "gagal menghapus temuan: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "could not delete the findings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Buang cache analisis AI milik program ini agar tak ada baris yatim yang
-	// menumpuk. Best-effort: temuan sudah terhapus, kegagalan bersih-bersih tak
-	// boleh menggagalkan permintaan. Jumlahnya dicatat agar audit tetap utuh.
+	// Drop this program's AI analysis cache so no orphan rows
+	// pile up. Best-effort: the findings are already deleted, a cleanup failure must
+	// not fail the request. The count is recorded so the audit stays intact.
 	aiPurged := 0
 	if s.aistore != nil {
 		aiPurged, _ = s.aistore.DeleteAIAnalysisByProgram(r.Context(), program)
 	}
-	// Buang juga riwayat run BERAKHIR milik program (in-memory + store) agar tak
-	// jadi yatim setelah temuannya hilang. Run aktif dilewati (hentikan dulu).
+	// Also drop the program's FINISHED run history (in-memory + store) so it does not
+	// become an orphan after its findings are gone. Active runs are skipped (stop them first).
 	runsPurged := s.queue.RemoveByProgram(program)
 	s.auditAppend(r.Context(), audit.Event{Kind: "findings.delete", Program: program, Allowed: true,
-		Message: fmt.Sprintf("%s menghapus %d temuan program + %d cache AI + %d riwayat run (definisi scope tetap)", me, n, aiPurged, runsPurged)})
+		Message: fmt.Sprintf("%s deleted %d program findings + %d AI cache + %d run history (the scope definition stays)", me, n, aiPurged, runsPurged)})
 	http.Redirect(w, r, fmt.Sprintf("/dashboard?ok=findings-deleted&program=%s&n=%d", url.QueryEscape(program), n), http.StatusSeeOther)
 }
 
@@ -2203,7 +2203,7 @@ type scanLiveRow struct {
 	Done        bool
 	Failed      bool
 	Cancelled   bool
-	CanRerun    bool // run berakhir & parameternya masih diingat
+	CanRerun    bool // the run finished & its parameters are still remembered
 	Saved       int
 	Scanned     int
 	Discovered  int
@@ -2220,28 +2220,28 @@ type scansLivePage struct {
 	CancelledCount int
 	Total          int
 	HasAny         bool
-	Interval       string // interval polling HTMX (adaptif)
+	Interval       string // HTMX polling interval (adaptive)
 	UpdatedAt      string
-	CanControl     bool   // tampilkan tombol Stop / Run ulang (operator+)
-	Notice         string // pesan aksi Stop/Run ulang (mis. alasan penolakan)
+	CanControl     bool   // show the Stop / Rerun buttons (operator+)
+	Notice         string // a Stop/Rerun action message (e.g. the reason for a denial)
 }
 
 const scansLiveLimit = 12
 
-// handleDashboardScans merender panel "Proses scanning" (live) dari job queue
-// in-process — read-only, tanpa jaringan & tanpa query store (murah untuk
-// polling). HTMX memanggilnya berulang (trigger self-chained) sehingga status
-// run tampil berubah real-time: antre → berjalan → selesai/gagal/dihentikan,
-// lengkap durasi.
+// handleDashboardScans renders the "Scanning processes" panel (live) from the in-process
+// job queue — read-only, no network & no store query (cheap for
+// polling). HTMX calls it repeatedly (a self-chained trigger) so the run status
+// looks like it changes in real time: queued → running → done/failed/stopped,
+// with the duration.
 func (s *Server) handleDashboardScans(w http.ResponseWriter, r *http.Request) {
 	s.renderScansLive(w, r, "")
 }
 
-// renderScansLive merender panel Proses scanning; notice (opsional) tampil
-// sebagai baris info, dipakai aksi Stop/Run ulang.
+// renderScansLive renders the Scanning processes panel; notice (optional) shows up
+// as an info line, used by the Stop/Rerun action.
 func (s *Server) renderScansLive(w http.ResponseWriter, r *http.Request, notice string) {
 	now := time.Now()
-	runs := s.queue.List("") // semua, terbaru dulu
+	runs := s.queue.List("") // all, newest first
 	page := scansLivePage{Total: len(runs), UpdatedAt: now.Format("15:04:05"), CanControl: s.canControl(r), Notice: notice}
 	for _, rn := range runs {
 		switch rn.Status {
@@ -2277,8 +2277,8 @@ func (s *Server) renderScansLive(w http.ResponseWriter, r *http.Request, notice 
 		})
 	}
 	page.HasAny = len(page.Rows) > 0
-	// Polling adaptif: 2 dtk saat ada scan aktif/antre, 6 dtk saat idle (tetap
-	// memantau scan baru) — murah karena hanya baca queue in-memory.
+	// Adaptive polling: 2 s when there is an active/queued scan, 6 s when idle (still
+	// watching for a new scan) — cheap because it only reads the in-memory queue.
 	page.Interval = "6s"
 	if page.ActiveCount > 0 || page.QueuedCount > 0 {
 		page.Interval = "2s"
@@ -2286,12 +2286,12 @@ func (s *Server) renderScansLive(w http.ResponseWriter, r *http.Request, notice 
 	s.renderPartial(w, r, "dashboard", "scans_live", page)
 }
 
-// runElapsed: berjalan = sejak mulai; berakhir = total runtime; antre = tunggu.
-// Run yang dihentikan saat antre tak punya StartedAt → "—".
+// runElapsed: running = since start; finished = total runtime; queued = wait.
+// A run stopped while queued has no StartedAt → "—".
 func runElapsed(r *jobs.Run, now time.Time) string {
 	switch r.Status {
 	case jobs.Queued:
-		return "antre"
+		return "queued"
 	case jobs.Running:
 		if r.StartedAt.IsZero() {
 			return "—"
@@ -2305,7 +2305,7 @@ func runElapsed(r *jobs.Run, now time.Time) string {
 	}
 }
 
-// humanDur memformat durasi ringkas: "<1s", "9s", "1m 05s", "2h 10m".
+// humanDur formats a compact duration: "<1s", "9s", "1m 05s", "2h 10m".
 func humanDur(d time.Duration) string {
 	if d < time.Second {
 		return "<1s"
@@ -2361,12 +2361,12 @@ func (s *Server) handleSAST(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "sast", "base", page)
 }
 
-// handleSASTRun menjalankan satu adapter SAST pada subpath DI DALAM sastRoot.
-// Path scope ditegakkan oleh sast.Resolve (default-deny); analisis lokal, tak
-// menyentuh jaringan. Temuan masuk ke store & Findings seperti engine lain.
+// handleSASTRun runs one SAST adapter on a subpath INSIDE sastRoot.
+// The path scope is enforced by sast.Resolve (default-deny); analysis is local, it does not
+// touch the network. Findings enter the store & Findings like any other engine.
 func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	page := s.sastBasePage()
@@ -2376,32 +2376,32 @@ func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
 	page.Engine = strings.TrimSpace(r.FormValue("engine"))
 
 	if !page.Enabled {
-		page.Error = "SAST dinonaktifkan. Jalankan server dengan -sast-root <dir>."
+		page.Error = "SAST is disabled. Run the server with -sast-root <dir>."
 		s.render(w, r, "sast", "base", page)
 		return
 	}
 	if page.Program == "" {
-		page.Error = "Program wajib diisi."
+		page.Error = "The program is required."
 		s.render(w, r, "sast", "base", page)
 		return
 	}
 	eng, ok := sast.Lookup(page.Engine)
 	if !ok {
-		page.Error = "Adapter SAST tidak dikenal: " + page.Engine
+		page.Error = "Unknown SAST adapter: " + page.Engine
 		s.render(w, r, "sast", "base", page)
 		return
 	}
 
 	dir, err := sast.Resolve(s.sastRoot, page.Subpath)
 	if err != nil {
-		// Boundary ditolak — catat ke audit (seperti penolakan scope DAST).
+		// Boundary denied — record it to the audit (like a DAST scope denial).
 		if s.audit != nil {
 			_, _ = s.audit.Append(r.Context(), audit.Event{
 				Kind: "sast.scope", Program: page.Program, Target: page.Subpath,
 				Allowed: false, Reason: err.Error(), Layer: "path",
 			})
 		}
-		page.Error = "Path ditolak: " + err.Error()
+		page.Error = "Path denied: " + err.Error()
 		s.render(w, r, "sast", "base", page)
 		return
 	}
@@ -2409,7 +2409,7 @@ func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
 	runID := fmt.Sprintf("sast-%d", time.Now().UnixNano())
 	res, err := sast.Run(r.Context(), dir, page.Subpath, page.Program, runID, []sast.Engine{eng}, s.store, s.audit)
 	if err != nil {
-		page.Error = "Analisis gagal: " + err.Error()
+		page.Error = "Analysis failed: " + err.Error()
 		s.render(w, r, "sast", "base", page)
 		return
 	}
@@ -2417,7 +2417,7 @@ func (s *Server) handleSASTRun(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "sast", "base", page)
 }
 
-// ---- gRPC (enumerasi) ----
+// ---- gRPC (enumeration) ----
 
 type grpcResult struct {
 	Scanned int
@@ -2447,12 +2447,12 @@ func (s *Server) handleGRPC(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "grpc", "base", page)
 }
 
-// handleGRPCRun mengenumerasi target gRPC (host:port) via reflection. Tiap host
-// WAJIB lolos scope guard program (grpcurl tak bisa diproxy; scope ditegakkan di
-// hulu). Temuan masuk store & Findings seperti engine lain.
+// handleGRPCRun enumerates gRPC targets (host:port) via reflection. Each host
+// MUST pass the program scope guard (grpcurl cannot be proxied; scope is enforced
+// upstream). Findings enter the store & Findings like any other engine.
 func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	page := grpcPage{
@@ -2463,19 +2463,19 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 	}
 	targets := splitLines(r.FormValue("targets"))
 	if page.Program == "" || len(targets) == 0 {
-		page.Error = "Program dan minimal satu target host:port wajib diisi."
+		page.Error = "The program and at least one host:port target are required."
 		s.render(w, r, "grpc", "base", page)
 		return
 	}
 	prog, err := s.store.GetProgram(r.Context(), page.Program)
 	if err != nil {
-		page.Error = "Program belum punya scope tersimpan — simpan scope-nya dulu di halaman Programs."
+		page.Error = "The program has no saved scope yet — save its scope first on the Programs page."
 		s.render(w, r, "grpc", "base", page)
 		return
 	}
 	guard, errs := scope.New(prog.InScope, prog.OutScope)
 	if len(errs) > 0 {
-		page.Error = "Scope program tak valid: " + errs[0].Error()
+		page.Error = "Invalid program scope: " + errs[0].Error()
 		s.render(w, r, "grpc", "base", page)
 		return
 	}
@@ -2499,7 +2499,7 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 		}
 		fs, serr := scan(r.Context(), tgt, page.Program, runID)
 		if serr != nil {
-			page.Error = "Enumerasi gagal untuk " + tgt + ": " + serr.Error()
+			page.Error = "Enumeration failed for " + tgt + ": " + serr.Error()
 			continue
 		}
 		res.Scanned++
@@ -2513,7 +2513,7 @@ func (s *Server) handleGRPCRun(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "grpc", "base", page)
 }
 
-// ---- Proxy / Egress check (diagnostik rantai proxy & IP exit) ----
+// ---- Proxy / Egress check (proxy chain & exit IP diagnostics) ----
 
 type proxyPage struct {
 	Nav, Title, Program, CSRF string
@@ -2536,13 +2536,13 @@ type proxyEchoResult struct {
 	SourceStatus, ExitStatus int
 	SourceErr, ExitErr       string
 	Changed                  bool
-	// Geolokasi offline IP egress (kosong bila DB GeoIP tak dimuat). GeoLoaded
-	// menandai apakah kolom negara perlu ditampilkan sama sekali.
+	// Offline geolocation of the egress IP (empty when the GeoIP DB is not loaded). GeoLoaded
+	// marks whether the country column needs to be shown at all.
 	GeoLoaded          bool
 	SourceGeo, ExitGeo geoip.Info
 }
 
-// handleProxyForm menampilkan menu diagnostik proxy.
+// handleProxyForm shows the proxy diagnostic menu.
 func (s *Server) handleProxyForm(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	s.render(w, r, "proxy", "base", proxyPage{
@@ -2551,23 +2551,23 @@ func (s *Server) handleProxyForm(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// burpPage: halaman onboarding integrasi Burp (lihat burp.html). Murni
-// informatif — menampilkan endpoint API baca-saja + cara build/load extension.
+// burpPage: the Burp integration onboarding page (see burp.html). Purely
+// informational — it shows the read-only API endpoints + how to build/load the extension.
 type burpPage struct {
 	Nav, Title, Program, CSRF string
-	BaseURL                   string   // skema+host dari request, untuk contoh perintah
-	User                      string   // username login, untuk contoh curl -u
-	Programs                  []string // program yang punya temuan, untuk pilih contoh
-	SampleProgram             string   // program yang dipakai di contoh perintah
+	BaseURL                   string   // scheme+host from the request, for the command examples
+	User                      string   // login username, for the curl -u example
+	Programs                  []string // programs that have findings, to pick an example
+	SampleProgram             string   // the program used in the command examples
 }
 
-// handleBurp menampilkan halaman integrasi Burp: titik masuk di UI untuk API
-// baca-saja + extension. Tidak menjalankan Burp; murni onboarding.
+// handleBurp shows the Burp integration page: the UI entry point for the read-only
+// API + extension. It does not run Burp; purely onboarding.
 func (s *Server) handleBurp(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	user, _ := s.currentUser(r)
 	if user == "" {
-		user = "admin" // auth nonaktif / sekadar contoh
+		user = "admin" // auth off / just an example
 	}
 	scheme := "http"
 	if r.TLS != nil {
@@ -2579,22 +2579,22 @@ func (s *Server) handleBurp(w http.ResponseWriter, r *http.Request) {
 		if len(progs) > 0 {
 			sample = progs[0]
 		} else {
-			sample = "nama-program"
+			sample = "program-name"
 		}
 	}
 	s.render(w, r, "burp", "base", burpPage{
-		Nav: "burp", Title: "Integrasi Burp", Program: program, CSRF: s.csrfToken(r),
+		Nav: "burp", Title: "Burp integration", Program: program, CSRF: s.csrfToken(r),
 		BaseURL: scheme + "://" + r.Host, User: user, Programs: progs, SampleProgram: sample,
 	})
 }
 
-// handleProxyCheck memvalidasi & menguji rantai proxy, lalu (opsional) mengukur
-// IP yang dilihat target langsung vs lewat rantai memakai endpoint echo yang
-// WAJIB lolos scope guard program (default-deny). State-changing → operator+
-// (middleware authorize). Kredensial proxy tak pernah ditampilkan/dicatat.
+// handleProxyCheck validates & tests the proxy chain, then (optionally) measures
+// the IP the target sees directly vs through the chain using an echo endpoint that
+// MUST pass the program scope guard (default-deny). State-changing → operator+
+// (authorize middleware). The proxy credentials are never shown/logged.
 func (s *Server) handleProxyCheck(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	program := strings.TrimSpace(r.FormValue("program"))
@@ -2604,7 +2604,7 @@ func (s *Server) handleProxyCheck(w http.ResponseWriter, r *http.Request) {
 	res := &proxyCheckResult{}
 	hops, err := egress.ParseChain(chainLines)
 	if err != nil {
-		res.Error = "Rantai tak valid: " + err.Error()
+		res.Error = "Invalid chain: " + err.Error()
 		s.renderPartial(w, r, "proxy", "proxy_result", res)
 		return
 	}
@@ -2624,25 +2624,25 @@ func (s *Server) handleProxyCheck(w http.ResponseWriter, r *http.Request) {
 	changed := res.Echo != nil && res.Echo.Changed
 	s.auditAppend(r.Context(), audit.Event{
 		Kind: "egress.check", Program: program, Allowed: true, Layer: "egress",
-		Message: fmt.Sprintf("%s uji proxy: %d/%d hop reachable, echo=%t, ip-berubah=%t", me, reachable, len(res.Hops), echo != "", changed),
+		Message: fmt.Sprintf("%s tested the proxy: %d/%d hops reachable, echo=%t, ip-changed=%t", me, reachable, len(res.Hops), echo != "", changed),
 	})
 	s.renderPartial(w, r, "proxy", "proxy_result", res)
 }
 
-// proxyEchoCheck mengukur IP yang terlihat target: satu GET langsung dan satu
-// lewat rantai, ke endpoint echo yang sama. Echo WAJIB lolos scope guard program
-// (default-deny — Prinsip #2). Mengembalikan hasil + catatan bila tak bisa.
+// proxyEchoCheck measures the IP the target sees: one direct GET and one
+// through the chain, to the same echo endpoint. The echo MUST pass the program scope guard
+// (default-deny — Principle #2). It returns the result + a note when it cannot.
 func (s *Server) proxyEchoCheck(r *http.Request, program string, chain []string, echo string) (*proxyEchoResult, string) {
 	if program == "" {
-		return nil, "Pilih program dulu agar endpoint echo dicek scope guard (default-deny)."
+		return nil, "Pick a program first so the echo endpoint is checked by the scope guard (default-deny)."
 	}
 	prog, err := s.store.GetProgram(r.Context(), program)
 	if err != nil {
-		return nil, "Program belum punya scope tersimpan — simpan dulu di halaman Programs."
+		return nil, "The program has no saved scope yet — save it first on the Programs page."
 	}
 	guard, errs := scope.New(prog.InScope, prog.OutScope)
 	if len(errs) > 0 {
-		return nil, "Scope program tak valid: " + errs[0].Error()
+		return nil, "Invalid program scope: " + errs[0].Error()
 	}
 	auditSink := func(d egress.Decision) {
 		if d.Allowed {
@@ -2670,7 +2670,7 @@ func (s *Server) proxyEchoCheck(r *http.Request, program string, chain []string,
 	}
 	chained := egress.New(guard, auditSink)
 	if err := chained.SetUpstream(chain...); err != nil {
-		out.ExitErr = "rantai tak bisa dibangun: " + err.Error()
+		out.ExitErr = "the chain could not be built: " + err.Error()
 		return out, ""
 	}
 	exit := chained.Fetch(r.Context(), echo, timeout)
@@ -2680,9 +2680,9 @@ func (s *Server) proxyEchoCheck(r *http.Request, program string, chain []string,
 	return out, ""
 }
 
-// ---- Capture (reverse proxy perekam) ----
+// ---- Capture (recording reverse proxy) ----
 
-// captureSession adalah satu gateway reverse-proxy aktif untuk sebuah program.
+// captureSession is one active reverse-proxy gateway for a program.
 type captureSession struct {
 	Program string
 	Target  string
@@ -2726,7 +2726,7 @@ func (s *Server) setCapture(program string, sess *captureSession) {
 	s.captureMu.Unlock()
 }
 
-// delCapture menghapus sesi dari peta dan mengembalikannya (nil bila tak ada).
+// delCapture removes the session from the map and returns it (nil when there is none).
 func (s *Server) delCapture(program string) *captureSession {
 	s.captureMu.Lock()
 	defer s.captureMu.Unlock()
@@ -2756,17 +2756,17 @@ func (s *Server) handleCapture(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	page := s.capturePageFor(r, program)
 	if run := strings.TrimSpace(r.URL.Query().Get("run")); run != "" {
-		page.Note = fmt.Sprintf("%s endpoint dipromosikan jadi scan %s — lihat Findings/Audit.", r.URL.Query().Get("n"), run)
+		page.Note = fmt.Sprintf("%s endpoints promoted to scan %s — see Findings/Audit.", r.URL.Query().Get("n"), run)
 	}
 	s.render(w, r, "capture", "base", page)
 }
 
-// handleCaptureStart membuka gateway reverse-proxy ke satu target in-scope. Target
-// WAJIB lolos scope guard program (fail closed); gateway memakai transport egress
-// ter-guard sehingga hanya host in-scope yang diteruskan.
+// handleCaptureStart opens a reverse-proxy gateway to one in-scope target. The target
+// MUST pass the program scope guard (fail closed); the gateway uses the scope-guarded
+// egress transport so only in-scope hosts are forwarded.
 func (s *Server) handleCaptureStart(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	program := strings.TrimSpace(r.FormValue("program"))
@@ -2778,30 +2778,30 @@ func (s *Server) handleCaptureStart(w http.ResponseWriter, r *http.Request) {
 	page.RPS = r.FormValue("rps")
 
 	if program == "" || target == "" {
-		page.Error = "Program dan target wajib diisi."
+		page.Error = "The program and target are required."
 		s.render(w, r, "capture", "base", page)
 		return
 	}
 	if s.getCapture(program) != nil {
-		page.Error = "Sesi capture untuk program ini sudah berjalan — hentikan dulu."
+		page.Error = "A capture session for this program is already running — stop it first."
 		s.render(w, r, "capture", "base", page)
 		return
 	}
 	prog, err := s.store.GetProgram(r.Context(), program)
 	if err != nil {
-		page.Error = "Program belum punya scope tersimpan — simpan scope-nya dulu di halaman Programs."
+		page.Error = "The program has no saved scope yet — save its scope first on the Programs page."
 		s.render(w, r, "capture", "base", page)
 		return
 	}
 	guard, errs := scope.New(prog.InScope, prog.OutScope)
 	if len(errs) > 0 {
-		page.Error = "Scope program tak valid: " + errs[0].Error()
+		page.Error = "Invalid program scope: " + errs[0].Error()
 		s.render(w, r, "capture", "base", page)
 		return
 	}
 
-	// Audit penolakan egress gateway (host di luar scope saat browsing). Memakai
-	// context.Background karena gateway hidup melampaui request ini.
+	// Audit a gateway egress denial (an out-of-scope host while browsing). It uses
+	// context.Background because the gateway lives beyond this request.
 	auditSink := func(d egress.Decision) {
 		if d.Allowed {
 			return
@@ -2816,13 +2816,13 @@ func (s *Server) handleCaptureStart(w http.ResponseWriter, r *http.Request) {
 	gw, err := egress.NewGateway(px, target, lim)
 	if err != nil {
 		s.auditAppend(r.Context(), audit.Event{Kind: "capture.start", Program: program, Target: target, Allowed: false, Reason: "out-of-scope", Message: err.Error()})
-		page.Error = "Tidak bisa memulai gateway: " + err.Error()
+		page.Error = "Could not start the gateway: " + err.Error()
 		s.render(w, r, "capture", "base", page)
 		return
 	}
 	addr, stop, err := gw.Listen("127.0.0.1:0")
 	if err != nil {
-		page.Error = "Gagal membuka listener: " + err.Error()
+		page.Error = "Could not open the listener: " + err.Error()
 		s.render(w, r, "capture", "base", page)
 		return
 	}
@@ -2835,7 +2835,7 @@ func (s *Server) handleCaptureStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCaptureStop(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	program := strings.TrimSpace(r.FormValue("program"))
@@ -2843,17 +2843,17 @@ func (s *Server) handleCaptureStop(w http.ResponseWriter, r *http.Request) {
 		if sess.stop != nil {
 			_ = sess.stop()
 		}
-		s.auditAppend(r.Context(), audit.Event{Kind: "capture.stop", Program: program, Target: sess.Target, Allowed: true, Message: fmt.Sprintf("%d kandidat", len(sess.gw.Records()))})
+		s.auditAppend(r.Context(), audit.Event{Kind: "capture.stop", Program: program, Target: sess.Target, Allowed: true, Message: fmt.Sprintf("%d candidates", len(sess.gw.Records()))})
 	}
 	http.Redirect(w, r, "/capture?program="+url.QueryEscape(program), http.StatusSeeOther)
 }
 
-// handleCapturePromote mengubah endpoint terpilih menjadi scan. Endpoint TETAP
-// lewat scope guard + rate limiter + egress (jalur scan yang sama) — tak ada
-// pintasan. Tanpa auto-submit.
+// handleCapturePromote turns the selected endpoints into a scan. The endpoints STILL
+// go through the scope guard + rate limiter + egress (the same scan path) — no
+// shortcut. No auto-submit.
 func (s *Server) handleCapturePromote(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	program := strings.TrimSpace(r.FormValue("program"))
@@ -2862,21 +2862,21 @@ func (s *Server) handleCapturePromote(w http.ResponseWriter, r *http.Request) {
 
 	if program == "" || len(targets) == 0 {
 		page := s.capturePageFor(r, program)
-		page.Error = "Pilih minimal satu endpoint untuk di-promote."
+		page.Error = "Pick at least one endpoint to promote."
 		s.render(w, r, "capture", "base", page)
 		return
 	}
 	prog, err := s.store.GetProgram(r.Context(), program)
 	if err != nil {
 		page := s.capturePageFor(r, program)
-		page.Error = "Program belum punya scope tersimpan."
+		page.Error = "The program has no saved scope yet."
 		s.render(w, r, "capture", "base", page)
 		return
 	}
 	guard, errs := scope.New(prog.InScope, prog.OutScope)
 	if len(errs) > 0 {
 		page := s.capturePageFor(r, program)
-		page.Error = "Scope program tak valid: " + errs[0].Error()
+		page.Error = "Invalid program scope: " + errs[0].Error()
 		s.render(w, r, "capture", "base", page)
 		return
 	}
@@ -2913,18 +2913,18 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAddSecret(w http.ResponseWriter, r *http.Request) {
 	if s.vault == nil {
-		http.Error(w, "vault tidak dikonfigurasi", http.StatusServiceUnavailable)
+		http.Error(w, "vault not configured", http.StatusServiceUnavailable)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	scope := normScope(r.FormValue("scope"))
 	name := strings.TrimSpace(r.FormValue("name"))
 	value := r.FormValue("value")
 	if name == "" || value == "" {
-		http.Error(w, "nama & nilai wajib", http.StatusBadRequest)
+		http.Error(w, "name & value required", http.StatusBadRequest)
 		return
 	}
 	if err := s.vault.Put(r.Context(), scope, name, []byte(value)); err != nil {
@@ -2936,11 +2936,11 @@ func (s *Server) handleAddSecret(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	if s.vault == nil {
-		http.Error(w, "vault tidak dikonfigurasi", http.StatusServiceUnavailable)
+		http.Error(w, "vault not configured", http.StatusServiceUnavailable)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	scope := normScope(r.FormValue("scope"))
@@ -2958,8 +2958,8 @@ func normScope(s string) string {
 
 // ---- helpers ----
 
-// programNames menggabungkan program yang punya temuan tersimpan dengan program
-// yang scope-nya sudah didefinisikan — keduanya persisten lintas-restart.
+// programNames merges programs that have saved findings with programs
+// whose scope is defined — both persistent across restarts.
 func (s *Server) programNames(ctx context.Context) []string {
 	set := map[string]bool{}
 	if progs, err := s.store.Programs(ctx); err == nil {
@@ -2980,10 +2980,10 @@ func (s *Server) programNames(ctx context.Context) []string {
 	return out
 }
 
-// shellData membungkus data halaman penuh (yang dirender lewat "base") dengan
-// konteks chrome: pengguna & peran saat ini untuk topbar + menu admin. Template
-// isi tetap menerima data aslinya lewat .Body, jadi tak ada struct halaman yang
-// perlu tahu soal auth.
+// shellData wraps the full-page data (rendered through "base") with the
+// chrome context: the current user & role for the topbar + admin menu. The content
+// template still gets its own data through .Body, so no page struct needs to
+// know about auth.
 type shellData struct {
 	User   string
 	Role   string
@@ -2994,11 +2994,11 @@ type shellData struct {
 func (s *Server) render(w http.ResponseWriter, r *http.Request, page, name string, data any) {
 	t := s.pages[page]
 	if t == nil {
-		http.Error(w, "template tidak ada: "+page, http.StatusInternalServerError)
+		http.Error(w, "template missing: "+page, http.StatusInternalServerError)
 		return
 	}
-	// Hanya halaman penuh (base) dibungkus; partial HTMX & halaman mandiri
-	// (login, report_print) menerima datanya langsung.
+	// Only full pages (base) are wrapped; HTMX partials & standalone pages
+	// (login, report_print) get their data directly.
 	if name == "base" {
 		user, role := s.currentUser(r)
 		data = shellData{User: user, Role: string(role), AuthOn: !s.authDisabled, Body: data}
@@ -3013,8 +3013,8 @@ func (s *Server) renderPartial(w http.ResponseWriter, r *http.Request, page, nam
 	s.render(w, r, page, name, data)
 }
 
-// splitLines memecah textarea jadi daftar entri: trim, buang baris kosong dan
-// komentar (#).
+// splitLines splits a textarea into a list of entries: trim, drop empty lines and
+// comments (#).
 func splitLines(raw string) []string {
 	var out []string
 	for _, line := range strings.Split(raw, "\n") {
@@ -3027,19 +3027,19 @@ func splitLines(raw string) []string {
 	return out
 }
 
-// splitList memecah daftar dipisah koma atau spasi (mis. input tags seleksi
-// template) menjadi token non-kosong. Dipakai untuk field tags pada form scan.
+// splitList splits a comma- or space-separated list (e.g. the template selection
+// tags input) into non-empty tokens. Used for the tags field on the scan form.
 func splitList(raw string) []string {
 	return strings.Fields(strings.ReplaceAll(raw, ",", " "))
 }
 
-// scanSeverities adalah himpunan severity yang sah untuk seleksi template nuclei
-// (-severity). Urutan = prioritas tampilan checkbox pada form scan.
+// scanSeverities is the set of severities valid for the nuclei template selection
+// (-severity). The order = the checkbox display priority on the scan form.
 var scanSeverities = []string{"critical", "high", "medium", "low", "info"}
 
-// filterSeverities menormalkan input severity seleksi: lowercase, buang duplikat,
-// dan simpan hanya nilai yang dikenal (checkbox form selalu sah, tapi query
-// ?severity= dari tautan luar bisa apa saja — jangan teruskan sampah ke engine).
+// filterSeverities normalizes the selection severity input: lowercase, drop duplicates,
+// and keep only known values (form checkboxes are always valid, but the query
+// ?severity= from an external link can be anything — do not pass junk to the engine).
 func filterSeverities(in []string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -3059,8 +3059,8 @@ func filterSeverities(in []string) []string {
 	return out
 }
 
-// parseRPS membaca laju dari form; nilai kosong/tak sah => 10 req/dtk (limiter
-// tetap menjepit ke rentang amannya).
+// parseRPS reads the rate from the form; an empty/invalid value => 10 req/s (the limiter
+// still clamps it to its safe range).
 func parseRPS(s string) float64 {
 	v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	if err != nil || v <= 0 {
@@ -3069,9 +3069,9 @@ func parseRPS(s string) float64 {
 	return v
 }
 
-// stealthScanRPS menjepit laju scan ke mode low-and-slow saat stealth aktif:
-// tak pernah melebihi stealthScanMax (jejak minimal). Hanya bisa MENURUNKAN laju,
-// tak pernah menaikkan — rate limiter tetap wajib & tak dimatikan.
+// stealthScanRPS clamps the scan rate to low-and-slow mode when stealth is on:
+// it never exceeds stealthScanMax (a minimal footprint). It can only LOWER the rate,
+// never raise it — the rate limiter stays required & is not turned off.
 const stealthScanMax = 3.0
 
 func stealthScanRPS(rps float64) float64 {
@@ -3081,7 +3081,7 @@ func stealthScanRPS(rps float64) float64 {
 	return rps
 }
 
-// safeFilename menyaring nama program menjadi nama berkas yang aman.
+// safeFilename filters a program name into a safe file name.
 func safeFilename(s string) string {
 	var b strings.Builder
 	for _, r := range s {
@@ -3098,9 +3098,9 @@ func safeFilename(s string) string {
 	return b.String()
 }
 
-// engineLabel adalah teks footer sidebar dari engine yang benar-benar
-// dikonfigurasi. Engine ProxyAware menyentuh jaringan (lewat proxy egress scope
-// guard), kriteria yang sama dengan orchestrator; tanpa satu pun berarti mock.
+// engineLabel is the sidebar footer text from the engines actually
+// configured. A ProxyAware engine touches the network (through the scope-guard egress
+// proxy), the same criterion as the orchestrator; none of them means mock.
 func engineLabel(engines []engine.Engine) string {
 	names := make([]string, 0, len(engines))
 	network := false
@@ -3111,27 +3111,27 @@ func engineLabel(engines []engine.Engine) string {
 		}
 	}
 	if !network {
-		return "engine: mock (tanpa jaringan)"
+		return "engine: mock (no network)"
 	}
-	return "engine: nyata (" + strings.Join(names, ", ") + ")"
+	return "engine: real (" + strings.Join(names, ", ") + ")"
 }
 
-// reconLabel adalah keterangan kolom seed di form scan dari recon yang benar-benar
-// dikonfigurasi, dengan kriteria yang sama: recon ProxyAware menyentuh jaringan.
-// Rantai tool diambil dari Name() agar tak basi saat pipeline berubah.
+// reconLabel is the seed column caption on the scan form from the recon actually
+// configured, by the same criterion: a ProxyAware recon touches the network.
+// The tool chain comes from Name() so it does not go stale when the pipeline changes.
 func reconLabel(rec recon.Engine) string {
 	if rec == nil {
-		return "recon tidak aktif di instance ini: seed diabaikan"
+		return "recon not active on this instance: seeds ignored"
 	}
 	chain := rec.Name()
 	if i, j := strings.IndexByte(chain, '('), strings.LastIndexByte(chain, ')'); i >= 0 && j > i {
 		chain = chain[i+1 : j]
 	}
-	mode := "recon mock, tanpa jaringan"
+	mode := "recon mock, no network"
 	if _, ok := rec.(engine.ProxyAware); ok {
-		mode = "recon nyata"
+		mode = "recon real"
 	}
-	return mode + ": " + chain + " — hasilnya tetap disaring scope guard"
+	return mode + ": " + chain + ", the results are still filtered by the scope guard"
 }
 
 func parseTemplates(version, engineLbl, reconLbl string) (map[string]*template.Template, error) {

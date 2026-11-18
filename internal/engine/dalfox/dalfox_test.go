@@ -8,19 +8,19 @@ import (
 
 func TestName(t *testing.T) {
 	if (&Runner{}).Name() != "dalfox" {
-		t.Fatalf("Name harus dalfox")
+		t.Fatalf("Name must be dalfox")
 	}
 }
 
 func TestScanFailSafeNoProxy(t *testing.T) {
-	// Tanpa proxy egress, Scan TIDAK boleh mengeksekusi apa pun (tak ada koneksi
-	// yang memintas scope guard) — kembalikan nil,nil.
+	// Without the egress proxy, Scan must NOT execute anything (no connection
+	// that bypasses the scope guard) — return nil,nil.
 	fs, err := (&Runner{}).Scan(context.Background(), "https://lab.test", "p", "r")
 	if err != nil {
-		t.Fatalf("fail-safe tak boleh error; dapat %v", err)
+		t.Fatalf("fail-safe must not error; got %v", err)
 	}
 	if fs != nil {
-		t.Fatalf("tanpa proxy harus nil temuan; dapat %d", len(fs))
+		t.Fatalf("without a proxy there must be nil findings; got %d", len(fs))
 	}
 }
 
@@ -36,7 +36,7 @@ func TestArgs(t *testing.T) {
 		"--silence",
 	} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("args harus memuat %q; dapat %q", want, joined)
+			t.Errorf("args must hold %q; got %q", want, joined)
 		}
 	}
 }
@@ -45,16 +45,16 @@ func TestStealthReducesWorkersAndAddsDelay(t *testing.T) {
 	normal := &Runner{}
 	stealth := &Runner{Stealth: true}
 	if stealth.workers() >= normal.workers() {
-		t.Errorf("stealth harus worker lebih sedikit: %d vs %d", stealth.workers(), normal.workers())
+		t.Errorf("stealth must have fewer workers: %d vs %d", stealth.workers(), normal.workers())
 	}
 	if stealth.delayMS() <= 0 {
-		t.Errorf("stealth harus menambah delay; dapat %d", stealth.delayMS())
+		t.Errorf("stealth must add delay; got %d", stealth.delayMS())
 	}
 	if normal.delayMS() != 0 {
-		t.Errorf("tanpa rate/stealth, delay harus 0; dapat %d", normal.delayMS())
+		t.Errorf("without rate/stealth, delay must be 0; got %d", normal.delayMS())
 	}
-	// RateLimit memetakan ke delay.
+	// RateLimit maps to delay.
 	if (&Runner{RateLimit: 5}).delayMS() != 200 {
-		t.Errorf("RateLimit=5 -> delay 200ms; dapat %d", (&Runner{RateLimit: 5}).delayMS())
+		t.Errorf("RateLimit=5 -> delay 200ms; got %d", (&Runner{RateLimit: 5}).delayMS())
 	}
 }

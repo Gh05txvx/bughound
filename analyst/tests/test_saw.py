@@ -1,5 +1,5 @@
-"""Uji SPK/SAW — fungsi murni + pipeline end-to-end (deterministik, tanpa jaringan).
-Jalankan: `python tests/test_saw.py` atau `pytest`."""
+"""Test decision-support/SAW: pure functions + end-to-end pipeline (deterministic, no network).
+Run: `python tests/test_saw.py` or `pytest`."""
 from __future__ import annotations
 
 import os
@@ -13,7 +13,7 @@ from bughound_analyst.model import Evidence, Finding, Location  # noqa: E402
 
 def test_normalize_benefit_and_cost():
     assert saw.normalize_column([5, 10, 0], "benefit") == [0.5, 1.0, 0.0]
-    # cost: min positif / x ; 0 cost = ideal (1.0)
+    # cost: positive min / x ; 0 cost = ideal (1.0)
     assert saw.normalize_column([2, 4, 0], "cost") == [1.0, 0.5, 1.0]
     assert saw.normalize_column([], "benefit") == []
 
@@ -23,9 +23,9 @@ def test_saw_score_weighted_sum():
     weights = {"a": 0.5, "b": 0.5}
     types = {"a": "benefit", "b": "cost"}
     res = saw.saw_score(rows, weights, types)
-    # baris0: a=10/10=1 (w.5)=.5 ; b cost min=1 →1/2=.5 (w.5)=.25 → .75
+    # row0: a=10/10=1 (w.5)=.5 ; b cost min=1 ->1/2=.5 (w.5)=.25 -> .75
     assert abs(res[0]["score"] - 0.75) < 1e-9
-    # baris1: a=5/10=.5→.25 ; b=1→1.0→.5 → .75
+    # row1: a=5/10=.5->.25 ; b=1->1.0->.5 -> .75
     assert abs(res[1]["score"] - 0.75) < 1e-9
 
 
@@ -56,7 +56,7 @@ def test_pipeline_ranks_sqli_first():
     order = [r["finding"].id for r in ranked]
     assert order == ["f-sqli", "f-xss", "f-dir"], order
     assert ranked[0]["score"] > ranked[1]["score"] > ranked[2]["score"]
-    # breakdown lengkap & explainable
+    # complete & explainable breakdown
     assert set(ranked[0]["breakdown"]) == set(cfg.weights)
 
 
@@ -70,11 +70,11 @@ def test_prefilter_drops_and_collapses():
     ]
     kept = analyst.prefilter(findings)
     ids = {f.id for f in kept}
-    assert ids == {"a"}, ids  # FP dibuang, info dibuang
+    assert ids == {"a"}, ids  # FP dropped, info dropped
 
 
 def test_weights_sum_to_one():
-    config.load().validate()  # raise bila Σ != 1
+    config.load().validate()  # raises when Σ != 1
 
 
 if __name__ == "__main__":
@@ -82,4 +82,4 @@ if __name__ == "__main__":
     for fn in fns:
         fn()
         print(f"ok  {fn.__name__}")
-    print(f"\n{len(fns)} test LULUS")
+    print(f"\n{len(fns)} tests PASSED")

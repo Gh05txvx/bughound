@@ -14,49 +14,49 @@ func TestProgramsPersistAndScopeEditor(t *testing.T) {
 	srv, st := newTestServer(t)
 	ctx := context.Background()
 
-	// Simpan program lewat scope editor.
+	// Save a program through the scope editor.
 	rec := do(t, srv, "POST", "/programs", url.Values{
 		"name": {"acme"}, "in_scope": {"acme.io\n*.acme.io"}, "out_scope": {"admin.acme.io"},
 	})
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("simpan program = %d, ingin 303", rec.Code)
+		t.Fatalf("save program = %d, want 303", rec.Code)
 	}
 
-	// Persisten di store.
+	// Persistent in the store.
 	p, err := st.GetProgram(ctx, "acme")
 	if err != nil || len(p.InScope) != 2 || len(p.OutScope) != 1 {
-		t.Fatalf("program tak tersimpan dengan benar: %+v (%v)", p, err)
+		t.Fatalf("the program was not stored correctly: %+v (%v)", p, err)
 	}
 
-	// Daftar program menampilkannya.
+	// The program list shows it.
 	if b := do(t, srv, "GET", "/programs", nil).Body.String(); !strings.Contains(b, "acme") {
-		t.Error("daftar program tak menampilkan 'acme'")
+		t.Error("the program list does not show 'acme'")
 	}
 
-	// Form scan prefill scope dari program tersimpan.
+	// The scan form prefills the scope from the stored program.
 	if b := do(t, srv, "GET", "/scan?program=acme", nil).Body.String(); !strings.Contains(b, "*.acme.io") {
-		t.Error("form scan tak prefill scope dari program tersimpan")
+		t.Error("the scan form does not prefill the scope from the stored program")
 	}
 
-	// Pratinjau: izin untuk in-scope, tolak untuk out-of-scope.
+	// Preview: allow for in-scope, deny for out-of-scope.
 	rec = do(t, srv, "POST", "/programs/preview", url.Values{
 		"in_scope": {"acme.io\n*.acme.io"}, "out_scope": {"admin.acme.io"},
 		"targets": {"app.acme.io\nadmin.acme.io\nevil.com"},
 	})
 	pb := rec.Body.String()
-	if !strings.Contains(pb, "izin") || !strings.Contains(pb, "tolak") {
-		t.Errorf("pratinjau harus menampilkan izin & tolak:\n%s", pb)
+	if !strings.Contains(pb, "allow") || !strings.Contains(pb, "deny") {
+		t.Errorf("the preview must show allow & deny:\n%s", pb)
 	}
 
-	// Fail-closed: entri scope tak valid ditolak saat simpan (bukan 303).
+	// Fail-closed: an invalid scope entry is rejected on save (not 303).
 	rec = do(t, srv, "POST", "/programs", url.Values{
 		"name": {"bad"}, "in_scope": {"ok.io"}, "out_scope": {"a.*.io"},
 	})
 	if rec.Code == http.StatusSeeOther {
-		t.Error("entri scope tak valid harus ditolak (fail-closed), bukan disimpan")
+		t.Error("an invalid scope entry must be rejected (fail-closed), not saved")
 	}
 	if _, err := st.GetProgram(ctx, "bad"); err != store.ErrNotFound {
-		t.Error("program dengan scope tak valid tak boleh tersimpan")
+		t.Error("a program with an invalid scope must not be stored")
 	}
 }
 
@@ -64,54 +64,54 @@ func TestProgramDelete(t *testing.T) {
 	srv, st := newTestServer(t)
 	ctx := context.Background()
 
-	// Buat program, pastikan muncul di daftar.
+	// Create a program, make sure it shows in the list.
 	do(t, srv, "POST", "/programs", url.Values{"name": {"delme"}, "in_scope": {"delme.test"}})
 	if _, err := st.GetProgram(ctx, "delme"); err != nil {
-		t.Fatalf("prasyarat: program tak tersimpan: %v", err)
+		t.Fatalf("precondition: the program was not stored: %v", err)
 	}
 	if b := do(t, srv, "GET", "/programs", nil).Body.String(); !strings.Contains(b, "delme") {
-		t.Fatal("prasyarat: daftar tak menampilkan 'delme'")
+		t.Fatal("precondition: the list does not show 'delme'")
 	}
 
-	// Hapus → 303 ke /programs?ok=deleted.
+	// Delete → 303 to /programs?ok=deleted.
 	rec := do(t, srv, "POST", "/programs/delete", url.Values{"name": {"delme"}})
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("hapus program = %d, ingin 303", rec.Code)
+		t.Fatalf("delete program = %d, want 303", rec.Code)
 	}
 	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "ok=deleted") {
-		t.Errorf("redirect harus membawa ok=deleted, dapat %q", loc)
+		t.Errorf("the redirect must carry ok=deleted, got %q", loc)
 	}
 
-	// Definisi hilang dari store & daftar; flash muncul.
+	// The definition is gone from the store & list; the flash shows up.
 	if _, err := st.GetProgram(ctx, "delme"); err != store.ErrNotFound {
-		t.Errorf("program harus terhapus dari store, dapat %v", err)
+		t.Errorf("the program must be deleted from the store, got %v", err)
 	}
 	body := do(t, srv, "GET", "/programs?ok=deleted", nil).Body.String()
 	if strings.Contains(body, ">delme<") {
-		t.Error("daftar masih menampilkan 'delme' setelah hapus")
+		t.Error("the list still shows 'delme' after delete")
 	}
-	if !strings.Contains(body, "Program dihapus") {
-		t.Error("flash konfirmasi hapus tak muncul")
+	if !strings.Contains(body, "Program deleted") {
+		t.Error("the delete confirmation flash did not show")
 	}
 
-	// Idempoten: hapus ulang tetap 303 (sukses senyap), tak 500.
+	// Idempotent: a repeated delete is still 303 (silent success), not 500.
 	if rec := do(t, srv, "POST", "/programs/delete", url.Values{"name": {"delme"}}); rec.Code != http.StatusSeeOther {
-		t.Errorf("hapus ulang = %d, ingin 303 (idempoten)", rec.Code)
+		t.Errorf("repeated delete = %d, want 303 (idempotent)", rec.Code)
 	}
 }
 
 func TestProgramDeleteViewerForbidden(t *testing.T) {
 	srv, st := newRBACServer(t)
-	// Seed satu program langsung di store (bukan lewat viewer).
+	// Seed one program directly in the store (not through a viewer).
 	if err := st.SaveProgram(context.Background(), store.Program{Name: "keep", InScope: []string{"keep.test"}}); err != nil {
 		t.Fatal(err)
 	}
 	csrf, sess := loginAs(t, srv, "view", "viewpw")
 	if rec := authedReq(srv, "POST", "/programs/delete", url.Values{"name": {"keep"}}, csrf, sess); rec.Code != http.StatusForbidden {
-		t.Fatalf("viewer POST /programs/delete = %d, ingin 403", rec.Code)
+		t.Fatalf("viewer POST /programs/delete = %d, want 403", rec.Code)
 	}
-	// Program harus tetap ada (viewer tak boleh menghapus).
+	// The program must stay (a viewer must not delete it).
 	if _, err := st.GetProgram(context.Background(), "keep"); err != nil {
-		t.Errorf("program terhapus oleh viewer yang seharusnya ditolak: %v", err)
+		t.Errorf("the program was deleted by a viewer that should have been denied: %v", err)
 	}
 }

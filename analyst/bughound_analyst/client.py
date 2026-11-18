@@ -1,6 +1,6 @@
-"""Klien API BugHound — BACA-SAJA. Hanya GET /api/v1/findings (Basic auth).
+"""BugHound API client, READ-ONLY. Only GET /api/v1/findings (Basic auth).
 
-Tak pernah POST/mutasi. Kredensial dari env (.env): BUGHOUND_URL/USER/PASS.
+Never POSTs/mutates. Credentials from env (.env): BUGHOUND_URL/USER/PASS.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .model import Finding
 
 try:
     import httpx
-except ImportError:  # scaffold tetap importable tanpa httpx
+except ImportError:  # the scaffold stays importable without httpx
     httpx = None
 
 
@@ -25,7 +25,7 @@ class BughoundClient:
 
     def _client(self):
         if httpx is None:
-            raise RuntimeError("butuh httpx: pip install httpx")
+            raise RuntimeError("httpx required: pip install httpx")
         return httpx.Client(base_url=self.base_url, auth=(self.user, self.password),
                             timeout=self.timeout, headers={"Accept": "application/json"})
 

@@ -1,8 +1,9 @@
-// Package ffuf menormalkan output ffuf (content discovery / fuzzing) ke Skema
-// Temuan Seragam (BH-SPEC-FINDING), membuktikan nilai inti bughound: menambah
-// engine = menambah satu adapter, tanpa menyentuh triase/report/store.
+// Package ffuf normalizes ffuf output (content discovery / fuzzing) into the
+// Unified Finding Schema (BH-SPEC-FINDING), which proves bughound's core idea:
+// adding an engine means adding one adapter, without touching triage, report,
+// or store.
 //
-// Menyediakan engine mock untuk M1 (tanpa jaringan).
+// It also provides a mock engine for M1 (no network).
 package ffuf
 
 import (
@@ -15,7 +16,7 @@ import (
 	"bughound/internal/finding"
 )
 
-// ffuf -of json menghasilkan satu objek JSON dengan array "results".
+// ffuf -of json produces a single JSON object with a "results" array.
 type ffufOutput struct {
 	Results []ffufResult `json:"results"`
 }
@@ -31,56 +32,57 @@ type ffufResult struct {
 	Host        string            `json:"host"`
 }
 
-// Ambang kalibrasi catch-all. Bila satu "sidik jari" respons (status|panjang|kata)
-// mendominasi hasil, server membalas seragam — khas SPA yang mengembalikan
-// index.html untuk hampir semua path — sehingga mayoritas "endpoint ditemukan"
-// adalah positif palsu. Grup dominan ditekan jadi SATU temuan info yang
-// menjelaskannya, bukan membanjiri store dengan ratusan path semu. Ambang dibuat
-// konservatif agar situs sehat (ukuran respons beragam) tak pernah ikut tersaring.
+// Catch-all calibration thresholds. When one response "fingerprint"
+// (status|length|words) dominates the results, the server is answering
+// uniformly, typical of an SPA that returns index.html for nearly every path, so
+// most of the "endpoints found" are false positives. The dominant group is
+// suppressed into ONE info finding that explains it, instead of flooding the
+// store with hundreds of decoy paths. The thresholds are kept conservative so a
+// healthy site (varied response sizes) is never caught in the filter.
 const (
-	catchAllMinHits     = 10  // grup dominan minimal sebesar ini baru dianggap wildcard
-	catchAllMinFraction = 0.6 // dan minimal menyumbang 60% dari seluruh hasil
+	catchAllMinHits     = 10  // the dominant group must be at least this big to count as wildcard
+	catchAllMinFraction = 0.6 // and make up at least 60% of all results
 
-	// errorWallMinHits adalah ambang grup berstatus dinding (401/403/500), baik
-	// identik maupun sebentuk (lihat minHitsFor). Sengaja jauh di atas
-	// catchAllMinHits: pada API sehat path tak dikenal dibalas 404, jadi grup kecil
-	// berstatus ini adalah rute NYATA — terproteksi (401/403) atau crash tanpa
-	// parameter wajib (500) — justru itu yang dicari brute route API. Dinding
-	// sungguhan di prefix populer menghasilkan ratusan hingga ribuan hit; di bawah
-	// ambang, kebisingannya terbatas.
+	// errorWallMinHits is the threshold for a wall-status group (401/403/500),
+	// whether identical or same-shaped (see minHitsFor). Deliberately well above
+	// catchAllMinHits: on a healthy API an unknown path gets a 404, so a small group
+	// with one of these statuses is a REAL route, either protected (401/403) or
+	// crashing without a required parameter (500), which is exactly what API route
+	// brute-forcing looks for. A genuine wall on a popular prefix produces hundreds
+	// to thousands of hits; below the threshold the noise stays limited.
 	errorWallMinHits = 100
 )
 
-// Parse membaca output ffuf (JSON) dan mengembalikan temuan ternormalkan, setelah
-// kalibrasi menekan respons massal yang bukan endpoint nyata (lihat calibrate).
+// Parse reads ffuf output (JSON) and returns normalized findings, after
+// calibration suppresses bulk responses that are not real endpoints (see calibrate).
 func Parse(r io.Reader, program, runID string) ([]*finding.Finding, error) {
 	var out ffufOutput
 	if err := json.NewDecoder(r).Decode(&out); err != nil {
-		return nil, fmt.Errorf("ffuf: output bukan JSON valid: %w", err)
+		return nil, fmt.Errorf("ffuf: output is not valid JSON: %w", err)
 	}
 	items := make([]item, 0, len(out.Results))
 	for i, res := range out.Results {
 		f, err := mapResult(res, program, runID)
 		if err != nil {
-			return nil, fmt.Errorf("ffuf: hasil %d: %w", i, err)
+			return nil, fmt.Errorf("ffuf: result %d: %w", i, err)
 		}
 		items = append(items, item{res: res, f: f})
 	}
 	return calibrate(items, program, runID), nil
 }
 
-// item memasangkan hasil mentah dengan temuan hasil pemetaannya, agar kalibrasi
-// menilai sidik jari respons tanpa mem-parse ulang.
+// item pairs a raw result with its mapped finding, so calibration can judge the
+// response fingerprint without re-parsing.
 type item struct {
 	res ffufResult
 	f   *finding.Finding
 }
 
-// calibrate menekan respons massal yang bukan endpoint nyata dan menggantinya dengan
-// satu temuan info per pola, agar penekanan tetap terlihat. Dua pola dinilai
-// berurutan: catch-all (respons identik), lalu dinding error (401/403/500
-// sebentuk, panjang berubah). Hasil lain — endpoint dengan sidik jari berbeda —
-// tetap utuh.
+// calibrate suppresses bulk responses that are not real endpoints and replaces
+// them with one info finding per pattern, so the suppression stays visible. Two
+// patterns are judged in order: catch-all (identical responses), then the error
+// wall (401/403/500 same-shaped, length varies). Other results, endpoints with a
+// different fingerprint, stay intact.
 func calibrate(items []item, program, runID string) []*finding.Finding {
 	var notes []*finding.Finding
 	rest, sample, n := splitDominant(items, fingerprintOf)
@@ -94,11 +96,11 @@ func calibrate(items []item, program, runID string) []*finding.Finding {
 	return append(collect(rest), notes...)
 }
 
-// splitDominant memisahkan grup terbesar menurut key bila ukurannya memenuhi
-// minHitsFor dan menyumbang minimal catchAllMinFraction dari items. Mengembalikan
-// sisa item, satu contoh dari grup, dan ukuran grup (0 = tak ada yang ditekan). Key
-// kosong berarti item itu tak ikut dinilai. Key wajib memuat status, agar satu grup
-// punya satu status dan satu ambang.
+// splitDominant separates the largest group by key when its size meets
+// minHitsFor and makes up at least catchAllMinFraction of items. It returns the
+// remaining items, one sample from the group, and the group size (0 = nothing
+// suppressed). An empty key means that item is not judged. The key must include
+// the status, so one group has one status and one threshold.
 func splitDominant(items []item, key func(ffufResult) string) (rest []item, sample ffufResult, n int) {
 	counts := map[string]int{}
 	for _, it := range items {
@@ -121,12 +123,12 @@ func splitDominant(items []item, key func(ffufResult) string) (rest []item, samp
 		rest = append(rest, it)
 	}
 	if domN < minHitsFor(sample.Status) || float64(domN)/float64(len(items)) < catchAllMinFraction {
-		return items, ffufResult{}, 0 // tak ada pola yang meyakinkan
+		return items, ffufResult{}, 0 // no convincing pattern
 	}
 	return rest, sample, domN
 }
 
-// minHitsFor mengembalikan ambang ukuran grup menurut status responsnya.
+// minHitsFor returns the group-size threshold for a response status.
 func minHitsFor(status int) int {
 	if isWallStatus(status) {
 		return errorWallMinHits
@@ -134,9 +136,9 @@ func minHitsFor(status int) int {
 	return catchAllMinHits
 }
 
-// isWallStatus: status yang bisa membentuk dinding error. 401/403 = gateway auth;
-// 500 = handler error yang mencetak path (mis. Juice Shop "Unexpected path:
-// /api/x"). Status lain tak pernah: rute 200 nyata sering kebetulan sebentuk.
+// isWallStatus: statuses that can form an error wall. 401/403 = auth gateway;
+// 500 = an error handler that prints the path (e.g. Juice Shop "Unexpected path:
+// /api/x"). No other status qualifies: real 200 routes are often same-shaped by chance.
 func isWallStatus(status int) bool {
 	return status == 401 || status == 403 || status == 500
 }
@@ -149,19 +151,19 @@ func collect(items []item) []*finding.Finding {
 	return fs
 }
 
-// fingerprintOf: dua respons dianggap "sama" bila status, panjang, dan jumlah kata
-// identik. Kombinasi ini stabil untuk halaman catch-all yang byte-nya sama.
+// fingerprintOf: two responses count as "the same" when status, length, and word
+// count are identical. This combination is stable for a catch-all page whose bytes match.
 func fingerprintOf(res ffufResult) string {
 	return fmt.Sprintf("%d|%d|%d", res.Status, res.Length, res.Words)
 }
 
-// wallFingerprintOf adalah sidik jari longgar untuk dinding error: panjang
-// diabaikan karena banyak server menggemakan path di body (mis. gateway Spring
-// Boot {"status":401,"path":"/api/x"}, halaman error 500 yang mencetak path), jadi
-// panjang berubah per path sementara bentuknya tetap. Content-type juga diabaikan:
-// gateway bisa menurunkannya dari ekstensi path. Hanya status dinding (selainnya
-// key kosong): rute 200 nyata sering kebetulan sebentuk, mis. JSON tanpa spasi
-// selalu 1 kata.
+// wallFingerprintOf is a loose fingerprint for an error wall: length is ignored
+// because many servers echo the path in the body (e.g. a Spring Boot gateway
+// {"status":401,"path":"/api/x"}, a 500 error page that prints the path), so the
+// length changes per path while the shape stays. Content-type is also ignored: a
+// gateway may derive it from the path extension. Only wall statuses count
+// (otherwise the key is empty): real 200 routes are often same-shaped by chance,
+// e.g. JSON without spaces is always 1 word.
 func wallFingerprintOf(res ffufResult) string {
 	if !isWallStatus(res.Status) {
 		return ""
@@ -171,12 +173,12 @@ func wallFingerprintOf(res ffufResult) string {
 
 func mapResult(res ffufResult, program, runID string) (*finding.Finding, error) {
 	if strings.TrimSpace(res.URL) == "" {
-		return nil, fmt.Errorf("hasil ffuf tanpa url")
+		return nil, fmt.Errorf("ffuf result without a url")
 	}
 	fuzz := res.Input["FUZZ"]
-	title := "Endpoint ditemukan"
+	title := "Endpoint found"
 	if fuzz != "" {
-		title = "Endpoint ditemukan: " + fuzz
+		title = "Endpoint found: " + fuzz
 	}
 	raw, _ := json.Marshal(res)
 
@@ -187,65 +189,65 @@ func mapResult(res ffufResult, program, runID string) (*finding.Finding, error) 
 		Type:         "exposed-path",
 		Title:        title,
 		Severity:     mapSeverity(res.Status),
-		Confidence:   finding.ConfidenceHigh, // ffuf melaporkan match pasti
+		Confidence:   finding.ConfidenceHigh, // ffuf reports a definite match
 		Tags:         []string{"content-discovery"},
 		Location:     finding.Location{URL: res.URL},
 		SourceEngine: "ffuf",
 		Status:       finding.StatusNew,
 		Evidence: &finding.Evidence{
 			Payload: fuzz,
-			Matched: fmt.Sprintf("HTTP %d · %d bytes · %d kata · %s", res.Status, res.Length, res.Words, res.ContentType),
+			Matched: fmt.Sprintf("HTTP %d · %d bytes · %d words · %s", res.Status, res.Length, res.Words, res.ContentType),
 		},
 		Raw: raw,
 	}, nil
 }
 
-// wildcardNote merangkum grup catch-all yang ditekan menjadi satu temuan info,
-// sehingga penekanan TERLIHAT & dapat diaudit (bukan drop diam-diam) dan hunter
-// tahu persis pola apa yang disaring.
+// wildcardNote summarizes the suppressed catch-all group into one info finding,
+// so the suppression is VISIBLE and auditable (not a silent drop) and the hunter
+// knows exactly which pattern was filtered.
 func wildcardNote(sample ffufResult, suppressed, total int, program, runID string) *finding.Finding {
 	note := calibrationNote(sample, suppressed, total, program, runID)
 	note.Type = "content-discovery-wildcard"
-	note.Title = fmt.Sprintf("Kalibrasi ffuf: %d path ditekan (respons catch-all seragam)", suppressed)
-	note.Description = fmt.Sprintf("Server membalas %d dari %d path uji dengan respons identik "+
-		"(HTTP %d · %d bytes · %d kata) — indikasi catch-all/SPA wildcard. Temuan path untuk "+
-		"pola ini ditekan sebagai kemungkinan positif palsu; verifikasi manual bila ada path "+
-		"spesifik yang diragukan.", suppressed, total, sample.Status, sample.Length, sample.Words)
+	note.Title = fmt.Sprintf("ffuf calibration: %d paths suppressed (uniform catch-all response)", suppressed)
+	note.Description = fmt.Sprintf("The server answered %d of %d probed paths with an identical response "+
+		"(HTTP %d · %d bytes · %d words), a sign of a catch-all/SPA wildcard. Path findings for "+
+		"this pattern are suppressed as likely false positives; verify by hand if a specific "+
+		"path is in doubt.", suppressed, total, sample.Status, sample.Length, sample.Words)
 	note.Evidence = &finding.Evidence{
-		Matched: fmt.Sprintf("HTTP %d · %d bytes · %d kata · %d/%d path seragam", sample.Status, sample.Length, sample.Words, suppressed, total),
+		Matched: fmt.Sprintf("HTTP %d · %d bytes · %d words · %d/%d uniform paths", sample.Status, sample.Length, sample.Words, suppressed, total),
 	}
 	return note
 }
 
-// wallNote merangkum dinding error yang ditekan. Tipenya sendiri, bukan tipe
-// catch-all: kunci dedup catatan di akar target hanya bisa berbeda lewat tipe, jadi
-// satu target dengan kedua pola tetap menampilkan dua catatan.
+// wallNote summarizes the suppressed error wall. It has its own type, not the
+// catch-all type: a note's dedup key at the target root can only differ by type,
+// so one target with both patterns still shows two notes.
 func wallNote(sample ffufResult, suppressed, total int, program, runID string) *finding.Finding {
 	note := calibrationNote(sample, suppressed, total, program, runID)
 	kind := wallKind(sample.Status)
 	note.Type = "content-discovery-error-wall"
-	note.Title = fmt.Sprintf("Kalibrasi ffuf: %d path ditekan (dinding %s HTTP %d)", suppressed, kind, sample.Status)
-	note.Description = fmt.Sprintf("Server membalas %d dari %d path uji dengan HTTP %d yang sebentuk "+
-		"(%d kata, %d baris), hanya panjangnya berubah — indikasi dinding %s yang menggemakan path "+
-		"di body, bukan %d endpoint nyata. Contoh: %s. Temuan path untuk pola ini ditekan; rute nyata "+
-		"di balik dinding tak terbedakan dari path semu, verifikasi manual bila ada path spesifik "+
-		"yang diragukan.", suppressed, total, sample.Status, sample.Words, sample.Lines, kind, suppressed, sample.URL)
+	note.Title = fmt.Sprintf("ffuf calibration: %d paths suppressed (%s wall HTTP %d)", suppressed, kind, sample.Status)
+	note.Description = fmt.Sprintf("The server answered %d of %d probed paths with a same-shaped HTTP %d "+
+		"(%d words, %d lines), only the length changing, a sign of a %s wall that echoes the path "+
+		"in the body rather than %d real endpoints. Example: %s. Path findings for this pattern are "+
+		"suppressed; a real route behind the wall is indistinguishable from a decoy path, so verify "+
+		"by hand if a specific path is in doubt.", suppressed, total, sample.Status, sample.Words, sample.Lines, kind, suppressed, sample.URL)
 	note.Evidence = &finding.Evidence{
-		Matched: fmt.Sprintf("HTTP %d · %d kata · %d baris · %d/%d path sebentuk", sample.Status, sample.Words, sample.Lines, suppressed, total),
+		Matched: fmt.Sprintf("HTTP %d · %d words · %d lines · %d/%d same-shaped paths", sample.Status, sample.Words, sample.Lines, suppressed, total),
 	}
 	return note
 }
 
-// wallKind memberi label jenis dinding untuk teks catatan.
+// wallKind labels the wall type for the note text.
 func wallKind(status int) string {
 	if status == 500 {
-		return "error server"
+		return "server error"
 	}
 	return "auth"
 }
 
-// calibrationNote membangun kerangka catatan kalibrasi; Type, Title, Description,
-// dan Evidence diisi pemanggil sesuai pola yang ditekan.
+// calibrationNote builds the skeleton of a calibration note; Type, Title,
+// Description, and Evidence are filled by the caller per the suppressed pattern.
 func calibrationNote(sample ffufResult, suppressed, total int, program, runID string) *finding.Finding {
 	base := baseOf(sample.URL)
 	raw, _ := json.Marshal(struct {
@@ -270,8 +272,8 @@ func calibrationNote(sample ffufResult, suppressed, total int, program, runID st
 	}
 }
 
-// baseOf mengambil scheme://host dari sebuah URL hasil, untuk menempatkan temuan
-// ringkasan pada akar target alih-alih satu path semu.
+// baseOf takes scheme://host from a result URL, to place the summary finding at
+// the target root instead of on one decoy path.
 func baseOf(rawURL string) string {
 	if u, err := url.Parse(strings.TrimSpace(rawURL)); err == nil && u.Host != "" {
 		return u.Scheme + "://" + u.Host
@@ -279,9 +281,9 @@ func baseOf(rawURL string) string {
 	return rawURL
 }
 
-// mapSeverity: ffuf menemukan path, bukan kerentanan langsung. 200/204 (dapat
-// diakses) diberi low; selain itu info. Severity sebenarnya ditentukan saat
-// triase manual.
+// mapSeverity: ffuf finds a path, not a vulnerability directly. 200/204
+// (reachable) get low; everything else gets info. The real severity is decided
+// during manual triage.
 func mapSeverity(status int) finding.Severity {
 	switch status {
 	case 200, 204:

@@ -15,24 +15,24 @@ func hasHeaderArg(args []string, hdr string) bool {
 	return false
 }
 
-// UseAuthHeaders pada pipeline harus menyebar ke tahap aktif (httpx + katana).
+// UseAuthHeaders on the pipeline must fan out to the active stages (httpx + katana).
 func TestRealPipelineAuthHeadersFanout(t *testing.T) {
 	hdr := "Cookie: session=abc"
-	p := NewRealPipelineRate(0) // tahap httpx/katana terkonstruksi (non-nil)
+	p := NewRealPipelineRate(0) // the httpx/katana stages are constructed (non-nil)
 	if hasHeaderArg(p.Httpx.args(), hdr) || hasHeaderArg(p.Katana.args(), hdr) {
-		t.Error("tanpa UseAuthHeaders tak boleh ada -H")
+		t.Error("without UseAuthHeaders there must be no -H")
 	}
 	p.UseAuthHeaders([]string{hdr})
 	if !hasHeaderArg(p.Httpx.args(), hdr) {
-		t.Error("httpx args harus memuat -H auth")
+		t.Error("httpx args must include the auth -H")
 	}
 	if !hasHeaderArg(p.Katana.args(), hdr) {
-		t.Error("katana args harus memuat -H auth")
+		t.Error("katana args must include the auth -H")
 	}
 }
 
-// Crawl berlogin tak boleh mengikuti link logout (sesi mati); crawl tanpa login
-// tak dibatasi.
+// A logged-in crawl must not follow logout links (the session dies); a crawl
+// without login is not restricted.
 func TestKatanaSkipsLogoutWhenAuth(t *testing.T) {
 	cos := func(args []string) bool {
 		for i := 0; i+1 < len(args); i++ {
@@ -44,10 +44,10 @@ func TestKatanaSkipsLogoutWhenAuth(t *testing.T) {
 	}
 	k := &Katana{}
 	if cos(k.args()) {
-		t.Error("tanpa auth, katana tak boleh dibatasi -cos logout")
+		t.Error("without auth, katana must not be restricted by the logout -cos")
 	}
 	k.authHeaders = []string{"Cookie: s=1"}
 	if !cos(k.args()) {
-		t.Errorf("dengan auth, katana wajib -cos %q; dapat %v", engine.LogoutPattern, k.args())
+		t.Errorf("with auth, katana must have -cos %q; got %v", engine.LogoutPattern, k.args())
 	}
 }

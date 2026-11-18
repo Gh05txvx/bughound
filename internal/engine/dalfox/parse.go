@@ -10,32 +10,32 @@ import (
 	"bughound/internal/finding"
 )
 
-// dalfoxPoC mencerminkan satu entri PoC pada output JSON dalfox (model.PoC di
-// dalfox v2). Hanya field yang kita pakai yang didefinisikan; sisanya diabaikan.
+// dalfoxPoC mirrors one PoC entry in dalfox's JSON output (model.PoC in
+// dalfox v2). Only the fields we use are defined; the rest are ignored.
 type dalfoxPoC struct {
 	Type        string `json:"type"`         // V=verified, R=reflected, G=grep/bav
 	InjectType  string `json:"inject_type"`  // mis. "inHTML-URL", "inJS-double"
 	Method      string `json:"method"`       // GET/POST
-	Data        string `json:"data"`         // URL PoC (payload tertanam)
-	Param       string `json:"param"`        // parameter terdampak
-	Payload     string `json:"payload"`      // payload yang dikirim
-	Evidence    string `json:"evidence"`     // cuplikan bukti
+	Data        string `json:"data"`         // PoC URL (payload embedded)
+	Param       string `json:"param"`        // affected parameter
+	Payload     string `json:"payload"`      // the payload sent
+	Evidence    string `json:"evidence"`     // evidence snippet
 	CWE         string `json:"cwe"`          // mis. "CWE-79"
 	Severity    string `json:"severity"`     // High/Medium/Low/Info
-	MessageStr  string `json:"message_str"`  // deskripsi (opsional)
-	RawRequest  string `json:"raw_request"`  // HTTP request mentah (opsional)
-	RawResponse string `json:"raw_response"` // HTTP response mentah (opsional)
+	MessageStr  string `json:"message_str"`  // description (optional)
+	RawRequest  string `json:"raw_request"`  // raw HTTP request (optional)
+	RawResponse string `json:"raw_response"` // raw HTTP response (optional)
 }
 
-// dalfoxResult membungkus daftar PoC bila dalfox menulis objek Result penuh.
+// dalfoxResult wraps the PoC list when dalfox writes a full Result object.
 type dalfoxResult struct {
 	PoCs []dalfoxPoC `json:"pocs"`
 }
 
-// Parse menormalkan output JSON dalfox ke Skema Temuan Seragam (BH-SPEC-FINDING).
-// Toleran pada tiga bentuk yang mungkin dipancarkan dalfox: objek Result
-// (`{"pocs":[...]}`), array PoC (`[...]`), atau JSONL (satu objek PoC per baris).
-// program/run_id/target diisi di sini; store mengisi id/dedup_key/schema/created.
+// Parse normalizes dalfox's JSON output to the Uniform Finding Schema (BH-SPEC-FINDING).
+// Tolerant of the three forms dalfox may emit: a Result object
+// (`{"pocs":[...]}`), a PoC array (`[...]`), or JSONL (one PoC object per line).
+// program/run_id/target are filled here; the store fills id/dedup_key/schema/created.
 func Parse(r io.Reader, target, program, runID string) ([]*finding.Finding, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -50,8 +50,8 @@ func Parse(r io.Reader, target, program, runID string) ([]*finding.Finding, erro
 	return out, nil
 }
 
-// extractPoCs mengurai daftar PoC dari output dalfox secara toleran terhadap
-// bentuk (Result object / array / JSONL). Baris/entri yang tak valid dilewati.
+// extractPoCs parses the PoC list from dalfox output, tolerant of the
+// form (Result object / array / JSONL). Invalid lines/entries are skipped.
 func extractPoCs(data []byte) []dalfoxPoC {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 {
@@ -64,7 +64,7 @@ func extractPoCs(data []byte) []dalfoxPoC {
 		if json.Unmarshal(data, &res) == nil && res.PoCs != nil {
 			return res.PoCs
 		}
-		// Satu objek PoC tunggal.
+		// A single PoC object.
 		var single dalfoxPoC
 		if json.Unmarshal(data, &single) == nil && !single.empty() {
 			return []dalfoxPoC{single}
@@ -76,7 +76,7 @@ func extractPoCs(data []byte) []dalfoxPoC {
 			return arr
 		}
 	}
-	// JSONL: satu objek per baris (mode stream dalfox).
+	// JSONL: one object per line (dalfox stream mode).
 	var out []dalfoxPoC
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -97,7 +97,7 @@ func (p dalfoxPoC) empty() bool {
 	return strings.TrimSpace(p.Data) == "" && strings.TrimSpace(p.Payload) == "" && strings.TrimSpace(p.Evidence) == ""
 }
 
-// mapPoC memetakan satu PoC dalfox ke Finding. Mengembalikan nil bila PoC kosong.
+// mapPoC maps one dalfox PoC to a Finding. Returns nil when the PoC is empty.
 func mapPoC(p dalfoxPoC, target, program, runID string) *finding.Finding {
 	if p.empty() {
 		return nil
@@ -134,9 +134,9 @@ func mapPoC(p dalfoxPoC, target, program, runID string) *finding.Finding {
 	return f
 }
 
-// buildEvidence menyusun Evidence dari PoC, menyensor header sensitif pada
-// request/response mentah (BH-SPEC-FINDING: skema tak pernah menyimpan secret
-// mentah). Mengembalikan nil bila tak ada bahan bukti.
+// buildEvidence assembles Evidence from the PoC, redacting sensitive headers in the
+// raw request/response (BH-SPEC-FINDING: the schema never stores a raw
+// secret). Returns nil when there is no evidence material.
 func buildEvidence(p dalfoxPoC) *finding.Evidence {
 	e := &finding.Evidence{
 		Request:         redactHTTP(p.RawRequest),
@@ -150,11 +150,11 @@ func buildEvidence(p dalfoxPoC) *finding.Evidence {
 	return e
 }
 
-// sensitiveHeaders adalah header yang nilainya disensor dari evidence.
+// sensitiveHeaders are the headers whose values are redacted from evidence.
 var sensitiveHeaders = []string{"authorization:", "proxy-authorization:", "cookie:", "set-cookie:", "x-api-key:", "x-auth-token:"}
 
-// redactHTTP menyensor NILAI header sensitif (Authorization/Cookie/dst.) pada
-// teks HTTP mentah, mempertahankan nama header agar struktur tetap terbaca.
+// redactHTTP redacts the VALUE of sensitive headers (Authorization/Cookie/etc.) in
+// raw HTTP text, keeping the header name so the structure stays readable.
 func redactHTTP(s string) string {
 	if strings.TrimSpace(s) == "" {
 		return ""
@@ -174,8 +174,8 @@ func redactHTTP(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// mapType menormalkan tipe temuan dari CWE (dalfox mengisi CWE spesifik untuk
-// temuan non-XSS dari BAV), lalu fallback ke "xss" (dalfox berfokus XSS).
+// mapType normalizes the finding type from the CWE (dalfox fills a specific CWE for
+// a non-XSS finding from BAV), then falls back to "xss" (dalfox focuses on XSS).
 func mapType(cwe, injectType string) string {
 	switch strings.ToUpper(strings.TrimSpace(cwe)) {
 	case "CWE-79":
@@ -192,7 +192,7 @@ func mapType(cwe, injectType string) string {
 	return "xss"
 }
 
-// mapSeverity memetakan severity dalfox (High/Medium/Low/Info) ke skema.
+// mapSeverity maps dalfox severity (High/Medium/Low/Info) to the schema.
 func mapSeverity(s string) finding.Severity {
 	switch strings.ToUpper(strings.TrimSpace(s)) {
 	case "CRITICAL":
@@ -209,8 +209,8 @@ func mapSeverity(s string) finding.Severity {
 	return finding.SeverityMedium
 }
 
-// mapConfidence memetakan tipe PoC dalfox ke confidence: V(erified)=high (lolos
-// verifikasi headless), R(eflected)=medium, G(rep/BAV)=low.
+// mapConfidence maps the dalfox PoC type to confidence: V(erified)=high (passed
+// headless verification), R(eflected)=medium, G(rep/BAV)=low.
 func mapConfidence(pocType string) finding.Confidence {
 	switch strings.ToUpper(strings.TrimSpace(pocType)) {
 	case "V":
@@ -223,7 +223,7 @@ func mapConfidence(pocType string) finding.Confidence {
 	return finding.ConfidenceMedium
 }
 
-// buildTitle menyusun judul ringkas dari tipe + level verifikasi + parameter.
+// buildTitle builds a short title from type + verification level + parameter.
 func buildTitle(typ, pocType, param string) string {
 	label := map[string]string{
 		"xss":            "XSS",
@@ -235,11 +235,11 @@ func buildTitle(typ, pocType, param string) string {
 	if label == "" {
 		label = strings.ToUpper(typ)
 	}
-	if v := map[string]string{"V": "terverifikasi", "R": "refleksi", "G": "heuristik"}[strings.ToUpper(strings.TrimSpace(pocType))]; v != "" {
+	if v := map[string]string{"V": "verified", "R": "reflected", "G": "heuristic"}[strings.ToUpper(strings.TrimSpace(pocType))]; v != "" {
 		label += " (" + v + ")"
 	}
 	if p := strings.TrimSpace(param); p != "" {
-		label += " pada parameter `" + p + "`"
+		label += " on parameter `" + p + "`"
 	}
 	return truncate(label, 160)
 }

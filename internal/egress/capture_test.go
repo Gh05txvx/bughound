@@ -80,7 +80,7 @@ func TestGatewayDedupCounts(t *testing.T) {
 		t.Fatalf("path sama harus dedup jadi 1 kandidat, dapat %d", len(recs))
 	}
 	if recs[0].Count != 3 {
-		t.Errorf("Count = %d, ingin 3", recs[0].Count)
+		t.Errorf("Count = %d, want 3", recs[0].Count)
 	}
 }
 

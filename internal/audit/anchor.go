@@ -12,17 +12,18 @@ import (
 	"time"
 )
 
-// Anchor adalah checkpoint head rantai audit: tinggi rantai (Seq) + Hash head
-// pada saat itu. Disimpan TERPISAH dari store audit sebagai attestation
-// eksternal. Rantai HMAC mendeteksi perubahan/penghapusan entri, tetapi
-// penghapusan/trunkasi SELURUH store (di luar aplikasi) menghasilkan rantai
-// pendek/kosong yang tetap valid secara internal. Anchor menutup celah itu
-// (BH-F06): selama berkas anchor bertahan, trunkasi/rollback/penghapusan total
-// store terdeteksi oleh Verify. Tag mengikat anchor ke kunci sehingga tak bisa
-// dipalsukan tanpa kunci.
+// Anchor is a checkpoint of the audit chain head: the chain height (Seq) and
+// the head Hash at that moment. It is stored SEPARATELY from the audit store as
+// an external attestation. The HMAC chain detects changed or deleted entries,
+// but deleting or truncating the WHOLE store (outside the application) leaves a
+// short or empty chain that is still internally valid. Anchors close that gap
+// (BH-F06): as long as the anchor file survives, Verify detects truncation,
+// rollback or total deletion of the store. The Tag binds an anchor to the key,
+// so it cannot be forged without the key.
 //
-// Batas: bila store DAN berkas anchor sama-sama hilang di host yang sama, ini
-// tak terdeteksi — itu butuh replikasi ke luar host (WORM/SIEM), di luar lingkup.
+// Limit: if the store AND the anchor file are both lost on the same host, that
+// goes undetected. Catching it needs replication off the host (WORM/SIEM),
+// which is out of scope here.
 type Anchor struct {
 	Seq  int64     `json:"seq"`
 	Hash string    `json:"hash"`
@@ -36,27 +37,27 @@ func anchorTag(key []byte, seq int64, hash string, at time.Time) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Anchorer menyimpan anchor secara append-only dan membacanya kembali.
+// Anchorer stores anchors append-only and reads them back.
 type Anchorer interface {
 	WriteAnchor(a Anchor) error
 	Anchors() ([]Anchor, error)
 }
 
-// FileAnchorer menulis anchor sebagai JSON Lines append-only ke sebuah berkas.
-// Idealnya berkas ini berada di penyimpanan terpisah/WORM agar penghapusan
-// store audit tak ikut menghapus attestation-nya.
+// FileAnchorer writes anchors as append-only JSON Lines to a file. Ideally the
+// file lives on separate or WORM storage, so deleting the audit store does not
+// delete its attestation too.
 type FileAnchorer struct {
 	path string
 	key  []byte
 	mu   sync.Mutex
 }
 
-// NewFileAnchorer membuat anchorer berbasis berkas pada path dengan kunci key.
+// NewFileAnchorer creates a file-backed anchorer at path with key.
 func NewFileAnchorer(path string, key []byte) *FileAnchorer {
 	return &FileAnchorer{path: path, key: key}
 }
 
-// WriteAnchor menambahkan satu anchor (dengan tag) ke akhir berkas, lalu fsync.
+// WriteAnchor appends one anchor (with its tag) to the end of the file, then fsyncs.
 func (f *FileAnchorer) WriteAnchor(a Anchor) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -76,8 +77,8 @@ func (f *FileAnchorer) WriteAnchor(a Anchor) error {
 	return fh.Sync()
 }
 
-// Anchors membaca semua anchor terurut tulis. Baris kosong/tak lengkap (mis.
-// crash saat menulis) dilewati; keabsahan tag diperiksa saat verify.
+// Anchors reads all anchors in write order. Empty or incomplete lines (e.g.
+// from a crash mid-write) are skipped; tag validity is checked at verify time.
 func (f *FileAnchorer) Anchors() ([]Anchor, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -100,33 +101,33 @@ func (f *FileAnchorer) Anchors() ([]Anchor, error) {
 		}
 		var a Anchor
 		if err := json.Unmarshal(line, &a); err != nil {
-			continue // baris tak lengkap — lewati
+			continue // incomplete line, skip it
 		}
 		out = append(out, a)
 	}
 	return out, sc.Err()
 }
 
-// verifyAnchors memeriksa rantai (events, terurut seq menaik) konsisten dengan
-// anchor: tiap anchor harus otentik (tag cocok) dan (Seq,Hash)-nya cocok entri
-// di events. events boleh LEBIH panjang dari anchor terakhir (tail belum
-// ter-anchor), tetapi tak boleh lebih pendek (trunkasi) atau beda hash (ditulis
-// ulang / rollback).
+// verifyAnchors checks that the chain (events, ordered by ascending seq) is
+// consistent with the anchors: each anchor must be authentic (its tag matches)
+// and its (Seq,Hash) must match an entry in events. events may be LONGER than
+// the last anchor (a tail that is not anchored yet), but it must not be shorter
+// (truncation) or have a different hash (rewritten / rolled back).
 func verifyAnchors(key []byte, events []Event, anchors []Anchor) Result {
 	for _, a := range anchors {
 		if a.Tag != anchorTag(key, a.Seq, a.Hash, a.At) {
-			return Result{OK: false, BrokenAt: a.Seq, Reason: "anchor tidak otentik (berkas anchor diutak-atik)"}
+			return Result{OK: false, BrokenAt: a.Seq, Reason: "anchor is not authentic (the anchor file was tampered with)"}
 		}
 		if a.Seq < 1 {
 			continue
 		}
 		if a.Seq > int64(len(events)) {
 			return Result{OK: false, BrokenAt: a.Seq,
-				Reason: fmt.Sprintf("log lebih pendek dari anchor (seq %d hilang — kemungkinan dihapus/trunkasi)", a.Seq)}
+				Reason: fmt.Sprintf("log is shorter than the anchor (seq %d is missing; probably deleted or truncated)", a.Seq)}
 		}
 		if events[a.Seq-1].Hash != a.Hash {
 			return Result{OK: false, BrokenAt: a.Seq,
-				Reason: fmt.Sprintf("head pada seq %d tak cocok anchor (log ditulis ulang/rollback)", a.Seq)}
+				Reason: fmt.Sprintf("head at seq %d does not match the anchor (the log was rewritten or rolled back)", a.Seq)}
 		}
 	}
 	return Result{OK: true, Count: int64(len(events)), Anchors: int64(len(anchors))}

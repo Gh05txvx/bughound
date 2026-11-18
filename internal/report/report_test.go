@@ -28,43 +28,43 @@ func TestBuildOnlyConfirmed(t *testing.T) {
 	}
 	r := Build("demo", findings, time.Now())
 	if len(r.Items) != 2 {
-		t.Fatalf("hanya confirmed yang masuk; dapat %d", len(r.Items))
+		t.Fatalf("only confirmed findings go in; got %d", len(r.Items))
 	}
-	// Terurut severity: critical dulu.
+	// Sorted by severity: critical first.
 	if r.Items[0].Title != "d-confirmed" {
-		t.Errorf("critical harus di atas; dapat %s", r.Items[0].Title)
+		t.Errorf("critical must be on top; got %s", r.Items[0].Title)
 	}
 }
 
 func TestBuildMarkdown(t *testing.T) {
-	r := Build("demo", []*finding.Finding{mk("SSRF di /x", finding.SeverityCritical, finding.StatusConfirmed)}, time.Now())
+	r := Build("demo", []*finding.Finding{mk("SSRF at /x", finding.SeverityCritical, finding.StatusConfirmed)}, time.Now())
 	md := r.Markdown
-	for _, want := range []string{"# Laporan — demo", "DRAFT", "SSRF di /x", "critical", "## Temuan", "Request:"} {
+	for _, want := range []string{"# Report: demo", "DRAFT", "SSRF at /x", "critical", "## Findings", "Request:"} {
 		if !strings.Contains(md, want) {
-			t.Errorf("markdown harus memuat %q", want)
+			t.Errorf("the markdown must contain %q", want)
 		}
 	}
-	// Bukti sudah tersensor di store; report tidak boleh membocorkan.
+	// The evidence is already redacted in the store; the report must not leak it.
 	if strings.Contains(md, "SECRET") {
-		t.Error("markdown tak boleh memuat secret mentah")
+		t.Error("the markdown must not contain a raw secret")
 	}
 }
 
 func TestBuildMarkdownImpact(t *testing.T) {
-	f := mk("SSRF di /x", finding.SeverityCritical, finding.StatusConfirmed)
-	f.Impact = "Penyerang membaca metadata internal cloud (SSRF)."
+	f := mk("SSRF at /x", finding.SeverityCritical, finding.StatusConfirmed)
+	f.Impact = "An attacker reads internal cloud metadata (SSRF)."
 	r := Build("demo", []*finding.Finding{f}, time.Now())
-	if !strings.Contains(r.Markdown, "**Dampak:**") || !strings.Contains(r.Markdown, f.Impact) {
-		t.Errorf("markdown harus memuat bagian Dampak yang diisi hunter:\n%s", r.Markdown)
+	if !strings.Contains(r.Markdown, "**Impact:**") || !strings.Contains(r.Markdown, f.Impact) {
+		t.Errorf("the markdown must contain the Impact section the hunter filled in:\n%s", r.Markdown)
 	}
 }
 
 func TestBuildEmpty(t *testing.T) {
 	r := Build("demo", []*finding.Finding{mk("x", finding.SeverityLow, finding.StatusNew)}, time.Now())
 	if len(r.Items) != 0 {
-		t.Fatal("tanpa confirmed, Items harus kosong")
+		t.Fatal("without confirmed findings, Items must be empty")
 	}
-	if !strings.Contains(r.Markdown, "Belum ada temuan terkonfirmasi") {
-		t.Error("markdown kosong harus menyatakan tidak ada temuan terkonfirmasi")
+	if !strings.Contains(r.Markdown, "No confirmed findings yet") {
+		t.Error("an empty markdown must state that there are no confirmed findings")
 	}
 }

@@ -8,10 +8,11 @@ import (
 	"bughound/internal/finding"
 )
 
-// gitleaks SARIF dengan secret BELUM diredaksi — menguji jaring pengaman
-// redactSecret (seandainya --redact gitleaks gagal/absen). Nilai "secret" di
-// bawah sintetis dan sengaja BUKAN format provider mana pun (hindari push
-// protection scanner); yang diuji hanya panjang deret, bukan bentuk kuncinya.
+// gitleaks SARIF with a secret that is NOT redacted yet. It tests the
+// redactSecret safety net (in case gitleaks' --redact fails or is missing). The
+// "secret" value below is synthetic and deliberately matches NO provider's
+// format (to avoid push protection scanners); only the length of the run is
+// tested, not the shape of the key.
 const gitleaksRawSARIF = `{
   "runs": [{
     "tool": {"driver": {"name": "gitleaks", "rules": [
@@ -31,65 +32,65 @@ func TestParseGitleaksRedactsAndEnriches(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(fs) != 1 {
-		t.Fatalf("mau 1, dapat %d", len(fs))
+		t.Fatalf("want 1, got %d", len(fs))
 	}
 	f := fs[0]
 	if f.Type != "generic-api-key" {
 		t.Errorf("type: %s", f.Type)
 	}
 	if f.Severity != finding.SeverityHigh { // level error
-		t.Errorf("severity: mau high, dapat %s", f.Severity)
+		t.Errorf("severity: want high, got %s", f.Severity)
 	}
-	// CWE-798 default utk secret.
+	// CWE-798 is the default for a secret.
 	if got := strings.Join(f.CWE, ","); got != "CWE-798" {
-		t.Errorf("CWE default: mau CWE-798, dapat %q", got)
+		t.Errorf("CWE default: want CWE-798, got %q", got)
 	}
 	// tag secret + sast + gitleaks.
 	for _, want := range []string{"secret", "sast", "gitleaks"} {
 		if !hasTag(f.Tags, want) {
-			t.Errorf("tag %q hilang dari %v", want, f.Tags)
+			t.Errorf("tag %q is missing from %v", want, f.Tags)
 		}
 	}
 	if f.Evidence == nil {
-		t.Fatal("evidence hilang")
+		t.Fatal("the evidence is missing")
 	}
-	// Nilai secret TAK boleh ada; konteks (nama variabel) tetap.
+	// The secret value must NOT be there; the context (variable name) stays.
 	if strings.Contains(f.Evidence.Matched, "ABCD1234EFGH5678IJKL9012MNOP") {
-		t.Errorf("SECRET BOCOR: %q", f.Evidence.Matched)
+		t.Errorf("SECRET LEAKED: %q", f.Evidence.Matched)
 	}
 	if !strings.Contains(f.Evidence.Matched, "REDACTED") {
-		t.Errorf("tak teredaksi: %q", f.Evidence.Matched)
+		t.Errorf("not redacted: %q", f.Evidence.Matched)
 	}
 	if !strings.Contains(f.Evidence.Matched, "api_key") {
-		t.Errorf("konteks hilang: %q", f.Evidence.Matched)
+		t.Errorf("the context is missing: %q", f.Evidence.Matched)
 	}
 }
 
 func TestRedactSecret(t *testing.T) {
 	cases := []struct {
 		in       string
-		leakFrag string // substring yang TAK boleh muncul (kosong = tak cek)
-		keep     string // substring yang HARUS tetap
+		leakFrag string // a substring that must NOT appear (empty = no check)
+		keep     string // a substring that MUST stay
 	}{
 		{"api_key: NOTREAL_ABCD1234EFGH5678IJKL9012MNOP", "ABCD1234EFGH5678IJKL9012MNOP", "api_key"},
 		{"AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE", ""}, // 20 char → mask
-		{"id = 42", "", "id = 42"},             // pendek → utuh
-		{"name: build-server-01", "", "name:"}, // token pendek utuh
+		{"id = 42", "", "id = 42"},             // short → intact
+		{"name: build-server-01", "", "name:"}, // a short token stays intact
 	}
 	for _, c := range cases {
 		got := redactSecret(c.in)
 		if c.leakFrag != "" && strings.Contains(got, c.leakFrag) {
-			t.Errorf("redactSecret(%q)=%q masih bocor %q", c.in, got, c.leakFrag)
+			t.Errorf("redactSecret(%q)=%q still leaks %q", c.in, got, c.leakFrag)
 		}
 		if c.keep != "" && !strings.Contains(got, c.keep) {
-			t.Errorf("redactSecret(%q)=%q kehilangan konteks %q", c.in, got, c.keep)
+			t.Errorf("redactSecret(%q)=%q lost the context %q", c.in, got, c.keep)
 		}
 	}
 }
 
 func TestGitleaksRegistered(t *testing.T) {
 	if _, ok := Lookup("gitleaks"); !ok {
-		t.Error("adapter gitleaks tak terdaftar")
+		t.Error("the gitleaks adapter is not registered")
 	}
 }
 

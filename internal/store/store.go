@@ -1,8 +1,8 @@
-// Package store menyimpan temuan dalam Skema Temuan Seragam (BH-SPEC-FINDING),
-// terstruktur per-program dan per-run, dan menyediakan query untuk triase serta
-// report. Dedup ditegakkan berdasarkan (program, dedup_key): temuan pertama
-// untuk sebuah dedup_key menjadi utama, kemunculan berikutnya ditandai duplikat
-// dengan duplicate_of menunjuk ke yang utama.
+// Package store stores findings in the Uniform Finding Schema (BH-SPEC-FINDING),
+// organized per program and per run, and provides queries for triage and
+// reports. Dedup is enforced by (program, dedup_key): the first finding for a
+// dedup_key becomes the main one, and later occurrences are marked as
+// duplicates with duplicate_of pointing at the main one.
 package store
 
 import (
@@ -17,54 +17,55 @@ import (
 	"bughound/internal/finding"
 )
 
-// Store adalah kontrak penyimpanan temuan. Implementasi (in-memory, SQLite)
-// harus menegakkan dedup yang sama.
+// Store is the finding storage contract. Implementations (in-memory, SQLite)
+// must enforce the same dedup.
 type Store interface {
-	// Save menyimpan satu temuan. Bila ID/dedup_key/created_at kosong, diisi
-	// otomatis. Mengembalikan apakah temuan dikenali sebagai duplikat.
+	// Save stores one finding. An empty ID/dedup_key/created_at is filled in
+	// automatically. It reports whether the finding was recognized as a duplicate.
 	Save(ctx context.Context, f *finding.Finding) (SaveResult, error)
-	// Get mengambil satu temuan berdasarkan id.
+	// Get gets one finding by id.
 	Get(ctx context.Context, id string) (*finding.Finding, error)
-	// List mengembalikan temuan yang cocok Query, diurut severity terberat dulu.
+	// List returns the findings matching Query, the most severe first.
 	List(ctx context.Context, q Query) ([]*finding.Finding, error)
-	// Programs mengembalikan nama program berbeda yang punya temuan tersimpan.
+	// Programs returns the distinct names of programs that have stored findings.
 	Programs(ctx context.Context) ([]string, error)
-	// SaveProgram menyimpan/memperbarui definisi scope sebuah program (persisten).
+	// SaveProgram saves/updates a program's scope definition (persistent).
 	SaveProgram(ctx context.Context, p Program) error
-	// GetProgram mengambil definisi program; ErrNotFound bila tak ada.
+	// GetProgram gets a program definition; ErrNotFound when there is none.
 	GetProgram(ctx context.Context, name string) (*Program, error)
-	// ListPrograms mengembalikan semua program tersimpan, terurut nama.
+	// ListPrograms returns every stored program, sorted by name.
 	ListPrograms(ctx context.Context) ([]*Program, error)
-	// DeleteProgram menghapus definisi scope sebuah program; ErrNotFound bila tak
-	// ada. Hanya definisi program yang dihapus — temuan & audit TIDAK disentuh
-	// (temuan adalah hasil kerja, audit append-only per prinsip keamanan).
+	// DeleteProgram deletes a program's scope definition; ErrNotFound when there is
+	// none. Only the program definition is deleted; findings and audit are NOT
+	// touched (findings are work product, and the audit is append-only per the
+	// security principles).
 	DeleteProgram(ctx context.Context, name string) error
-	// DeleteFindingsByProgram menghapus SEMUA temuan sebuah program (termasuk
-	// state dedup-nya) dan mengembalikan jumlah yang dihapus. Definisi scope
-	// program (SaveProgram) TIDAK disentuh — itu dikelola terpisah lewat
-	// DeleteProgram. Audit append-only juga tak tersentuh; penghapusan dicatat
-	// oleh pemanggil. Program tanpa temuan → 0, nil (bukan error).
+	// DeleteFindingsByProgram deletes ALL findings of a program (including its
+	// dedup state) and returns how many were deleted. The program's scope
+	// definition (SaveProgram) is NOT touched; that is managed separately through
+	// DeleteProgram. The append-only audit is not touched either; the caller
+	// records the deletion. A program without findings → 0, nil (not an error).
 	DeleteFindingsByProgram(ctx context.Context, program string) (int, error)
-	// SetStatus mengubah status triase sebuah temuan.
+	// SetStatus changes the triage status of a finding.
 	SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error
-	// UpdateContent memperbarui field naratif report (description, impact,
-	// reproduction) sebuah temuan — diisi hunter saat triase agar draft report
-	// lengkap (repro + dampak). Tidak menyentuh status/dedup/severity.
-	// ErrNotFound bila id tak ada.
+	// UpdateContent updates the report narrative fields (description, impact,
+	// reproduction) of a finding, filled in by the hunter during triage so the
+	// draft report is complete (repro + impact). It does not touch
+	// status/dedup/severity. ErrNotFound when the id does not exist.
 	UpdateContent(ctx context.Context, id, description, impact string, reproduction []string) error
-	// Close melepaskan sumber daya (no-op untuk in-memory).
+	// Close releases resources (a no-op for in-memory).
 	Close() error
 }
 
-// SaveResult melaporkan hasil penyimpanan satu temuan.
+// SaveResult reports the result of saving one finding.
 type SaveResult struct {
 	ID           string
 	Deduplicated bool
-	PrimaryID    string // id temuan utama bila Deduplicated
+	PrimaryID    string // id of the main finding when Deduplicated
 }
 
-// Query memfilter daftar temuan. Secara default duplikat disembunyikan kecuali
-// diminta eksplisit (IncludeDuplicates atau Statuses memuat "duplicate").
+// Query filters the list of findings. Duplicates are hidden by default unless
+// asked for explicitly (IncludeDuplicates, or Statuses containing "duplicate").
 type Query struct {
 	Program           string
 	RunID             string
@@ -74,35 +75,35 @@ type Query struct {
 	IncludeDuplicates bool
 }
 
-// ErrNotFound dikembalikan Get/SetStatus bila id tak ada.
-var ErrNotFound = errors.New("store: temuan tidak ditemukan")
+// ErrNotFound is returned by Get/SetStatus when the id does not exist.
+var ErrNotFound = errors.New("store: finding not found")
 
-// ErrUserExists dikembalikan CreateUser bila username sudah dipakai.
-var ErrUserExists = errors.New("store: username sudah ada")
+// ErrUserExists is returned by CreateUser when the username is already taken.
+var ErrUserExists = errors.New("store: username already exists")
 
-// Program menyimpan definisi scope sebuah program bounty (persisten).
+// Program holds the scope definition of a bounty program (persistent).
 type Program struct {
 	Name      string
 	InScope   []string
 	OutScope  []string
-	Preset    ScanPreset // preset seleksi template per program (mem-prefill form scan)
+	Preset    ScanPreset // per-program template selection preset (prefills the scan form)
 	UpdatedAt time.Time
 }
 
-// ScanPreset adalah seleksi template tersimpan untuk sebuah program; dipakai
-// mem-prefill form scan saat program yang sama dipilih lagi. Hanya memengaruhi
-// template MANA yang dijalankan (nuclei -tags/-severity) dan profil low-and-slow.
-// TIDAK menyentuh scope guard, egress, rate limiter, atau secret — jadi bukan
-// kontrol keamanan. Seleksi kosong = semua template aktif (perilaku default).
+// ScanPreset is a stored template selection for a program; it prefills the scan
+// form when the same program is chosen again. It only affects WHICH templates
+// run (nuclei -tags/-severity) and the low-and-slow profile. It does NOT touch
+// the scope guard, egress, rate limiter or secrets, so it is not a security
+// control. An empty selection = all enabled templates (the default behaviour).
 type ScanPreset struct {
 	Tags      []string
 	Severity  []string
 	Stealth   bool
-	APIRoutes bool // ikutkan wordlist route API ter-bundle (ffuf) saat scan
+	APIRoutes bool // include the bundled API route wordlist (ffuf) in the scan
 }
 
-// User adalah akun RBAC (lihat internal/auth untuk peran & hashing). PassHash
-// berisi hash PBKDF2 ber-salt; kata sandi mentah TIDAK pernah disimpan.
+// User is an RBAC account (see internal/auth for roles and hashing). PassHash
+// holds a salted PBKDF2 hash; the raw password is NEVER stored.
 type User struct {
 	Username string
 	Role     string // "admin" | "operator" | "viewer" (auth.Role)
@@ -110,25 +111,25 @@ type User struct {
 	Created  time.Time
 }
 
-// UserStore mengelola akun RBAC. Mem dan SQLite keduanya mengimplementasikannya,
-// jadi objek store tunggal menyediakan temuan sekaligus pengguna.
+// UserStore manages RBAC accounts. Mem and SQLite both implement it, so a single
+// store object provides findings and users.
 type UserStore interface {
-	// CreateUser menyimpan user baru; ErrUserExists bila username sudah ada.
+	// CreateUser saves a new user; ErrUserExists when the username already exists.
 	CreateUser(ctx context.Context, u User) error
-	// GetUser mengambil user; ErrNotFound bila tak ada.
+	// GetUser gets a user; ErrNotFound when there is none.
 	GetUser(ctx context.Context, username string) (*User, error)
-	// ListUsers mengembalikan semua user, terurut username.
+	// ListUsers returns every user, sorted by username.
 	ListUsers(ctx context.Context) ([]*User, error)
-	// DeleteUser menghapus user; ErrNotFound bila tak ada.
+	// DeleteUser deletes a user; ErrNotFound when there is none.
 	DeleteUser(ctx context.Context, username string) error
-	// SetPassword memperbarui hash kata sandi user; ErrNotFound bila tak ada.
+	// SetPassword updates a user's password hash; ErrNotFound when there is none.
 	SetPassword(ctx context.Context, username, passHash string) error
-	// CountUsers mengembalikan jumlah user (untuk bootstrap admin awal).
+	// CountUsers returns the number of users (for bootstrapping the first admin).
 	CountUsers(ctx context.Context) (int, error)
 }
 
-// prepare mengisi field turunan (id, schema_version, dedup_key, created_at)
-// yang masih kosong lalu memvalidasi temuan.
+// prepare fills in the derived fields (id, schema_version, dedup_key,
+// created_at) that are still empty, then validates the finding.
 func prepare(f *finding.Finding, now time.Time) error {
 	if strings.TrimSpace(f.ID) == "" {
 		id, err := newID()
@@ -140,18 +141,18 @@ func prepare(f *finding.Finding, now time.Time) error {
 	return f.Finalize(now)
 }
 
-// newID menghasilkan UUIDv4 tanpa dependency eksternal.
+// newID generates a UUIDv4 without an external dependency.
 func newID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", fmt.Errorf("store: gagal membuat id: %w", err)
+		return "", fmt.Errorf("store: cannot generate id: %w", err)
 	}
-	b[6] = (b[6] & 0x0f) | 0x40 // versi 4
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // varian RFC 4122
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
 
-// clone membuat salinan dalam agar store tidak berbagi state dengan pemanggil.
+// clone makes a deep copy so the store does not share state with the caller.
 func clone(f *finding.Finding) *finding.Finding {
 	b, _ := json.Marshal(f)
 	var c finding.Finding
@@ -159,7 +160,7 @@ func clone(f *finding.Finding) *finding.Finding {
 	return &c
 }
 
-// severityRank: makin besar makin berat, untuk pengurutan prioritas.
+// severityRank: higher means more severe, for priority ordering.
 func severityRank(s finding.Severity) int {
 	switch s {
 	case finding.SeverityCritical:

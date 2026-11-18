@@ -1,12 +1,12 @@
-// Package orchestrator menyatukan scope guard, (opsional) recon, engine DAST,
-// rate limiter, dan store menjadi satu alur scan.
+// Package orchestrator ties the scope guard, (optional) recon, the DAST
+// engines, the rate limiter and the store into one scan flow.
 //
-// Dua jaminan struktural (BH-SPEC-SCOPE + prinsip bughound):
-//   - Scope guard adalah SATU-SATUNYA titik keputusan, ditegakkan dua lapis:
-//     saat input/perencanaan dan saat egress (sebelum temuan diterima). Aset
-//     hasil recon pun wajib lolos scope guard; recon tidak memintas scope.
-//   - Rate limiter ADA DI JALUR EKSEKUSI: setiap pemanggilan recon dan setiap
-//     scan menunggu token lebih dulu, dan limiter tidak bisa dimatikan.
+// Two structural guarantees (BH-SPEC-SCOPE + bughound principles):
+//   - The scope guard is the ONLY decision point, enforced at two layers: at
+//     input/planning time and at egress (before a finding is accepted). Assets
+//     from recon must pass the scope guard too; recon does not bypass scope.
+//   - The rate limiter IS IN THE EXECUTION PATH: every recon call and every
+//     scan waits for a token first, and the limiter cannot be turned off.
 package orchestrator
 
 import (
@@ -25,16 +25,16 @@ import (
 	"bughound/internal/store"
 )
 
-// Layer menandai lapis penegakan scope.
+// Layer marks the scope enforcement layer.
 type Layer string
 
 const (
-	LayerInput   Layer = "input"   // saat perencanaan, sebelum masuk antrean scan
-	LayerEgress  Layer = "egress"  // tepat sebelum koneksi keluar: request diblok
-	LayerFinding Layer = "finding" // temuan dibuang sesudah engine selesai: bukan bukti koneksinya diblok
+	LayerInput   Layer = "input"   // at planning time, before the scan queue
+	LayerEgress  Layer = "egress"  // right before an outbound connection: the request is blocked
+	LayerFinding Layer = "finding" // a finding dropped after the engine finished: not proof that its connection was blocked
 )
 
-// AuditEvent adalah satu entri audit trail untuk keputusan scope.
+// AuditEvent is one audit trail entry for a scope decision.
 type AuditEvent struct {
 	Time         time.Time
 	Program      string
@@ -46,20 +46,20 @@ type AuditEvent struct {
 	MatchedEntry string
 }
 
-// Orchestrator menjalankan scan untuk satu program.
+// Orchestrator runs scans for one program.
 type Orchestrator struct {
 	guard   *scope.Guard
 	engines []engine.Engine
 	store   store.Store
 	lim     *ratelimit.Limiter
-	recon   recon.Engine // opsional
+	recon   recon.Engine // optional
 	audit   func(AuditEvent)
 	now     func() time.Time
 }
 
-// New membuat Orchestrator. audit boleh nil (jadi no-op). lim boleh nil, tetapi
-// TIDAK dimatikan: nil diganti limiter default yang aman (rate limiter selalu
-// ada di jalur eksekusi).
+// New creates an Orchestrator. audit may be nil (it becomes a no-op). lim may
+// be nil, but that does NOT turn limiting off: nil is replaced with a safe
+// default limiter (the rate limiter is always in the execution path).
 func New(guard *scope.Guard, eng engine.Engine, st store.Store, lim *ratelimit.Limiter, audit func(AuditEvent)) *Orchestrator {
 	if audit == nil {
 		audit = func(AuditEvent) {}
@@ -70,16 +70,16 @@ func New(guard *scope.Guard, eng engine.Engine, st store.Store, lim *ratelimit.L
 	return &Orchestrator{guard: guard, engines: []engine.Engine{eng}, store: st, lim: lim, audit: audit, now: time.Now}
 }
 
-// UseRecon mengaktifkan tahap recon (opsional).
+// UseRecon enables the (optional) recon stage.
 func (o *Orchestrator) UseRecon(r recon.Engine) { o.recon = r }
 
-// AddEngine menambah engine DAST tambahan. Semua engine dijalankan per target
-// dan menulis ke skema temuan yang sama.
+// AddEngine adds another DAST engine. Every engine runs per target and writes
+// to the same finding schema.
 func (o *Orchestrator) AddEngine(e engine.Engine) { o.engines = append(o.engines, e) }
 
-// ProxyChain adalah rantai proxy upstream (urut hop). String meredaksi
-// kredensial (userinfo) sehingga rantai tak pernah mencetak user:pass bila
-// ter-log atau diformat (safe-by-construction; Prinsip #5).
+// ProxyChain is the upstream proxy chain (hops in order). String redacts the
+// credentials (userinfo), so the chain never prints user:pass when it is
+// logged or formatted (safe by construction; Principle #5).
 type ProxyChain []string
 
 func (pc ProxyChain) String() string {
@@ -93,16 +93,17 @@ func (pc ProxyChain) String() string {
 	return s + "]"
 }
 
-// AuthHeaders adalah daftar header autentikasi (mis. "Cookie: session=...",
-// "Authorization: Bearer ...") yang disuntikkan ke SETIAP request engine agar
-// scan menjangkau konten di balik login (Lever 1: authenticated scanning).
-// Tiap elemen berbentuk "Nama: nilai".
+// AuthHeaders is the list of authentication headers (e.g. "Cookie:
+// session=...", "Authorization: Bearer ...") injected into EVERY engine request
+// so the scan reaches content behind a login (Lever 1: authenticated
+// scanning). Each element has the form "Name: value".
 //
-// NILAI header adalah secret. String() meredaksi nilainya (nama tetap) sehingga
-// kredensial tak pernah tercetak bila ter-log atau diformat (safe-by-construction;
-// Prinsip #5). Orchestrator juga meredaksi nilai ini dari evidence temuan sebelum
-// disimpan. Header hanya menumpang request yang lolos scope guard; redirect ke
-// luar-scope tetap ditolak egress sehingga kredensial tak bocor keluar scope.
+// The header VALUE is a secret. String() redacts the value (the name stays),
+// so credentials are never printed when the list is logged or formatted (safe
+// by construction; Principle #5). The orchestrator also redacts these values
+// from finding evidence before saving. The headers only ride on requests that
+// pass the scope guard; a redirect out of scope is still denied at egress, so
+// credentials do not leak out of scope.
 type AuthHeaders []string
 
 func (ah AuthHeaders) String() string {
@@ -116,8 +117,8 @@ func (ah AuthHeaders) String() string {
 	return s + "]"
 }
 
-// Names mengembalikan NAMA tiap header (bagian sebelum ':'), untuk dipakai
-// meredaksi evidence. Nilai tak pernah ikut.
+// Names returns the NAME of each header (the part before ':'), used to redact
+// evidence. Values are never included.
 func (ah AuthHeaders) Names() []string {
 	if len(ah) == 0 {
 		return nil
@@ -133,10 +134,11 @@ func (ah AuthHeaders) Names() []string {
 	return names
 }
 
-// Scrub mengganti tiap NILAI header di s dengan [REDACTED] (terpanjang dulu, agar
-// nilai yang memuat nilai lain tak tersisa sebagian). Dipakai pada teks galat
-// engine/recon sebelum masuk audit (append-only) & ringkasan run: tool pihak
-// ketiga bisa meng-echo argv/konfig berisi nilai header ke stderr-nya.
+// Scrub replaces each header VALUE in s with [REDACTED] (longest first, so a
+// value that contains another value is not left partly visible). It is applied
+// to engine/recon error text before it enters the (append-only) audit and the
+// run summary: a third-party tool can echo an argv/config holding header values
+// to its stderr.
 func (ah AuthHeaders) Scrub(s string) string {
 	vals := make([]string, 0, len(ah))
 	for _, h := range ah {
@@ -151,7 +153,7 @@ func (ah AuthHeaders) Scrub(s string) string {
 	return s
 }
 
-// redactHeader menyisakan nama header, memask nilainya.
+// redactHeader keeps the header name and masks its value.
 func redactHeader(h string) string {
 	name, _, ok := strings.Cut(h, ":")
 	if !ok || strings.TrimSpace(name) == "" {
@@ -160,53 +162,56 @@ func redactHeader(h string) string {
 	return strings.TrimSpace(name) + ": ***"
 }
 
-// ScanRequest meminta scan satu program.
+// ScanRequest asks for a scan of one program.
 type ScanRequest struct {
 	Program string
-	RunID   string   // dibuat otomatis bila kosong
-	Seeds   []string // domain awal untuk recon (opsional)
-	Targets []string // target eksplisit
-	// ProxyChain (opsional): koneksi keluar engine diteruskan lewat rantai proxy
-	// ini (urut hop) SETELAH lolos scope guard (http/https/socks5). Kosong =
-	// dial langsung.
+	RunID   string   // generated when empty
+	Seeds   []string // starting domains for recon (optional)
+	Targets []string // explicit targets
+	// ProxyChain (optional): engine outbound connections are forwarded through
+	// this proxy chain (hops in order) AFTER they pass the scope guard
+	// (http/https/socks5). Empty = dial directly.
 	ProxyChain ProxyChain
-	// OpenAPISpec (opsional): isi mentah spec OpenAPI/Swagger. Bila ada, diberikan
-	// ke engine OpenAPIAware agar request (termasuk body) dibangkitkan dari spec
-	// dan difuzz. Tiap koneksi tetap lewat proxy egress (scope guard menegakkan).
+	// OpenAPISpec (optional): the raw content of an OpenAPI/Swagger spec. When
+	// set, it is handed to OpenAPIAware engines so requests (including bodies) are
+	// generated from the spec and fuzzed. Every connection still goes through the
+	// egress proxy (the scope guard enforces it).
 	OpenAPISpec []byte
-	// AuthHeaders (opsional): header autentikasi (Cookie/Authorization/dll) yang
-	// disuntikkan ke setiap request engine AuthAware agar scan menjangkau konten
-	// di balik login (Lever 1). Nilai = secret: diredaksi saat diformat/log dan
-	// dibuang dari evidence sebelum simpan; tak pernah masuk temuan/report. Hanya
-	// menumpang request yang lolos scope guard.
+	// AuthHeaders (optional): authentication headers (Cookie/Authorization/etc.)
+	// injected into every request of AuthAware engines so the scan reaches
+	// content behind a login (Lever 1). The value is a secret: it is redacted
+	// when formatted or logged and removed from evidence before saving; it never
+	// enters a finding or report. The headers only ride on requests that pass
+	// the scope guard.
 	AuthHeaders AuthHeaders
 }
 
-// ScanResult meringkas hasil satu run.
+// ScanResult summarizes the result of one run.
 type ScanResult struct {
 	RunID         string
-	Discovered    int          // aset dari recon
-	Scanned       []string     // target in-scope yang discan (ternormalkan)
-	Denied        []AuditEvent // target/temuan yang ditolak guard (input/egress)
+	Discovered    int          // assets from recon
+	Scanned       []string     // in-scope targets that were scanned (normalized)
+	Denied        []AuditEvent // targets/findings the guard denied (input/egress)
 	FindingsSaved int
 	Duplicates    int
-	EngineErrors  []EngineError // engine yang gagal di suatu target (run tetap lanjut)
+	EngineErrors  []EngineError // engines that failed on a target (the run carries on)
 }
 
-// EngineError mencatat satu engine yang gagal pada satu target. Tidak fatal: run
-// meneruskan ke engine/target lain agar temuan lain tetap terkumpul & tersimpan.
+// EngineError records one engine that failed on one target. It is not fatal:
+// the run carries on with the other engines/targets so their findings are
+// still collected and saved.
 type EngineError struct {
 	Engine string
 	Target string
 	Err    string
 }
 
-// RunScan menjalankan recon (bila aktif), menegakkan scope guard + rate limiter,
-// menjalankan engine untuk target in-scope, memeriksa ulang setiap temuan di
-// lapis egress, lalu menyimpan yang lolos.
+// RunScan runs recon (when enabled), enforces the scope guard + rate limiter,
+// runs the engines against in-scope targets, re-checks every finding at the
+// egress layer and saves the ones that pass.
 func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult, error) {
 	if req.Program == "" {
-		return ScanResult{}, fmt.Errorf("orchestrator: program wajib")
+		return ScanResult{}, fmt.Errorf("orchestrator: program is required")
 	}
 	runID := req.RunID
 	if runID == "" {
@@ -214,10 +219,10 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 	}
 	res := ScanResult{RunID: runID}
 
-	// Proxy egress: bila ada engine eksternal (ProxyAware), nyalakan proxy penegak
-	// scope untuk run ini dan arahkan engine ke sana, agar setiap koneksi keluar
-	// engine diperiksa SEBELUM dibuat. Fail closed: bila proxy gagal dimulai,
-	// engine eksternal tidak dijalankan.
+	// Egress proxy: when there is an external engine (ProxyAware), start the
+	// scope-enforcing proxy for this run and point the engines at it, so every
+	// outbound engine connection is checked BEFORE it is made. Fail closed: if
+	// the proxy cannot start, external engines are not run.
 	var egressMu sync.Mutex
 	var egressDenied []AuditEvent
 	if o.needsEgressProxy() {
@@ -233,12 +238,12 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		})
 		if len(req.ProxyChain) > 0 {
 			if err := px.SetUpstream(req.ProxyChain...); err != nil {
-				return res, fmt.Errorf("orchestrator: rantai proxy tak valid (fail closed): %w", err)
+				return res, fmt.Errorf("orchestrator: invalid proxy chain (fail closed): %w", err)
 			}
 		}
 		addr, stop, err := px.Listen("127.0.0.1:0")
 		if err != nil {
-			return res, fmt.Errorf("orchestrator: gagal memulai proxy egress (fail closed): %w", err)
+			return res, fmt.Errorf("orchestrator: cannot start the egress proxy (fail closed): %w", err)
 		}
 		defer stop()
 		for _, eng := range o.engines {
@@ -247,12 +252,13 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 			}
 		}
 		if pa, ok := o.recon.(engine.ProxyAware); ok {
-			pa.UseProxy(addr) // recon aktif (httpx/katana) juga ditegakkan scope
+			pa.UseProxy(addr) // active recon (httpx/katana) is scope-enforced too
 		}
 	}
 
-	// Spec OpenAPI/Swagger (bila ada) diberikan ke engine yang mendukung agar
-	// request termasuk body dibangkitkan dari spec. Egress tetap lewat proxy.
+	// The OpenAPI/Swagger spec (when present) is handed to the engines that
+	// support it so requests, including bodies, are generated from the spec.
+	// Egress still goes through the proxy.
 	if len(req.OpenAPISpec) > 0 {
 		for _, eng := range o.engines {
 			if oa, ok := eng.(engine.OpenAPIAware); ok {
@@ -261,11 +267,12 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		}
 	}
 
-	// Header autentikasi (bila ada) diberikan ke engine & recon yang mendukung
-	// agar scan + crawl menjangkau konten di balik login (Lever 1). KEAMANAN:
-	// header hanya menumpang request yang lolos scope guard; redirect ke luar-scope
-	// tetap ditolak egress (kredensial tak bocor keluar scope). Nilai diredaksi
-	// dari evidence sebelum simpan (authNames) & tak pernah dicetak.
+	// The authentication headers (when present) are handed to the engines and
+	// recon that support them so the scan and crawl reach content behind a login
+	// (Lever 1). SECURITY: the headers only ride on requests that pass the scope
+	// guard; a redirect out of scope is still denied at egress (credentials do
+	// not leak out of scope). Values are redacted from evidence before saving
+	// (authNames) and are never printed.
 	authNames := req.AuthHeaders.Names()
 	if len(req.AuthHeaders) > 0 {
 		for _, eng := range o.engines {
@@ -280,14 +287,14 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 
 	candidates := append([]string{}, req.Targets...)
 
-	// Tahap recon (opsional). Pemanggilannya pun dibatasi rate limiter.
+	// Recon stage (optional). The rate limiter limits its call too.
 	if o.recon != nil && len(req.Seeds) > 0 {
 		if err := o.lim.Wait(ctx); err != nil {
 			return res, fmt.Errorf("orchestrator: rate limit (recon): %w", err)
 		}
 		assets, err := o.recon.Discover(ctx, req.Seeds)
 		if err != nil {
-			return res, fmt.Errorf("orchestrator: recon %s gagal: %s", o.recon.Name(), req.AuthHeaders.Scrub(err.Error()))
+			return res, fmt.Errorf("orchestrator: recon %s failed: %s", o.recon.Name(), req.AuthHeaders.Scrub(err.Error()))
 		}
 		for _, a := range assets {
 			res.Discovered++
@@ -295,21 +302,21 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		}
 	}
 
-	// Tahap DAST atas kandidat in-scope.
+	// DAST stage over the in-scope candidates.
 	seen := map[string]bool{}
 	for _, target := range candidates {
 		if target == "" || seen[target] {
 			continue
 		}
 		seen[target] = true
-		// Lever 1: route logout (hasil recon, endpoint spec OpenAPI, atau target) tak
-		// dipindai saat scan berlogin — satu GET mematikan sesi & sisa scan diam-diam
-		// jalan tanpa login.
+		// Lever 1: logout routes (from recon, OpenAPI spec endpoints or targets) are
+		// not scanned during a logged-in scan: one GET kills the session and the rest
+		// of the scan silently runs without a login.
 		if len(authNames) > 0 && engine.IsLogoutURL(target) {
 			continue
 		}
 
-		// Lapis 1 — penegakan saat input/perencanaan.
+		// Layer 1: enforcement at input/planning time.
 		d := o.guard.Evaluate(target)
 		ev := o.auditEvent(req.Program, runID, d, LayerInput)
 		o.audit(ev)
@@ -319,26 +326,26 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 		}
 		res.Scanned = append(res.Scanned, d.Target)
 
-		// Jalankan setiap engine terhadap target ini. Rate limiter di jalur
-		// eksekusi: tunggu token sebelum tiap pemanggilan engine.
+		// Run every engine against this target. The rate limiter is in the
+		// execution path: wait for a token before each engine call.
 		for _, eng := range o.engines {
 			if err := o.lim.Wait(ctx); err != nil {
 				return res, fmt.Errorf("orchestrator: rate limit (scan): %w", err)
 			}
 			findings, err := eng.Scan(ctx, target, req.Program, runID)
 			if err != nil {
-				// Kegagalan satu engine pada satu target TIDAK membatalkan run:
-				// catat lalu lanjut agar engine/target lain tetap menghasilkan &
-				// menyimpan temuan. Hanya pembatalan context yang fatal.
+				// One engine failing on one target does NOT abort the run: record it
+				// and carry on so the other engines/targets still produce and save
+				// findings. Only a cancelled context is fatal.
 				if ctx.Err() != nil {
-					return res, fmt.Errorf("orchestrator: dibatalkan: %w", ctx.Err())
+					return res, fmt.Errorf("orchestrator: cancelled: %w", ctx.Err())
 				}
 				res.EngineErrors = append(res.EngineErrors, EngineError{Engine: eng.Name(), Target: target, Err: req.AuthHeaders.Scrub(err.Error())})
 				continue
 			}
 			for _, f := range findings {
-				// Penjaga terakhir: temuan di luar scope tak disimpan. Ini menilai hasil,
-				// bukan koneksi, jadi dicatat terpisah dari penolakan egress.
+				// Last guard: an out-of-scope finding is not saved. This judges a result,
+				// not a connection, so it is recorded separately from egress denials.
 				dd := o.guard.Evaluate(f.Location.URL)
 				if !dd.Allowed {
 					eev := o.auditEvent(req.Program, runID, dd, LayerFinding)
@@ -346,14 +353,14 @@ func (o *Orchestrator) RunScan(ctx context.Context, req ScanRequest) (ScanResult
 					res.Denied = append(res.Denied, eev)
 					continue
 				}
-				// Lever 1: buang nilai header auth dari evidence sebelum simpan —
-				// kredensial sesi tak boleh tersimpan di temuan/report (Prinsip #5).
+				// Lever 1: remove auth header values from the evidence before saving.
+				// Session credentials must not be stored in findings/reports (Principle #5).
 				if len(authNames) > 0 && f.Evidence != nil {
 					f.Evidence.RedactHeaders(authNames)
 				}
 				sr, err := o.store.Save(ctx, f)
 				if err != nil {
-					return res, fmt.Errorf("orchestrator: gagal simpan temuan: %w", err)
+					return res, fmt.Errorf("orchestrator: cannot save finding: %w", err)
 				}
 				if sr.Deduplicated {
 					res.Duplicates++

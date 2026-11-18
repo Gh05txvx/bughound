@@ -8,14 +8,14 @@ import (
 	"bughound/internal/finding"
 )
 
-// Mock adalah engine ffuf palsu untuk M1: mengembalikan output sampel terekam,
-// tanpa menyentuh jaringan.
+// Mock is a fake ffuf engine for M1: it returns recorded sample output without
+// touching the network.
 type Mock struct{}
 
-// Name memenuhi engine.Engine.
+// Name satisfies engine.Engine.
 func (Mock) Name() string { return "ffuf (mock)" }
 
-// Scan memenuhi engine.Engine: mengembalikan temuan dari output sampel.
+// Scan satisfies engine.Engine: it returns findings from the sample output.
 func (Mock) Scan(_ context.Context, _ string, program, runID string) ([]*finding.Finding, error) {
 	return Parse(bytes.NewReader(sampleJSON), program, runID)
 }
@@ -31,7 +31,7 @@ func buildSample() []byte {
 	}}
 	b, err := json.Marshal(out)
 	if err != nil {
-		panic("ffuf: gagal membangun sampel: " + err.Error())
+		panic("ffuf: failed to build sample: " + err.Error())
 	}
 	return b
 }

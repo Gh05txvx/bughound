@@ -2,7 +2,7 @@
   "name": "bughound-e2e",
   "private": true,
   "version": "0.0.0",
-  "description": "E2E (Playwright) untuk bughound — engine mock, egress diblok (persona BH-P05-E2E)",
+  "description": "E2E (Playwright) for bughound: mock engines, egress blocked (persona BH-P05-E2E)",
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",

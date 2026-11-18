@@ -1,10 +1,10 @@
-"""Uji lapisan MCP server (server.py) — tanpa jaringan.
+"""Test the MCP server layer (server.py), no network.
 
-Regresi khusus: tool `whatif` sempat menaungi modul `whatif` (name collision),
-sehingga `whatif.build_whatif` memanggil fungsi tool, bukan modul → AttributeError
-saat runtime walau 21 test lain hijau. Test ini memanggil `server.whatif`/`server.rank`
-LEWAT jalur dispatch asli (monkeypatch hanya `_pipeline`), jadi shadowing apa pun
-di kemudian hari langsung ketahuan.
+Specific regression: the `whatif` tool once shadowed the `whatif` module (a name
+collision), so `whatif.build_whatif` called the tool function, not the module ->
+a runtime AttributeError even while 21 other tests were green. This test calls
+`server.whatif`/`server.rank` THROUGH the real dispatch path (it monkeypatches
+only `_pipeline`), so any future shadowing shows up right away.
 """
 from __future__ import annotations
 
@@ -19,14 +19,14 @@ import server  # noqa: E402
 from bughound_analyst.model import Evidence, Finding, Location  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
-    server._MCPServer is None, reason="mcp belum terpasang — tool rank/whatif tak terdefinisi"
+    server._MCPServer is None, reason="mcp not installed, the rank/whatif tools are undefined"
 )
 
 
 def _ranked_item():
     f = Finding(
         id="fid-1", dedup_key="fid-1", program="demo", type="sql-injection",
-        title="SQLi di /search", severity="high", confidence="high",
+        title="SQLi in /search", severity="high", confidence="high",
         source_engine="nuclei-dast", owasp_category="A03", status="new",
         location=Location(url="https://example.test/search", method="GET", parameter="q"),
         evidence=Evidence(response_excerpt="ok"),
@@ -48,16 +48,16 @@ def test_rank_returns_payload(_stub_pipeline):
 
 
 def test_whatif_dispatches_to_module_not_shadowed_tool(_stub_pipeline):
-    # Jalur ini yang dulu putus: _whatif_payload → whatif_mod.build_whatif.
+    # This is the path that used to break: _whatif_payload -> whatif_mod.build_whatif.
     out = server.whatif("demo", "fid-1")
     assert isinstance(out, dict)
     assert out["finding_id"] == "fid-1"
-    # field scaffold yang HANYA ada bila build_whatif modul benar-benar jalan:
+    # scaffold fields that ONLY exist when the build_whatif module actually runs:
     assert out["why"] == "" and out["hypotheses"] == []
     assert out["decision"] == "needs_more_info"
-    assert "non-destruktif" in out["safety"]
+    assert "non-destructive" in out["safety"]
 
 
 def test_whatif_unknown_id_returns_error(_stub_pipeline):
-    out = server.whatif("demo", "tidak-ada")
+    out = server.whatif("demo", "does-not-exist")
     assert "error" in out

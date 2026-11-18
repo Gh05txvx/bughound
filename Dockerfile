@@ -1,18 +1,18 @@
 # syntax=docker/dockerfile:1
 #
-# Image bughound multi-target: satu Dockerfile, tiga image berbeda toolchain.
-# Karena adapter memanggil engine/tool sebagai subprocess di PATH, menaruhnya di
-# image = langsung jalan tanpa pasang apa pun di host.
+# Multi-target bughound image: one Dockerfile, three images with different toolchains.
+# Because the adapters call the engine/tool as a subprocess on PATH, putting them in
+# the image = they run right away without installing anything on the host.
 #
-#   docker build --target dast  -t bughound:dast .        # DAST+recon, tanpa SAST (ramping, butuh egress)
-#   docker build --target sast  -t bughound:sast .        # SAST (semgrep+bandit+gitleaks), tanpa jaringan
-#   docker build               -t bughound:full .         # keduanya (target default)
+#   docker build --target dast  -t bughound:dast .        # DAST+recon, no SAST (lean, needs egress)
+#   docker build --target sast  -t bughound:sast .        # SAST (semgrep+bandit+gitleaks), no network
+#   docker build               -t bughound:full .         # both (the default target)
 #
-# Build-arg DAST (dipakai target dast & full):
-#   --build-arg WITH_ZAP=true       (+JRE, ~500MB; DAST aktif ZAP)
-#   --build-arg WITH_RETIRE=true    (+Node; SCA library JS klien)
-# Build-arg SAST (dipakai target sast & full):
-#   --build-arg WITH_FINDSECBUGS=true   (+JRE+SpotBugs; SAST bytecode JVM)
+# DAST build-args (used by the dast & full targets):
+#   --build-arg WITH_ZAP=true       (+JRE, ~500MB; DAST runs ZAP)
+#   --build-arg WITH_RETIRE=true    (+Node; SCA for client-side JS libraries)
+# SAST build-args (used by the sast & full targets):
+#   --build-arg WITH_FINDSECBUGS=true   (+JRE+SpotBugs; SAST on JVM bytecode)
 
 # --- Stage: build binary bughound ---
 FROM golang:1.27-bookworm AS build
@@ -23,10 +23,10 @@ COPY . .
 ARG VERSION=docker
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/bughound ./cmd/bughound
 
-# --- Stage: engine CLI berbasis Go (ter-isolasi agar cache rapi) ---
+# --- Stage: Go-based engine CLIs (isolated so the cache stays clean) ---
 FROM golang:1.27-bookworm AS engines
 ENV GOBIN=/engines
-# libpcap-dev dibutuhkan untuk mem-build naabu (gopacket).
+# libpcap-dev is needed to build naabu (gopacket).
 RUN apt-get update && apt-get install -y --no-install-recommends libpcap-dev \
  && rm -rf /var/lib/apt/lists/*
 RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
@@ -40,10 +40,10 @@ RUN go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
  && go install github.com/ffuf/ffuf/v2@latest \
  && go install github.com/hahwul/dalfox/v2@v2.13.0
 
-# --- Stage: assets (unduh aset build-time; tak ikut ke runtime) ---
-# Wordlist route API (Assetnote "apiroutes") dinormalkan di sini lalu DI-COPY ke
-# image DAST, sehingga image runtime tak perlu python/curl hanya untuk unduh ini.
-# Fail-closed: unduh gagal / isi kurang => build gagal keras.
+# --- Stage: assets (download build-time assets; not carried into runtime) ---
+# The API route wordlist (Assetnote "apiroutes") is normalized here then COPIED into
+# the DAST image, so the runtime image needs no python/curl just to download it.
+# Fail-closed: a failed download / short content => a hard build failure.
 FROM debian:bookworm-slim AS assets
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
@@ -57,28 +57,28 @@ RUN set -eux; \
     rm -f /tmp/apiroutes.raw; \
     test "$(wc -l < /assets/apiroutes.txt)" -ge 1000
 
-# --- Stage: base (runtime bersama semua target) ---
+# --- Stage: base (runtime shared by every target) ---
 FROM debian:bookworm-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
-# Jalan sebagai non-root; data (db, kunci, anchor) di /data.
+# Run as non-root; data (db, keys, anchors) in /data.
 RUN useradd -m -u 10001 bh && mkdir -p /data && chown bh:bh /data
 WORKDIR /data
 EXPOSE 8787
-# Default AMAN: bind 0.0.0.0 (untuk -p docker) TAPI engine mock (tak ada scan
-# nyata). Untuk DAST nyata (image dast/full): override -engine nuclei,ffuf,zap...
+# SAFE default: bind 0.0.0.0 (for docker -p) BUT mock engines (no real
+# scan). For real DAST (the dast/full image): override -engine nuclei,ffuf,zap...
 ENTRYPOINT ["bughound"]
 CMD ["-addr", "0.0.0.0:8787", "-db", "/data/bughound.db"]
 
-# --- Stage: dast-tools (engine DAST+recon; induk bersama dast & full) ---
-# TANPA binary bughound di sini — binary disalin TERAKHIR di tiap leaf agar
-# perubahan source tak membatalkan layer toolchain yang mahal.
+# --- Stage: dast-tools (DAST+recon engines; the shared parent of dast & full) ---
+# NO bughound binary here, the binary is copied LAST in each leaf so a
+# source change does not invalidate the expensive toolchain layers.
 FROM base AS dast-tools
 ARG WITH_ZAP=false
-# ZAP: versi di-pin + SHA-256 diverifikasi (fail-closed bila checksum tak cocok).
+# ZAP: version pinned + SHA-256 verified (fail-closed if the checksum does not match).
 ARG ZAP_VERSION=2.17.0
 ARG ZAP_SHA256=efe799aaa3627db683b43f00c9c210aea0b75c00cc8f0a0f0434d12bb3ddde5a
-# retire.js opsional. Node bookworm = 18.x; retire 6.x butuh Node >=20, jadi 5.x.
+# retire.js is optional. Node bookworm = 18.x; retire 6.x needs Node >=20, so 5.x.
 ARG WITH_RETIRE=false
 ARG RETIRE_VERSION=5.7.0
 USER root
@@ -88,7 +88,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libpcap0.8 \
 COPY --from=engines /engines/ /usr/local/bin/
 COPY --from=assets /assets/apiroutes.txt /usr/local/share/bughound/wordlists/apiroutes.txt
 RUN chmod 0644 /usr/local/share/bughound/wordlists/apiroutes.txt
-# ZAP opsional (butuh JRE; menambah ~500MB). Default tidak dipasang.
+# ZAP optional (needs a JRE; adds ~500MB). Not installed by default.
 RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
       apt-get update; \
       apt-get install -y --no-install-recommends default-jre-headless curl; \
@@ -98,7 +98,7 @@ RUN if [ "$WITH_ZAP" = "true" ]; then set -eux; \
       ln -s "/opt/ZAP_${ZAP_VERSION}/zap.sh" /usr/local/bin/zap.sh; \
       apt-get clean; rm -rf /var/lib/apt/lists/*; \
     fi
-# retire.js opsional (butuh Node + npm). fail-closed bila `retire --version` gagal.
+# retire.js optional (needs Node + npm). fail-closed if `retire --version` fails.
 RUN if [ "$WITH_RETIRE" = "true" ]; then set -eux; \
       apt-get update; \
       apt-get install -y --no-install-recommends nodejs npm; \
@@ -108,10 +108,10 @@ RUN if [ "$WITH_RETIRE" = "true" ]; then set -eux; \
       apt-get clean; rm -rf /var/lib/apt/lists/*; \
     fi
 USER bh
-# Pre-bake nuclei-templates (sumber 'trusted' repo resmi projectdiscovery) agar
-# runtime tak perlu — dan dengan egress terkunci TAK BISA — menariknya. Sebagai
-# user 'bh' agar mendarat di $HOME (/home/bh/nuclei-templates), lokasi default.
-# Fail-closed: unduh gagal => build gagal keras.
+# Pre-bake the nuclei-templates (a 'trusted' source, projectdiscovery's official repo) so
+# the runtime does not need to, and with egress locked down CANNOT, pull them. As the
+# 'bh' user so they land in $HOME (/home/bh/nuclei-templates), the default location.
+# Fail-closed: a failed download => a hard build failure.
 RUN nuclei -update-templates
 
 # --- Stage: dast (DAST image final) ---
@@ -120,14 +120,14 @@ USER root
 COPY --from=build /out/bughound /usr/local/bin/bughound
 USER bh
 
-# --- Stage: sast-tools (toolchain SAST; induk sast) ---
+# --- Stage: sast-tools (SAST toolchain; the parent of sast) ---
 FROM base AS sast-tools
 ARG WITH_FINDSECBUGS=false
 USER root
 COPY scripts/docker-sast-install.sh /tmp/docker-sast-install.sh
 RUN WITH_FINDSECBUGS="$WITH_FINDSECBUGS" sh /tmp/docker-sast-install.sh && rm -f /tmp/docker-sast-install.sh
-# SAST semgrep offline (ruleset lokal pre-bake) + SAST aktif default ke /data/sast
-# (bughound membuat dir saat boot bila belum ada; path-scope, default-deny).
+# semgrep SAST offline (a pre-baked local ruleset) + SAST on by default at /data/sast
+# (bughound creates the dir at boot if missing; path-scoped, default-deny).
 ENV BUGHOUND_SEMGREP_CONFIG=/opt/semgrep/default.yml \
     SEMGREP_ENABLE_VERSION_CHECK=0 \
     BUGHOUND_SAST_ROOT=/data/sast
@@ -139,17 +139,17 @@ USER root
 COPY --from=build /out/bughound /usr/local/bin/bughound
 USER bh
 
-# --- Stage: full (DAST + SAST; target default) ---
-# FROM dast-tools agar layer engine/template di-cache bersama image `dast`; lalu
-# tambahkan toolchain SAST. Binary disalin TERAKHIR.
+# --- Stage: full (DAST + SAST; the default target) ---
+# FROM dast-tools so the engine/template layers are cached together with the `dast`
+# image; then add the SAST toolchain. The binary is copied LAST.
 FROM dast-tools AS full
 ARG WITH_FINDSECBUGS=false
 USER root
 COPY scripts/docker-sast-install.sh /tmp/docker-sast-install.sh
 RUN WITH_FINDSECBUGS="$WITH_FINDSECBUGS" sh /tmp/docker-sast-install.sh && rm -f /tmp/docker-sast-install.sh
-# Pulihkan biner engine projectdiscovery SETELAH install SAST: pip (dependensi
-# semgrep) memasang CLI `httpx` Python ke /usr/local/bin/httpx yang menimpa httpx
-# recon. COPY ulang engines agar tool DAST yang menang (hanya di image full).
+# Restore the projectdiscovery engine binaries AFTER installing SAST: pip (a semgrep
+# dependency) drops a Python `httpx` CLI into /usr/local/bin/httpx that overwrites the
+# recon httpx. Re-COPY the engines so the DAST tool wins (full image only).
 COPY --from=engines /engines/ /usr/local/bin/
 ENV BUGHOUND_SEMGREP_CONFIG=/opt/semgrep/default.yml \
     SEMGREP_ENABLE_VERSION_CHECK=0 \

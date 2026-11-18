@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// Spec OpenAPI yang valid & in-scope harus memulai run (endpoint jadi target)
-// dan menghasilkan temuan — membuktikan ekspansi spec → target berjalan.
+// A valid & in-scope OpenAPI spec must start a run (endpoints become targets)
+// and produce findings — proving the spec → target expansion works.
 func TestScanOpenAPIExpandsEndpoints(t *testing.T) {
 	srv, _ := newTestServer(t)
 	spec := `{"openapi":"3.0.0","servers":[{"url":"https://api.demo.test"}],"paths":{"/users":{"get":{}},"/orders/{id}":{"get":{}}}}`
@@ -19,10 +19,10 @@ func TestScanOpenAPIExpandsEndpoints(t *testing.T) {
 		"openapi":  {spec},
 		"rps":      {"10"},
 	})
-	runID := runIDFrom(t, rec.Body.String()) // gagal bila malah error "isi minimal satu target"
+	runID := runIDFrom(t, rec.Body.String()) // fails if it errors with "at least one target" instead
 	waitRunDone(t, srv, runID)
 	if b := do(t, srv, "GET", "/findings?program=apiscan", nil).Body.String(); !strings.Contains(b, "SSRF via fetch parameter") {
-		t.Error("scan dari spec OpenAPI harus menghasilkan temuan")
+		t.Error("a scan from an OpenAPI spec must produce findings")
 	}
 }
 
@@ -33,10 +33,10 @@ func TestScanOpenAPIInvalidShowsError(t *testing.T) {
 		"in_scope": {"demo.test"},
 		"targets":  {""},
 		"seeds":    {""},
-		"openapi":  {`{"openapi":"3.0.0","paths":{}}`}, // tanpa paths → error parse
+		"openapi":  {`{"openapi":"3.0.0","paths":{}}`}, // no paths → parse error
 		"rps":      {"10"},
 	})
 	if !strings.Contains(rec.Body.String(), "OpenAPI/Swagger:") {
-		t.Errorf("spec tak valid harus menampilkan error OpenAPI:\n%s", rec.Body.String())
+		t.Errorf("an invalid spec must show an OpenAPI error:\n%s", rec.Body.String())
 	}
 }

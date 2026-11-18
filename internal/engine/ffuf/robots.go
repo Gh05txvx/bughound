@@ -12,26 +12,26 @@ import (
 	"time"
 )
 
-// Enrichment robots.txt. robots.txt mengiklankan path yang ingin disembunyikan
-// pemilik situs (Disallow/Allow) — justru kandidat probe bernilai tinggi bagi
-// hunter (mis. juice-shop: "Disallow: /ftp" -> direktori ter-ekspos). bughound
-// mengambilnya lewat proxy egress yang SAMA dengan ffuf, jadi fetch robots.txt
-// pun ditegakkan scope guard; dan tiap path hasil parse tetap diprobe ffuf lewat
-// proxy itu (lapis kedua). Best-effort: gagal/absen = tanpa enrichment, bukan
-// error.
+// robots.txt enrichment. robots.txt advertises the paths a site owner wants
+// hidden (Disallow/Allow), which makes them high-value probe candidates for a
+// hunter (e.g. juice-shop: "Disallow: /ftp" -> an exposed directory). bughound
+// fetches it through the SAME egress proxy as ffuf, so the robots.txt fetch is
+// scope-enforced too; and every parsed path is still probed by ffuf through that
+// proxy (a second layer). Best-effort: a failure or absence means no enrichment,
+// not an error.
 
 const (
-	maxRobotsBytes = 256 * 1024       // batas baca body robots.txt (hindari body raksasa)
-	maxRobotsPaths = 200              // batas path yang diambil (hindari wordlist membengkak)
-	robotsTimeout  = 10 * time.Second // batas waktu fetch robots.txt
+	maxRobotsBytes = 256 * 1024       // cap on the robots.txt body read (avoid a huge body)
+	maxRobotsPaths = 200              // cap on paths taken (avoid a bloated wordlist)
+	robotsTimeout  = 10 * time.Second // timeout for the robots.txt fetch
 )
 
-// robotsPaths mengambil & mem-parse BASE/robots.txt lewat proxy egress. Tanpa
-// proxy (mis. mock/test) TIDAK ada fetch — supaya tak pernah ada koneksi ke
-// target yang memintas scope guard.
+// robotsPaths fetches & parses BASE/robots.txt through the egress proxy. Without
+// a proxy (e.g. mock/test) there is NO fetch, so no connection to the target ever
+// bypasses the scope guard.
 func (r *Runner) robotsPaths(ctx context.Context, target string) []string {
 	if r.proxyAddr == "" {
-		return nil // tak ada proxy scope-enforcing -> jangan fetch (fail-safe)
+		return nil // no scope-enforcing proxy -> do not fetch (fail-safe)
 	}
 	base := baseOf(target)
 	if base == "" {
@@ -44,10 +44,10 @@ func (r *Runner) robotsPaths(ctx context.Context, target string) []string {
 	return robotsPathsFrom(ctx, client, base, r.authHeaders...)
 }
 
-// setHeaders memasang header auth "Nama: nilai" (Lever 1) di request enrichment,
-// sama dengan -H probe ffuf: robots.txt/spec di balik login hanya terbaca dengan
-// sesi. Dipasang di request (bukan transport) agar Go tetap membuang
-// Cookie/Authorization saat redirect lintas domain.
+// setHeaders attaches the auth headers "Name: value" (Lever 1) to the enrichment
+// request, matching ffuf's -H probe: robots.txt/spec behind a login is only
+// readable with a session. Set on the request (not the transport) so Go still
+// drops Cookie/Authorization on a cross-domain redirect.
 func setHeaders(req *http.Request, hdrs []string) {
 	for _, h := range hdrs {
 		if name, val, ok := strings.Cut(h, ":"); ok && strings.TrimSpace(name) != "" {
@@ -56,10 +56,10 @@ func setHeaders(req *http.Request, hdrs []string) {
 	}
 }
 
-// proxiedClient membuat http.Client yang menyalurkan SEMUA request lewat proxy
-// egress (http.Transport.Proxy), sehingga scope guard mengevaluasi tiap koneksi.
-// Sertifikat tak diverifikasi, sama seperti engine: proxy membuka TLS host yang punya
-// eksklusi ber-path, dan klien yang memverifikasi akan gagal diam-diam di sana.
+// proxiedClient builds an http.Client that routes EVERY request through the
+// egress proxy (http.Transport.Proxy), so the scope guard evaluates each
+// connection. Certificates are not verified, same as the engines: the proxy opens
+// TLS for a host with a path-based exclusion, and a verifying client would fail silently there.
 func proxiedClient(proxyAddr string, timeout time.Duration) (*http.Client, error) {
 	pu, err := url.Parse("http://" + proxyAddr)
 	if err != nil {
@@ -71,8 +71,8 @@ func proxiedClient(proxyAddr string, timeout time.Duration) (*http.Client, error
 	}, nil
 }
 
-// robotsPathsFrom melakukan GET base/robots.txt dengan client apa adanya lalu
-// mem-parse hasilnya. Dipisah agar bisa diuji tanpa proxy (client langsung).
+// robotsPathsFrom GETs base/robots.txt with the given client and parses the
+// result. Split out so it can be tested without a proxy (a direct client).
 func robotsPathsFrom(ctx context.Context, client *http.Client, base string, hdrs ...string) []string {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/robots.txt", nil)
 	if err != nil {
@@ -81,7 +81,7 @@ func robotsPathsFrom(ctx context.Context, client *http.Client, base string, hdrs
 	setHeaders(req, hdrs)
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil // robots.txt absen/diblok scope -> tanpa enrichment
+		return nil // robots.txt missing/blocked by scope -> no enrichment
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -91,10 +91,10 @@ func robotsPathsFrom(ctx context.Context, client *http.Client, base string, hdrs
 	return parseRobotsPaths(body, maxRobotsPaths)
 }
 
-// parseRobotsPaths mengekstrak path literal dari direktif Disallow/Allow. Hanya
-// path relatif ("/...") yang diterima; pola wildcard (*, $) dan URL absolut
-// dibuang karena bukan path probe literal. Nilai dikembalikan dalam bentuk FUZZ
-// (tanpa slash tepi), ter-dedup, dan dibatasi max.
+// parseRobotsPaths extracts literal paths from Disallow/Allow directives. Only
+// relative paths ("/...") are accepted; wildcard patterns (*, $) and absolute
+// URLs are dropped because they are not literal probe paths. Values are returned
+// in FUZZ form (no edge slashes), deduped, and capped at max.
 func parseRobotsPaths(body []byte, max int) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -113,17 +113,17 @@ func parseRobotsPaths(body []byte, max int) []string {
 			continue
 		}
 		val := strings.TrimSpace(line[colon+1:])
-		if h := strings.IndexByte(val, '#'); h >= 0 { // komentar inline
+		if h := strings.IndexByte(val, '#'); h >= 0 { // inline comment
 			val = strings.TrimSpace(val[:h])
 		}
-		val = strings.SplitN(val, "?", 2)[0] // buang query
+		val = strings.SplitN(val, "?", 2)[0] // drop the query
 		if val == "" || val == "/" || !strings.HasPrefix(val, "/") {
-			continue // kosong / seluruh situs / bukan path relatif
+			continue // empty / whole site / not a relative path
 		}
 		if strings.ContainsAny(val, "*$") {
-			continue // pola wildcard, bukan path literal
+			continue // wildcard pattern, not a literal path
 		}
-		val = strings.Trim(val, "/") // bentuk FUZZ (tanpa slash tepi)
+		val = strings.Trim(val, "/") // FUZZ form (no edge slashes)
 		if val == "" || strings.ContainsAny(val, " \t") {
 			continue
 		}
@@ -139,8 +139,8 @@ func parseRobotsPaths(body []byte, max int) []string {
 	return out
 }
 
-// mergeWordlist menulis wordlist sementara baru = isi base + path extra (ter-dedup
-// terhadap base). base (wordlist bawaan atau milik pengguna) TIDAK diubah.
+// mergeWordlist writes a new temp wordlist = base contents + the extra paths
+// (deduped against base). The base (built-in or user wordlist) is NOT changed.
 func mergeWordlist(basePath string, extra []string) (string, func(), error) {
 	base, err := os.ReadFile(basePath)
 	if err != nil {

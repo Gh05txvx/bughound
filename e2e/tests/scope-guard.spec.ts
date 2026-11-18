@@ -1,9 +1,9 @@
 import { test, expect } from '../fixtures/test';
 import { ScopeEditorPage } from '../pages/scope-editor.page';
 
-// SKENARIO KRITIS #1 — scope guard menolak target di luar scope, terlihat di UI
-// SEBELUM scan berjalan. Diuji lewat pratinjau scope editor (tanpa jaringan).
-test('KRITIS: scope guard menolak target luar scope (pratinjau, tanpa scan)', async ({ page }) => {
+// CRITICAL SCENARIO #1: the scope guard denies an out-of-scope target, visible in the UI
+// BEFORE the scan runs. Tested via the scope editor preview (no network).
+test('CRITICAL: scope guard denies an out-of-scope target (preview, no scan)', async ({ page }) => {
   const editor = new ScopeEditorPage(page);
   await editor.gotoNew();
   await editor.fill({
@@ -14,10 +14,10 @@ test('KRITIS: scope guard menolak target luar scope (pratinjau, tanpa scan)', as
   });
   await editor.clickPreview();
 
-  // in-scope → izin
-  await expect(editor.previewRow('app.demo.test').getByText('izin')).toBeVisible();
-  // out-of-scope menang atas in-scope → tolak
-  await expect(editor.previewRow('admin.demo.test').getByText('tolak')).toBeVisible();
-  // tidak cocok scope apa pun → default-deny → tolak
-  await expect(editor.previewRow('evil.test').getByText('tolak')).toBeVisible();
+  // in-scope -> allow
+  await expect(editor.previewRow('app.demo.test').getByText('allow')).toBeVisible();
+  // out-of-scope beats in-scope -> deny
+  await expect(editor.previewRow('admin.demo.test').getByText('deny')).toBeVisible();
+  // matches no scope at all -> default-deny -> deny
+  await expect(editor.previewRow('evil.test').getByText('deny')).toBeVisible();
 });

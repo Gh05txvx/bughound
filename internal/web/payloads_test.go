@@ -48,12 +48,12 @@ func TestPayloads_RenderSeededCatalog(t *testing.T) {
 	for _, want := range []string{
 		"Bank Payload",
 		"nuclei:ssrf-fetch", "nuclei:prometheus-metrics", "custom:open-redirect",
-		"semua <b>3</b>", // ringkasan total
-		"trusted", "review", // badge trust di panel sumber
-		"nuclei-official", // id sumber
+		"all <b>3</b>", // total summary
+		"trusted", "review", // trust badges in the sources panel
+		"nuclei-official", // source id
 	} {
 		if !strings.Contains(b, want) {
-			t.Errorf("halaman /payloads harus memuat %q", want)
+			t.Errorf("the /payloads page must contain %q", want)
 		}
 	}
 }
@@ -64,10 +64,10 @@ func TestPayloads_Filter(t *testing.T) {
 
 	b := do(t, srv, "GET", "/payloads?engine=custom", nil).Body.String()
 	if !strings.Contains(b, "custom:open-redirect") {
-		t.Errorf("filter engine=custom harus menampilkan entri custom")
+		t.Errorf("filter engine=custom must show the custom entry")
 	}
 	if strings.Contains(b, "nuclei:ssrf-fetch") {
-		t.Errorf("filter engine=custom tak boleh menampilkan entri nuclei")
+		t.Errorf("filter engine=custom must not show the nuclei entry")
 	}
 }
 
@@ -75,11 +75,11 @@ func TestPayloads_EmptyCatalog(t *testing.T) {
 	srv, _ := newTestServer(t)
 	b := do(t, srv, "GET", "/payloads", nil).Body.String()
 	if !strings.Contains(b, "Bank Payload") {
-		t.Errorf("halaman harus tetap render saat katalog kosong")
+		t.Errorf("the page must still render when the catalog is empty")
 	}
 }
 
-// newPayloadServer: server AuthDisabled dengan sumber payload terkonfigurasi.
+// newPayloadServer: an AuthDisabled server with configured payload sources.
 func newPayloadServer(t *testing.T, sources []payload.Source) (*Server, *store.Mem) {
 	t.Helper()
 	st := store.NewMem()
@@ -116,14 +116,14 @@ func TestPayloads_RefreshBuildsCatalog(t *testing.T) {
 
 	rec := do(t, srv, "POST", "/payloads/refresh", url.Values{})
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("POST /payloads/refresh = %d, ingin 303", rec.Code)
+		t.Fatalf("POST /payloads/refresh = %d, want 303", rec.Code)
 	}
 	b := do(t, srv, "GET", "/payloads", nil).Body.String()
 	if !strings.Contains(b, "nuclei:prometheus-metrics") {
-		t.Errorf("setelah refresh, katalog harus memuat template hasil scan")
+		t.Errorf("after a refresh, the catalog must hold the scanned templates")
 	}
-	if !strings.Contains(b, "semua <b>1</b>") {
-		t.Errorf("setelah refresh, total katalog harus 1")
+	if !strings.Contains(b, "all <b>1</b>") {
+		t.Errorf("after a refresh, the catalog total must be 1")
 	}
 }
 
@@ -131,6 +131,6 @@ func TestPayloads_RefreshViewerForbidden(t *testing.T) {
 	srv, _ := newRBACServer(t)
 	csrf, sess := loginAs(t, srv, "view", "viewpw")
 	if rec := authedReq(srv, "POST", "/payloads/refresh", url.Values{}, csrf, sess); rec.Code != http.StatusForbidden {
-		t.Fatalf("viewer POST /payloads/refresh = %d, ingin 403", rec.Code)
+		t.Fatalf("viewer POST /payloads/refresh = %d, want 403", rec.Code)
 	}
 }

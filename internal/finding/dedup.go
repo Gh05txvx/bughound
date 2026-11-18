@@ -8,33 +8,33 @@ import (
 	"strings"
 )
 
-// ComputeDedupKey menghitung dedup_key deterministik di BH-SPEC-FINDING:
+// ComputeDedupKey computes the deterministic dedup_key from BH-SPEC-FINDING:
 //
 //	sha256( lower(type) | host(target) | path(location.url) | METHOD | (parameter|"") )
 //
-// METHOD (GET/POST/...) ikut menentukan identitas agar dua isu berbeda pada
-// path+parameter yang sama tetapi method berbeda (mis. GET vs POST) tidak salah
-// gabung. Method dinormalkan ke huruf besar; kosong (engine yang tak
-// melaporkannya, mis. ffuf/retire/SAST) tetap kosong, jadi perilaku untuk
-// engine itu tak berubah satu sama lain.
+// METHOD (GET/POST/...) is part of the identity so two different issues on the
+// same path+parameter but different methods (e.g. GET vs POST) are not merged
+// by mistake. The method is normalized to upper case; an empty one (engines
+// that do not report it, e.g. ffuf/retire/SAST) stays empty, so behaviour for
+// those engines is unchanged.
 //
-// Yang sengaja TIDAK masuk kunci: run_id, source_engine, timestamp, payload,
-// dan nilai query. Dengan begitu isu yang sama pada parameter+method yang sama
-// tetap satu temuan walau ditemukan dua engine atau di dua run berbeda.
+// Deliberately NOT part of the key: run_id, source_engine, timestamp, payload
+// and query values. That way the same issue on the same parameter+method stays
+// one finding even when two engines find it, or it is found in two runs.
 //
-// Pengecualian: untuk tipe SITE-WIDE (lihat siteWide) path DAN method
-// dikeluarkan dari kunci (identitas = origin). Isu origin-level seperti header
-// CSP/HSTS absen atau CORS permisif dilaporkan engine (mis. ZAP) sekali per URL
-// yang dirayapi, padahal satu origin = satu misconfig. Mengabaikan path & method
-// membuat semua instance terkolaps jadi satu temuan utama; sisanya ditandai
-// duplikat oleh store (disembunyikan dari hitungan & report, tetap tersimpan
-// utuh untuk audit).
+// Exception: for SITE-WIDE types (see siteWide) the path AND the method are
+// left out of the key (identity = origin). Engines (e.g. ZAP) report
+// origin-level issues such as a missing CSP/HSTS header or permissive CORS once
+// per crawled URL, although one origin = one misconfiguration. Ignoring path
+// and method collapses every instance into one main finding; the store marks
+// the rest as duplicates (hidden from counts and reports, still stored in full
+// for audit).
 func ComputeDedupKey(typ, target, locationURL, method, parameter string) string {
 	path := pathOf(locationURL)
 	meth := normMethod(method)
 	if siteWide(typ) {
-		path = "" // identitas = origin, bukan path
-		meth = "" // isu origin-level tak spesifik per method
+		path = "" // identity = origin, not path
+		meth = "" // an origin-level issue is not specific to a method
 	}
 	raw := strings.ToLower(strings.TrimSpace(typ)) + "|" +
 		hostOf(target) + "|" +
@@ -45,27 +45,27 @@ func ComputeDedupKey(typ, target, locationURL, method, parameter string) string 
 	return hex.EncodeToString(sum[:])
 }
 
-// normMethod menormalkan method HTTP ke huruf besar tanpa spasi tepi (mis.
-// "get" -> "GET"); string kosong tetap kosong. Menjaga kunci konsisten walau
-// engine melaporkan casing berbeda.
+// normMethod normalizes an HTTP method to upper case with no surrounding
+// spaces (e.g. "get" -> "GET"); an empty string stays empty. It keeps the key
+// consistent when engines report different casing.
 func normMethod(m string) string {
 	return strings.ToUpper(strings.TrimSpace(m))
 }
 
-// siteWideTypes: tipe isu yang identitasnya ORIGIN (host), bukan path tertentu.
-// Disengaja sebagai daftar eksplisit + pola sufiks konservatif agar temuan
-// per-path yang sah (exposed-path, suspicious-comments per berkas, dll.) TIDAK
-// pernah ikut terkolaps keliru.
+// siteWideTypes: issue types whose identity is the ORIGIN (host), not a
+// specific path. It is an explicit list plus a conservative suffix pattern on
+// purpose, so legitimate per-path findings (exposed-path, suspicious-comments
+// per file, etc.) are NEVER collapsed by mistake.
 var siteWideTypes = map[string]bool{
-	"cross-domain-misconfiguration": true, // CORS permisif (origin-level)
-	"modern-web-application":        true, // info ZAP, sama utk seluruh situs
-	"user-agent-fuzzer":             true, // probe header, bukan path spesifik
+	"cross-domain-misconfiguration": true, // permissive CORS (origin-level)
+	"modern-web-application":        true, // ZAP info, the same for the whole site
+	"user-agent-fuzzer":             true, // header probe, not a specific path
 }
 
-// siteWide melaporkan apakah typ adalah isu origin-level yang dedup-nya harus
-// mengabaikan path. Keluarga header-policy ZAP ("...-header-not-set" /
-// "...-header-missing", mis. CSP, HSTS, X-Frame-Options, X-Content-Type-Options)
-// selalu origin-level, begitu pula kebocoran teknologi via X-Powered-By.
+// siteWide reports whether typ is an origin-level issue whose dedup must ignore
+// the path. ZAP's header-policy family ("...-header-not-set" /
+// "...-header-missing", e.g. CSP, HSTS, X-Frame-Options, X-Content-Type-Options)
+// is always origin-level, and so is technology leakage through X-Powered-By.
 func siteWide(typ string) bool {
 	t := strings.ToLower(strings.TrimSpace(typ))
 	if siteWideTypes[t] {
@@ -76,9 +76,9 @@ func siteWide(typ string) bool {
 		strings.Contains(t, "x-powered-by")
 }
 
-// hostOf mengambil host dari target tanpa skema, userinfo, dan port. Dinormalkan
-// huruf kecil dan tanpa titik akhir. Dedup v1 sengaja mengabaikan port (lihat
-// pertanyaan terbuka penyempurnaan dedup_key di BH-SPEC-FINDING).
+// hostOf takes the host from target without scheme, userinfo or port. It is
+// lowercased and has no trailing dot. Dedup v1 deliberately ignores the port
+// (see the open question on refining dedup_key in BH-SPEC-FINDING).
 func hostOf(target string) string {
 	t := strings.ToLower(strings.TrimSpace(target))
 	if t == "" {
@@ -86,12 +86,12 @@ func hostOf(target string) string {
 	}
 	p := t
 	if !strings.Contains(p, "://") {
-		p = "//" + p // beri url.Parse petunjuk bahwa ini authority, bukan path
+		p = "//" + p // hint to url.Parse that this is an authority, not a path
 	}
 	if u, err := url.Parse(p); err == nil && u.Hostname() != "" {
 		return strings.TrimSuffix(u.Hostname(), ".")
 	}
-	// Fallback kasar bila url.Parse gagal.
+	// Rough fallback when url.Parse fails.
 	h := strings.TrimPrefix(t, "//")
 	if i := strings.IndexByte(h, '/'); i >= 0 {
 		h = h[:i]
@@ -102,8 +102,8 @@ func hostOf(target string) string {
 	return strings.TrimSuffix(h, ".")
 }
 
-// pathOf mengambil path dari URL tanpa query string. Nilai query berubah-ubah
-// antar scan sehingga tidak boleh ikut menentukan identitas temuan.
+// pathOf takes the path from a URL without the query string. Query values
+// change between scans, so they must not be part of a finding's identity.
 func pathOf(rawURL string) string {
 	r := strings.TrimSpace(rawURL)
 	if r == "" {

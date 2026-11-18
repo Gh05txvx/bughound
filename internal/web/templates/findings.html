@@ -12,20 +12,20 @@
 {{if not .Program}}
   <div class="panel"><div class="empty rich">
     <div class="empty-ico"><svg class="ico"><use href="#i-alert"/></svg></div>
-    <h3>Belum ada program</h3>
-    <p class="muted">Pilih atau buat program untuk mulai triase temuan di sini.</p>
-    <div class="empty-cta"><a class="btn primary" href="/scan"><svg class="ico"><use href="#i-radio"/></svg>Jalankan scan pertama</a></div>
+    <h3>No programs yet</h3>
+    <p class="muted">Pick or create a program to start triaging findings here.</p>
+    <div class="empty-cta"><a class="btn primary" href="/scan"><svg class="ico"><use href="#i-radio"/></svg>Run your first scan</a></div>
   </div></div>
 {{else}}
 
 <form method="get" action="/findings" class="filters">
   <input type="hidden" name="program" value="{{.Program}}">
   <select name="severity">
-    <option value="">severity: semua</option>
+    <option value="">severity: all</option>
     {{range $s := strs "critical" "high" "medium" "low" "info"}}<option value="{{$s}}" {{if eq $.FSeverity $s}}selected{{end}}>{{$s}}</option>{{end}}
   </select>
   <select name="status">
-    <option value="">status: semua</option>
+    <option value="">status: all</option>
     {{range $s := strs "new" "confirmed" "duplicate" "false_positive" "ignored"}}<option value="{{$s}}" {{if eq $.FStatus $s}}selected{{end}}>{{$s}}</option>{{end}}
   </select>
   <input type="text" name="type" value="{{.FType}}" placeholder="type" autocomplete="off">
@@ -41,14 +41,14 @@
       <input type="hidden" name="csrf" value="{{.CSRF}}">
       <input type="hidden" name="program" value="{{.Program}}">
       <div class="bulk-bar">
-        <label><input type="checkbox" onclick="document.querySelectorAll('#bulkform input[name=ids]').forEach(function(c){c.checked=this.checked}.bind(this))"> semua</label>
-        <span class="muted small">aksi terpilih:</span>
-        <button class="btn good" name="status" value="confirmed" type="submit">Konfirmasi</button>
+        <label><input type="checkbox" onclick="document.querySelectorAll('#bulkform input[name=ids]').forEach(function(c){c.checked=this.checked}.bind(this))"> all</label>
+        <span class="muted small">action on selected:</span>
+        <button class="btn good" name="status" value="confirmed" type="submit">Confirm</button>
         <button class="btn" name="status" value="false_positive" type="submit">False positive</button>
-        <button class="btn" name="status" value="ignored" type="submit">Abaikan</button>
+        <button class="btn" name="status" value="ignored" type="submit">Ignore</button>
       </div>
       <table class="tbl findings">
-        <thead><tr><th></th><th>Sev</th><th>Type</th><th>Target</th><th>Status</th><th>Judul</th></tr></thead>
+        <thead><tr><th></th><th>Sev</th><th>Type</th><th>Target</th><th>Status</th><th>Title</th></tr></thead>
         <tbody>
         {{range .Findings}}
           <tr class="row {{if $.Selected}}{{if eq .ID $.Selected.ID}}selected{{end}}{{end}}"
@@ -67,15 +67,15 @@
     {{else}}
       <div class="empty rich">
         <div class="empty-ico"><svg class="ico"><use href="#i-alert"/></svg></div>
-        <h3>Tidak ada temuan</h3>
-        <p class="muted">Tak ada yang cocok dengan filter ini. <a href="/findings?program={{.Program}}">reset filter</a> atau jalankan scan baru.</p>
+        <h3>No findings</h3>
+        <p class="muted">Nothing matches this filter. <a href="/findings?program={{.Program}}">reset the filter</a> or run a new scan.</p>
       </div>
     {{end}}
   </div>
 
   <aside class="detail" id="detail">
     {{if .Selected}}{{template "finding_detail" .Selected}}{{else}}
-    <p class="muted">Pilih satu baris untuk melihat bukti &amp; aksi triase. Centang beberapa baris untuk aksi massal.</p>
+    <p class="muted">Pick a row to see the evidence &amp; triage actions. Tick several rows for a bulk action.</p>
     {{end}}
   </aside>
 </div>

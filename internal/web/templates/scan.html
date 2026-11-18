@@ -1,70 +1,70 @@
 {{define "content"}}
 <div class="grid-2">
   <form class="card" hx-post="/scan" hx-target="#result" hx-swap="innerHTML"
-        hx-confirm="Mulai scan terhadap target in-scope? Hanya target yang lolos scope guard yang akan disentuh.">
-    <h2>Konfigurasi scan</h2>
+        hx-confirm="Start a scan against in-scope targets? Only targets that pass the scope guard are touched.">
+    <h2>Scan configuration</h2>
 
     <label>Program</label>
     <input type="text" name="program" value="{{.Program}}" autocomplete="off" required>
 
-    <label>Seed domain untuk recon <span class="muted small">(opsional · {{reconLabel}})</span></label>
+    <label>Seed domains for recon <span class="muted small">(optional · {{reconLabel}})</span></label>
     <textarea name="seeds" rows="2" spellcheck="false">{{.Seeds}}</textarea>
 
-    <label>In-scope <span class="muted small">(satu entri per baris · domain, *.wildcard, URL, IP, CIDR)</span></label>
+    <label>In-scope <span class="muted small">(one entry per line · domain, *.wildcard, URL, IP, CIDR)</span></label>
     <textarea name="in_scope" rows="4" spellcheck="false">{{.InScope}}</textarea>
 
-    <label>Out-of-scope <span class="muted small">(menang atas in-scope)</span></label>
+    <label>Out-of-scope <span class="muted small">(wins over in-scope)</span></label>
     <textarea name="out_scope" rows="3" spellcheck="false">{{.OutScope}}</textarea>
 
-    <label>Target <span class="muted small">(satu per baris)</span></label>
+    <label>Targets <span class="muted small">(one per line)</span></label>
     <textarea name="targets" rows="4" spellcheck="false">{{.Targets}}</textarea>
 
-    <label>OpenAPI/Swagger spec <span class="muted small">(opsional · tempel JSON/YAML · tiap endpoint jadi target &amp; tetap lewat scope guard)</span></label>
-    <textarea name="openapi" rows="3" spellcheck="false" placeholder="tempel isi openapi.json / swagger.yaml (OpenAPI 3 / Swagger 2)">{{.OpenAPI}}</textarea>
+    <label>OpenAPI/Swagger spec <span class="muted small">(optional · paste JSON/YAML · each endpoint becomes a target &amp; still goes through the scope guard)</span></label>
+    <textarea name="openapi" rows="3" spellcheck="false" placeholder="paste the openapi.json / swagger.yaml content (OpenAPI 3 / Swagger 2)">{{.OpenAPI}}</textarea>
 
-    <label>Seleksi template <span class="muted small">(opsional · memilih subset dari <a href="/payloads{{if .Program}}?program={{.Program}}{{end}}">Bank Payload</a> · kosong = semua template aktif)</span></label>
-    <input type="text" name="tags" value="{{.Tags}}" autocomplete="off" placeholder="tags (mis. cve,exposure,misconfig — dipisah koma)">
+    <label>Template selection <span class="muted small">(optional · picks a subset from the <a href="/payloads{{if .Program}}?program={{.Program}}{{end}}">Payload Bank</a> · empty = all enabled templates)</span></label>
+    <input type="text" name="tags" value="{{.Tags}}" autocomplete="off" placeholder="tags (e.g. cve,exposure,misconfig — comma-separated)">
     <div class="checkrow">
       {{range $s := strs "critical" "high" "medium" "low" "info"}}
       <label class="check"><input type="checkbox" name="severity" value="{{$s}}" {{if hasStr $.Severity $s}}checked{{end}}><span class="badge sev-{{$s}}">{{$s}}</span></label>
       {{end}}
     </div>
-    <label class="check"><input type="checkbox" name="save_preset" value="1" {{if .SavePreset}}checked{{end}}><span>Simpan seleksi ini sebagai preset program</span></label>
-    <p class="muted small">Preset (tags/severity/stealth/route API) tersimpan per program &amp; otomatis mengisi form ini saat program yang sama dipilih. Hanya memengaruhi template/wordlist mana yang jalan — bukan scope, egress, rate limit, atau secret.</p>
+    <label class="check"><input type="checkbox" name="save_preset" value="1" {{if .SavePreset}}checked{{end}}><span>Save this selection as the program preset</span></label>
+    <p class="muted small">The preset (tags/severity/stealth/API route) is saved per program &amp; automatically fills this form when the same program is chosen. It only affects which templates/wordlist run — not scope, egress, rate limit, or secrets.</p>
 
-    <label>Rate limit <span class="muted small">(request/detik · wajib di jalur eksekusi, dijepit maks 50)</span></label>
+    <label>Rate limit <span class="muted small">(requests/second · required in the execution path, clamped to a max of 50)</span></label>
     <input type="text" name="rps" value="{{.RPS}}" autocomplete="off">
 
-    <label>Profil keamanan DAST</label>
+    <label>DAST safety profile</label>
     <label class="check"><input type="checkbox" name="stealth" value="1" {{if .Stealth}}checked{{end}}><span>Stealth (low-and-slow)</span></label>
-    <p class="muted small">Stealth menekan jejak pada target ber-SOC: laju dijepit ≤3/dtk, satu koneksi, User-Agent browser, cakupan URL dipersempit. <strong>Non-destruktif selalu aktif</strong> — tanpa payload DoS & tanpa callback blind/OAST; scan mencari kandidat bug untuk kamu verifikasi manual, bukan mengubah konfigurasi target.</p>
+    <p class="muted small">Stealth lowers the footprint on a SOC-monitored target: the rate is clamped to ≤3/s, one connection, a browser User-Agent, a narrower URL scope. <strong>Non-destructive is always on</strong> — no DoS payloads &amp; no blind/OAST callbacks; the scan looks for candidate bugs for you to verify manually, it does not change the target's configuration.</p>
 
     <label class="check"><input type="checkbox" name="api_routes" value="1" {{if .APIRoutes}}checked{{end}}><span>Brute route API (wordlist Assetnote apiroutes)</span></label>
-    <p class="muted small">Menambah ~ribuan path API nyata (terurut frekuensi) ke engine ffuf untuk menemukan endpoint API tak tertaut (mis. <code>/api/v1/…</code>, <code>/rest/…</code>). <strong>Volume besar &amp; lebih lambat</strong> — aktifkan untuk target API-berat. Tiap probe tetap lewat proxy egress yang scope-enforced (sama seperti wordlist lain); non-destruktif.</p>
+    <p class="muted small">Adds ~thousands of real API paths (ordered by frequency) to the ffuf engine to find unlinked API endpoints (e.g. <code>/api/v1/…</code>, <code>/rest/…</code>). <strong>Large volume &amp; slower</strong> — enable it for API-heavy targets. Each probe still goes through the scope-enforced egress proxy (like any other wordlist); non-destructive.</p>
 
-    <label>Upstream proxy / rantai <span class="muted small">(opsional · satu hop per baris, urut; egress diteruskan SETELAH lolos scope guard)</span></label>
+    <label>Upstream proxy / chain <span class="muted small">(optional · one hop per line, in order; egress is forwarded AFTER it passes the scope guard)</span></label>
     <textarea name="upstream_proxy" rows="2" spellcheck="false" placeholder="http://127.0.0.1:8080&#10;socks5://127.0.0.1:9050">{{.UpstreamProxy}}</textarea>
 
-    <label>Sesi terautentikasi <span class="muted small">(opsional · scan di balik login · satu header "Nama: nilai" per baris)</span></label>
+    <label>Authenticated session <span class="muted small">(optional · scan behind a login · one "Name: value" header per line)</span></label>
     <textarea name="auth_headers" rows="2" spellcheck="false" autocomplete="off" placeholder="Cookie: session=...&#10;Authorization: Bearer ..."></textarea>
     {{if .HasSavedAuth}}
-    <label class="check"><input type="checkbox" name="use_saved_auth" value="1" {{if .UseSavedAuth}}checked{{end}}><span>Pakai sesi tersimpan program ini <span class="muted small">(terenkripsi di vault · kosongkan kotak di atas)</span></span></label>
+    <label class="check"><input type="checkbox" name="use_saved_auth" value="1" {{if .UseSavedAuth}}checked{{end}}><span>Use this program's saved session <span class="muted small">(encrypted in the vault · leave the box above empty)</span></span></label>
     {{end}}
-    <label class="check"><input type="checkbox" name="save_auth" value="1" {{if .SaveAuth}}checked{{end}}><span>Simpan sesi yang ditempel (terenkripsi) untuk program ini</span></label>
-    <label class="check"><input type="checkbox" name="auth_roe" value="1" {{if .AuthRoE}}checked{{end}}><span><strong>RoE:</strong> saya berwenang melakukan authenticated scan pada program ini</span></label>
-    <p class="muted small">Header disuntik ke tiap request engine (<code>-H</code>; ZAP lewat aturan Replacer) agar scan menjangkau konten di balik login. <strong>Nilai header tak pernah di-echo ke form, di-log, atau masuk report</strong> — diredaksi dari evidence sebelum disimpan. Header hanya menumpang request yang lolos scope guard; redirect ke luar-scope tetap ditolak egress. Route logout (logout, sign-out, logoff, …) <strong>dilewati</strong> semua engine &amp; crawler agar sesi tak mati di tengah scan — uji route itu lewat scan tanpa sesi. Centang RoE wajib saat sesi dipakai.</p>
+    <label class="check"><input type="checkbox" name="save_auth" value="1" {{if .SaveAuth}}checked{{end}}><span>Save the pasted session (encrypted) for this program</span></label>
+    <label class="check"><input type="checkbox" name="auth_roe" value="1" {{if .AuthRoE}}checked{{end}}><span><strong>RoE:</strong> I am authorized to run an authenticated scan on this program</span></label>
+    <p class="muted small">Headers are injected into every engine request (<code>-H</code>; ZAP through a Replacer rule) so the scan reaches content behind a login. <strong>The header value is never echoed to the form, logged, or put in a report</strong> — it is redacted from evidence before it is stored. The headers only ride on requests that pass the scope guard; a redirect out of scope is still denied at egress. Logout routes (logout, sign-out, logoff, …) are <strong>skipped</strong> by every engine &amp; crawler so the session does not die mid-scan — test those routes with a scan without a session. The RoE box is required when a session is used.</p>
 
     <div class="actions">
-      <button type="submit" class="btn primary">Jalankan scan</button>
-      <span class="muted small">tanpa auto-submit · report selalu draft</span>
+      <button type="submit" class="btn primary">Run scan</button>
+      <span class="muted small">no auto-submit · the report is always a draft</span>
     </div>
   </form>
 
   <div class="card">
-    <h2>Hasil</h2>
+    <h2>Result</h2>
     <div id="result">
       {{if .Result}}{{template "scan_result" .}}{{else}}
-      <p class="muted">Isi scope &amp; target, lalu jalankan scan. Scope guard akan menolak target di luar scope sebelum engine berjalan.</p>
+      <p class="muted">Fill in the scope &amp; targets, then run the scan. The scope guard will deny out-of-scope targets before the engines run.</p>
       {{end}}
     </div>
   </div>

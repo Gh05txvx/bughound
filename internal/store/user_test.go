@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// userStores mengembalikan satu Mem dan satu SQLite (file sementara) agar kontrak
-// UserStore diuji identik pada kedua implementasi.
+// userStores returns one Mem and one SQLite (a temporary file) so the UserStore
+// contract is tested identically on both implementations.
 func userStores(t *testing.T) map[string]UserStore {
 	t.Helper()
 	sq, err := OpenSQLite(filepath.Join(t.TempDir(), "users.db"))
@@ -24,14 +24,14 @@ func TestUserStoreCRUD(t *testing.T) {
 	for name, us := range userStores(t) {
 		t.Run(name, func(t *testing.T) {
 			if n, _ := us.CountUsers(ctx); n != 0 {
-				t.Fatalf("store baru harus 0 user, dapat %d", n)
+				t.Fatalf("a new store must have 0 users, got %d", n)
 			}
 			if err := us.CreateUser(ctx, User{Username: "alice", Role: "admin", PassHash: "h1"}); err != nil {
 				t.Fatalf("CreateUser: %v", err)
 			}
-			// Duplikat ditolak.
+			// Duplicates are rejected.
 			if err := us.CreateUser(ctx, User{Username: "alice", Role: "viewer", PassHash: "h2"}); !errors.Is(err, ErrUserExists) {
-				t.Fatalf("username duplikat harus ErrUserExists, dapat %v", err)
+				t.Fatalf("a duplicate username must be ErrUserExists, got %v", err)
 			}
 			if err := us.CreateUser(ctx, User{Username: "bob", Role: "operator", PassHash: "h3"}); err != nil {
 				t.Fatalf("CreateUser bob: %v", err)
@@ -42,23 +42,23 @@ func TestUserStoreCRUD(t *testing.T) {
 				t.Fatalf("GetUser alice = %+v, err=%v", u, err)
 			}
 			if u.Created.IsZero() {
-				t.Error("Created harus diisi otomatis")
+				t.Error("Created must be filled in automatically")
 			}
 
 			if n, _ := us.CountUsers(ctx); n != 2 {
-				t.Fatalf("ingin 2 user, dapat %d", n)
+				t.Fatalf("want 2 user, got %d", n)
 			}
 			list, _ := us.ListUsers(ctx)
 			if len(list) != 2 || list[0].Username != "alice" || list[1].Username != "bob" {
-				t.Fatalf("ListUsers urut salah: %+v", list)
+				t.Fatalf("wrong ListUsers order: %+v", list)
 			}
 
-			// SetPassword mengubah hash.
-			if err := us.SetPassword(ctx, "bob", "h3-baru"); err != nil {
+			// SetPassword changes the hash.
+			if err := us.SetPassword(ctx, "bob", "h3-new"); err != nil {
 				t.Fatalf("SetPassword: %v", err)
 			}
-			if u, _ := us.GetUser(ctx, "bob"); u.PassHash != "h3-baru" {
-				t.Errorf("SetPassword tak tersimpan: %q", u.PassHash)
+			if u, _ := us.GetUser(ctx, "bob"); u.PassHash != "h3-new" {
+				t.Errorf("SetPassword was not saved: %q", u.PassHash)
 			}
 
 			// Delete.
@@ -66,7 +66,7 @@ func TestUserStoreCRUD(t *testing.T) {
 				t.Fatalf("DeleteUser: %v", err)
 			}
 			if _, err := us.GetUser(ctx, "bob"); !errors.Is(err, ErrNotFound) {
-				t.Fatalf("user terhapus harus ErrNotFound, dapat %v", err)
+				t.Fatalf("a deleted user must be ErrNotFound, got %v", err)
 			}
 		})
 	}
@@ -77,13 +77,13 @@ func TestUserStoreMissing(t *testing.T) {
 	for name, us := range userStores(t) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := us.GetUser(ctx, "nope"); !errors.Is(err, ErrNotFound) {
-				t.Errorf("GetUser hilang = %v, ingin ErrNotFound", err)
+				t.Errorf("GetUser on a missing user = %v, want ErrNotFound", err)
 			}
 			if err := us.DeleteUser(ctx, "nope"); !errors.Is(err, ErrNotFound) {
-				t.Errorf("DeleteUser hilang = %v, ingin ErrNotFound", err)
+				t.Errorf("DeleteUser on a missing user = %v, want ErrNotFound", err)
 			}
 			if err := us.SetPassword(ctx, "nope", "x"); !errors.Is(err, ErrNotFound) {
-				t.Errorf("SetPassword hilang = %v, ingin ErrNotFound", err)
+				t.Errorf("SetPassword on a missing user = %v, want ErrNotFound", err)
 			}
 		})
 	}

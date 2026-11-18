@@ -4,8 +4,8 @@ import "strings"
 
 const redacted = "[REDACTED]"
 
-// sensitiveHeaders adalah header yang nilainya wajib disensor sebelum bukti
-// disimpan (BH-SPEC-FINDING: skema tidak pernah menyimpan secret mentah).
+// sensitiveHeaders are headers whose values must be redacted before evidence is
+// stored (BH-SPEC-FINDING: the schema never stores a raw secret).
 var sensitiveHeaders = map[string]bool{
 	"authorization":        true,
 	"proxy-authorization":  true,
@@ -21,9 +21,9 @@ var sensitiveHeaders = map[string]bool{
 	"authentication":       true,
 }
 
-// sanitizeHTTP menyensor nilai header sensitif dari teks HTTP mentah
-// (request/response), mempertahankan struktur baris agar bukti tetap terbaca.
-// Menangani akhiran baris "\n" maupun "\r\n".
+// sanitizeHTTP redacts sensitive header values from raw HTTP text
+// (request/response), keeping the line structure so the evidence stays readable.
+// Handles both "\n" and "\r\n" line endings.
 func sanitizeHTTP(text string) string {
 	if text == "" {
 		return ""

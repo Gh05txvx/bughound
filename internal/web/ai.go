@@ -1,16 +1,16 @@
 package web
 
-// Integrasi MCP/AI: menu web untuk memasukkan API key Claude (disimpan di vault
-// terenkripsi) + kartu what-if per temuan yang dihasilkan Claude API dan di-cache.
+// MCP/AI integration: the web menu for entering a Claude API key (stored in the
+// encrypted vault) + a per-finding what-if card produced by the Claude API and cached.
 //
-// Batas keamanan (prinsip mengikat BugHound):
-//   - API key = secret: via vault terenkripsi (scope "ai"), teredaksi, tak pernah
-//     ke log/report/commit, akses ter-audit otomatis oleh reveal-hook vault.
-//   - Egress ke api.anthropic.com = kontrol-plane opt-in + ter-audit, TERPISAH dari
-//     scope guard/proxy scan (lihat internal/aiassist). Hanya aktif bila key diisi.
-//   - Evidence discrub sebelum dikirim (aiassist.ScrubText).
-//   - Advisory: kartu = rencana validasi manual; eksekusi Burp tetap manual, tanpa
-//     auto-submit.
+// Security boundaries (BugHound's binding principles):
+//   - API key = secret: via the encrypted vault (scope "ai"), redacted, never
+//     written to a log/report/commit, access auto-audited by the vault reveal hook.
+//   - Egress to api.anthropic.com = an opt-in, audited control plane, SEPARATE from
+//     the scan scope guard/proxy (see internal/aiassist). Active only when a key is set.
+//   - Evidence is scrubbed before it is sent (aiassist.ScrubText).
+//   - Advisory: the card = a manual validation plan; Burp execution stays manual, with
+//     no auto-submit.
 
 import (
 	"context"
@@ -30,37 +30,37 @@ import (
 
 const (
 	aiSecretScope = "ai"
-	// Nama secret vault per provider. Anthropic memakai "api_key" (DIPERTAHANKAN
-	// agar key lama tetap terbaca); Groq terpisah agar keduanya bisa tersimpan.
+	// The vault secret name per provider. Anthropic uses "api_key" (KEPT so the old
+	// key still reads); Groq is separate so both can be stored.
 	aiKeyNameAnthropic = "api_key"
 	aiKeyNameGroq      = "groq_api_key"
 
-	aiProviderKey = "ai_provider" // setelan: provider aktif ("anthropic"|"groq")
-	// Setelan model per provider (terpisah agar ganti provider tak saling menimpa).
-	aiModelKeyAnthropic = "ai_model"      // DIPERTAHANKAN (backward-compat)
-	aiModelKeyGroq      = "ai_model_groq" // Groq model = teks bebas (ID cepat berubah)
+	aiProviderKey = "ai_provider" // setting: the active provider ("anthropic"|"groq")
+	// The model setting per provider (separate so switching provider does not overwrite the other).
+	aiModelKeyAnthropic = "ai_model"      // KEPT (backward-compat)
+	aiModelKeyGroq      = "ai_model_groq" // Groq model = free text (the ID changes often)
 
 	defaultModelAnthropic = "claude-sonnet-5-5"
-	defaultModelGroq      = "openai/gpt-oss-20b" // default masuk akal; dapat diganti (ID Groq sering berubah)
+	defaultModelGroq      = "openai/gpt-oss-20b" // a sensible default; replaceable (Groq IDs change often)
 
-	aiSafetyNote = "Non-destruktif saja (boolean/time ringan, baca-saja). Hormati rate-limit & RoE program. Eksekusi MANUAL di Burp Repeater — tanpa auto-submit."
+	aiSafetyNote = "Non-destructive only (light boolean/time, read-only). Respect the program rate limit & RoE. Run it MANUALLY in Burp Repeater — no auto-submit."
 )
 
-// aiModels adalah model Claude yang boleh dipilih (whitelist; ID Anthropic stabil).
-// Default = Sonnet (hemat, bisa diganti). Opus = penalaran terdalam.
+// aiModels is the Claude models that may be chosen (whitelist; Anthropic IDs are stable).
+// Default = Sonnet (cheap, replaceable). Opus = the deepest reasoning.
 var aiModels = []struct{ ID, Label string }{
-	{"claude-sonnet-5-5", "Claude Sonnet 5.5 — seimbang (hemat, default)"},
-	{"claude-opus-5-5", "Claude Opus 5.5 — penalaran terdalam (mahal)"},
-	{"claude-haiku-5-5", "Claude Haiku 5.5 — paling hemat & cepat"},
+	{"claude-sonnet-5-5", "Claude Sonnet 5.5, balanced (cheap, default)"},
+	{"claude-opus-5-5", "Claude Opus 5.5, deepest reasoning (expensive)"},
+	{"claude-haiku-5-5", "Claude Haiku 5.5, cheapest & fastest"},
 }
 
-// aiProviders = daftar provider yang dapat dipilih di setelan.
+// aiProviders = the providers that can be chosen in settings.
 var aiProviders = []struct {
 	ID    aiassist.Provider
 	Label string
 }{
-	{aiassist.ProviderAnthropic, "Anthropic (Claude) — berbayar, kualitas tinggi"},
-	{aiassist.ProviderGroq, "Groq — free-tier, model open (Llama/GPT-OSS), sangat cepat"},
+	{aiassist.ProviderAnthropic, "Anthropic (Claude), paid, high quality"},
+	{aiassist.ProviderGroq, "Groq, free tier, open models (Llama/GPT-OSS), very fast"},
 }
 
 func validAIModel(m string) bool {
@@ -72,9 +72,9 @@ func validAIModel(m string) bool {
 	return false
 }
 
-// looksLikeModelID menjaga model Groq (teks bebas) ke charset ID yang wajar —
-// huruf/angka/`-._/:` (mis. "openai/gpt-oss-20b", "llama-3.3-70b-versatile").
-// Mencegah injeksi/noise; ID yang sudah pensiun akan ditolak Groq dgn pesan jelas.
+// looksLikeModelID keeps the Groq model (free text) to a reasonable ID charset:
+// letters/digits/`-._/:` (e.g. "openai/gpt-oss-20b", "llama-3.3-70b-versatile").
+// It blocks injection/noise; a retired ID is rejected by Groq with a clear message.
 func looksLikeModelID(m string) bool {
 	m = strings.TrimSpace(m)
 	if m == "" || len(m) > 80 {
@@ -91,7 +91,7 @@ func looksLikeModelID(m string) bool {
 	return true
 }
 
-// aiProvider mengembalikan provider aktif dari setelan (default anthropic).
+// aiProvider returns the active provider from settings (default anthropic).
 func (s *Server) aiProvider(ctx context.Context) aiassist.Provider {
 	if s.aistore != nil {
 		if v, _ := s.aistore.GetSetting(ctx, aiProviderKey); v == string(aiassist.ProviderGroq) {
@@ -122,8 +122,8 @@ func defaultModelFor(p aiassist.Provider) string {
 	return defaultModelAnthropic
 }
 
-// validModelFor memvalidasi model sesuai provider: whitelist utk Anthropic,
-// charset ID bebas utk Groq (daftarnya cepat berubah).
+// validModelFor validates the model against the provider: a whitelist for Anthropic,
+// a free ID charset for Groq (its list changes fast).
 func validModelFor(p aiassist.Provider, m string) bool {
 	if p == aiassist.ProviderGroq {
 		return looksLikeModelID(m)
@@ -131,9 +131,9 @@ func validModelFor(p aiassist.Provider, m string) bool {
 	return validAIModel(m)
 }
 
-// ---- helper konfigurasi ----
+// ---- configuration helpers ----
 
-// aiKeyPresent melapor apakah key provider AKTIF terpasang.
+// aiKeyPresent reports whether the ACTIVE provider's key is set.
 func (s *Server) aiKeyPresent(ctx context.Context) bool {
 	return s.aiKeyMeta(ctx, aiKeyNameFor(s.aiProvider(ctx))).present
 }
@@ -143,7 +143,7 @@ type aiKeyMeta struct {
 	updated string
 }
 
-// aiKeyMeta mencari status satu secret (per nama) di vault scope "ai".
+// aiKeyMeta looks up the status of one secret (per name) in the "ai" scope vault.
 func (s *Server) aiKeyMeta(ctx context.Context, name string) aiKeyMeta {
 	if s.vault == nil {
 		return aiKeyMeta{}
@@ -164,13 +164,13 @@ func (s *Server) aiKeyMeta(ctx context.Context, name string) aiKeyMeta {
 	return aiKeyMeta{}
 }
 
-// aiReady melaporkan apakah fitur AI siap dipakai (store mendukung + vault ada +
-// key terpasang).
+// aiReady reports whether the AI feature is ready to use (store supports it + vault present +
+// key set).
 func (s *Server) aiReady(ctx context.Context) bool {
 	return s.aistore != nil && s.vault != nil && s.aiKeyPresent(ctx)
 }
 
-// aiModel mengembalikan model untuk provider AKTIF (validasi per provider).
+// aiModel returns the model for the ACTIVE provider (validated per provider).
 func (s *Server) aiModel(ctx context.Context) string {
 	return s.aiModelFor(ctx, s.aiProvider(ctx))
 }
@@ -184,8 +184,8 @@ func (s *Server) aiModelFor(ctx context.Context, p aiassist.Provider) string {
 	return defaultModelFor(p)
 }
 
-// aiLock memberi satu lock per temuan agar dua pembukaan bersamaan tak memicu dua
-// panggilan Claude (hindari double-bill).
+// aiLock gives one lock per finding so two concurrent opens do not trigger two
+// Claude calls (avoiding a double bill).
 func (s *Server) aiLock(id string) func() {
 	actual, _ := s.aiGen.LoadOrStore(id, &sync.Mutex{})
 	mu := actual.(*sync.Mutex)
@@ -211,18 +211,18 @@ func aiInputFrom(f *finding.Finding) aiassist.Input {
 	return in
 }
 
-// ---- Halaman setelan MCP/AI ----
+// ---- MCP/AI settings page ----
 
 type aiSettingsData struct {
-	Nav, Title, Program, CSRF string // Program dipakai base.html (nav) — selalu kosong di sini
-	Available                 bool   // store+vault mendukung
-	Provider                  string // provider aktif ("anthropic"|"groq")
+	Nav, Title, Program, CSRF string // Program is used by base.html (nav) — always empty here
+	Available                 bool   // store+vault support it
+	Provider                  string // the active provider ("anthropic"|"groq")
 	Providers                 []aiProviderView
 	// Anthropic (model = dropdown whitelist)
 	AnthropicKeyPresent bool
 	AnthropicKeyUpdated string
 	AnthropicModels     []aiModelView
-	// Groq (model = teks bebas; ID cepat berubah)
+	// Groq (model = free text; the ID changes fast)
 	GroqKeyPresent bool
 	GroqKeyUpdated string
 	GroqModel      string
@@ -252,7 +252,7 @@ func (s *Server) aiSettingsData(r *http.Request) aiSettingsData {
 	for _, p := range aiProviders {
 		d.Providers = append(d.Providers, aiProviderView{ID: string(p.ID), Label: p.Label, Selected: p.ID == active})
 	}
-	// Anthropic model dropdown (selalu tunjukkan model Anthropic tersimpan).
+	// Anthropic model dropdown (always show the stored Anthropic model).
 	anthModel := s.aiModelFor(ctx, aiassist.ProviderAnthropic)
 	for _, m := range aiModels {
 		d.AnthropicModels = append(d.AnthropicModels, aiModelView{ID: m.ID, Label: m.Label, Selected: m.ID == anthModel})
@@ -276,17 +276,17 @@ func (s *Server) handleAISettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAISettingsSave(w http.ResponseWriter, r *http.Request) {
 	if s.aistore == nil || s.vault == nil {
-		http.Error(w, "fitur AI tak tersedia (store/vault tidak dikonfigurasi)", http.StatusServiceUnavailable)
+		http.Error(w, "the AI feature is not available (store/vault not configured)", http.StatusServiceUnavailable)
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "form tidak valid", http.StatusBadRequest)
+		http.Error(w, "invalid form", http.StatusBadRequest)
 		return
 	}
 	ctx := r.Context()
 	me, _ := s.currentUser(r)
 
-	// Provider aktif.
+	// The active provider.
 	provider := aiassist.ProviderAnthropic
 	if r.FormValue("provider") == string(aiassist.ProviderGroq) {
 		provider = aiassist.ProviderGroq
@@ -296,7 +296,7 @@ func (s *Server) handleAISettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Model per provider (simpan masing-masing bila valid; biarkan jika kosong).
+	// The model per provider (store each one if valid; leave it if empty).
 	anthModel := strings.TrimSpace(r.FormValue("anthropic_model"))
 	if !validAIModel(anthModel) {
 		anthModel = defaultModelAnthropic
@@ -312,7 +312,7 @@ func (s *Server) handleAISettingsSave(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Key per provider — opsional: kosong = pertahankan yang ada.
+	// The key per provider — optional: empty = keep the existing one.
 	saveKey := func(field, name, label string) bool {
 		key := strings.TrimSpace(r.FormValue(field))
 		if key == "" {
@@ -323,7 +323,7 @@ func (s *Server) handleAISettingsSave(w http.ResponseWriter, r *http.Request) {
 			return false
 		}
 		s.auditAppend(ctx, audit.Event{Kind: "ai.key.set", Allowed: true,
-			Message: fmt.Sprintf("%s menyimpan API key %s (terenkripsi di vault)", me, label)})
+			Message: fmt.Sprintf("%s saved the %s API key (encrypted in the vault)", me, label)})
 		return true
 	}
 	if !saveKey("anthropic_api_key", aiKeyNameAnthropic, "Anthropic") {
@@ -334,16 +334,16 @@ func (s *Server) handleAISettingsSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.auditAppend(ctx, audit.Event{Kind: "ai.config", Allowed: true,
-		Message: fmt.Sprintf("%s mengatur provider AI = %s (model anthropic=%s, groq=%s)", me, provider, anthModel, s.aiModelFor(ctx, aiassist.ProviderGroq))})
+		Message: fmt.Sprintf("%s set the AI provider = %s (model anthropic=%s, groq=%s)", me, provider, anthModel, s.aiModelFor(ctx, aiassist.ProviderGroq))})
 	http.Redirect(w, r, "/ai/settings?saved=1", http.StatusSeeOther)
 }
 
 func (s *Server) handleAIKeyDelete(w http.ResponseWriter, r *http.Request) {
 	if s.vault == nil {
-		http.Error(w, "vault tidak dikonfigurasi", http.StatusServiceUnavailable)
+		http.Error(w, "vault not configured", http.StatusServiceUnavailable)
 		return
 	}
-	// Hapus key provider yang diminta (default anthropic untuk kompatibilitas).
+	// Delete the requested provider's key (default anthropic for compatibility).
 	provider, label := aiassist.ProviderAnthropic, "Anthropic"
 	if r.FormValue("provider") == string(aiassist.ProviderGroq) {
 		provider, label = aiassist.ProviderGroq, "Groq"
@@ -351,11 +351,11 @@ func (s *Server) handleAIKeyDelete(w http.ResponseWriter, r *http.Request) {
 	_ = s.vault.Delete(r.Context(), aiSecretScope, aiKeyNameFor(provider))
 	me, _ := s.currentUser(r)
 	s.auditAppend(r.Context(), audit.Event{Kind: "ai.key.delete", Allowed: true,
-		Message: fmt.Sprintf("%s menghapus API key %s dari vault", me, label)})
+		Message: fmt.Sprintf("%s deleted the %s API key from the vault", me, label)})
 	http.Redirect(w, r, "/ai/settings?saved=1", http.StatusSeeOther)
 }
 
-// ---- Kartu what-if per temuan ----
+// ---- Per-finding what-if card ----
 
 type aiTargetView struct {
 	Method, URL, Parameter, ParamLocation string
@@ -364,9 +364,9 @@ type aiTargetView struct {
 type aiCardData struct {
 	FindingID     string
 	CSRF          string
-	Ready         bool // AI terkonfigurasi & bisa dipakai
-	NotConfigured bool // tampilkan ajakan konfigurasi
-	CanConfig     bool // pengguna admin → tampilkan tautan /ai/settings
+	Ready         bool // AI configured & usable
+	NotConfigured bool // show the configuration prompt
+	CanConfig     bool // admin user → show the /ai/settings link
 	Provider      string
 	Model         string
 	Target        aiTargetView
@@ -388,7 +388,7 @@ func (s *Server) handleAIFindingRegen(w http.ResponseWriter, r *http.Request) { 
 func (s *Server) renderAICard(w http.ResponseWriter, r *http.Request, force bool) {
 	f, err := s.store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		http.Error(w, "temuan tidak ditemukan", http.StatusNotFound)
+		http.Error(w, "finding not found", http.StatusNotFound)
 		return
 	}
 	_, role := s.currentUser(r)
@@ -429,7 +429,7 @@ func (s *Server) renderAICard(w http.ResponseWriter, r *http.Request, force bool
 		}
 	}
 
-	// Satu panggilan in-flight per temuan; re-cek cache setelah dapat lock.
+	// One in-flight call per finding; re-check the cache after taking the lock.
 	unlock := s.aiLock(f.ID)
 	defer unlock()
 	if !force {
@@ -447,7 +447,7 @@ func (s *Server) renderAICard(w http.ResponseWriter, r *http.Request, force bool
 		return
 	}
 	an, aerr := aiassist.NewClientFor(provider, model).Analyze(r.Context(), string(key), in)
-	for i := range key { // nolkan material key secepatnya
+	for i := range key { // zero the key material as soon as possible
 		key[i] = 0
 	}
 	if aerr != nil {
@@ -463,13 +463,13 @@ func (s *Server) renderAICard(w http.ResponseWriter, r *http.Request, force bool
 	}
 	me, _ := s.currentUser(r)
 	s.auditAppend(r.Context(), audit.Event{Kind: "ai.analyze", Program: f.Program, Allowed: true,
-		Message: fmt.Sprintf("%s membuat analisis AI temuan %s via %s/%s", me, f.ID, provider, model)})
+		Message: fmt.Sprintf("%s generated the AI analysis of finding %s via %s/%s", me, f.ID, provider, model)})
 	data.Analysis = &an
 	data.GeneratedAt = time.Now().UTC().Format("2006-01-02 15:04Z")
 	s.renderPartial(w, r, "ai", "ai_card", data)
 }
 
-// aiCached mengembalikan analisis cache yang masih valid (hash+model cocok).
+// aiCached returns a cached analysis that is still valid (hash+model match).
 func (s *Server) aiCached(ctx context.Context, id, fp, model string) (*aiassist.Analysis, string, bool) {
 	cached, err := s.aistore.GetAIAnalysis(ctx, id)
 	if err != nil || cached.SourceHash != fp || cached.Model != model {

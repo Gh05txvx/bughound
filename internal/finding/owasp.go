@@ -2,16 +2,16 @@ package finding
 
 import "strings"
 
-// OWASP adalah kategori OWASP Top 10 2021 hasil klasifikasi sebuah temuan.
-// Field ini ADITIF terhadap `type` native (yang tetap lebih presisi dan jadi
-// basis dedup); tujuannya pengelompokan/korelasi lintas-engine untuk report
-// yang siap-submit. Klasifikasi bersifat BEST-EFFORT (sinyal berurut: CWE, lalu
-// kata kunci di tags/type) — bukan penilaian otoritatif; verifikator berhak
-// menimpanya.
+// OWASP is the OWASP Top 10 2021 category a finding was classified into. The
+// field is ADDITIVE to the native `type` (which stays more precise and is the
+// basis for dedup); its purpose is grouping and cross-engine correlation for a
+// report that is ready to submit. Classification is BEST EFFORT (signals in
+// order: CWE, then keywords in tags/type) and is not an authoritative
+// assessment; the verifier may override it.
 type OWASP string
 
 const (
-	OWASPNone OWASP = ""         // belum/tak terklasifikasi
+	OWASPNone OWASP = ""         // not classified (yet)
 	A01       OWASP = "A01:2021" // Broken Access Control
 	A02       OWASP = "A02:2021" // Cryptographic Failures
 	A03       OWASP = "A03:2021" // Injection
@@ -37,11 +37,11 @@ var owaspTitle = map[OWASP]string{
 	A10: "Server-Side Request Forgery (SSRF)",
 }
 
-// Title mengembalikan judul kategori (kosong bila OWASPNone/tak dikenal).
+// Title returns the category title (empty for OWASPNone or an unknown value).
 func (o OWASP) Title() string { return owaspTitle[o] }
 
-// Label mengembalikan "A05:2021 Security Misconfiguration" untuk ditampilkan;
-// kosong bila OWASPNone.
+// Label returns "A05:2021 Security Misconfiguration" for display; empty for
+// OWASPNone.
 func (o OWASP) Label() string {
 	if o == OWASPNone {
 		return ""
@@ -52,12 +52,12 @@ func (o OWASP) Label() string {
 	return string(o)
 }
 
-// Valid melaporkan apakah o kategori yang dikenal (atau kosong).
+// Valid reports whether o is a known category (or empty).
 func (o OWASP) Valid() bool { return o == OWASPNone || owaspTitle[o] != "" }
 
-// ClassifyOWASP menebak kategori OWASP 2021 sebuah temuan dari sinyal yang ada,
-// berurutan: (1) CWE (paling kuat), (2) kata kunci di tags lalu type. Best-effort:
-// mengembalikan OWASPNone bila tak ada yang cocok.
+// ClassifyOWASP guesses a finding's OWASP 2021 category from the signals it
+// has, in order: (1) CWE (the strongest), (2) keywords in tags, then type. Best
+// effort: it returns OWASPNone when nothing matches.
 func ClassifyOWASP(f *Finding) OWASP {
 	if c := owaspFromCWE(f.CWE); c != OWASPNone {
 		return c
@@ -66,8 +66,8 @@ func ClassifyOWASP(f *Finding) OWASP {
 	return owaspFromKeywords(hay)
 }
 
-// owaspFromCWE memetakan CWE umum (yang benar-benar dipancarkan adapter) ke
-// kategori OWASP 2021. Kuratif (bukan 900+ CWE), berdasar pemetaan resmi OWASP.
+// owaspFromCWE maps common CWEs (the ones adapters actually emit) to an OWASP
+// 2021 category. Curated (not all 900+ CWEs), based on OWASP's official mapping.
 func owaspFromCWE(cwes []string) OWASP {
 	for _, raw := range cwes {
 		n := strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(raw)), "CWE-")
@@ -112,9 +112,9 @@ var cweOWASP = map[string]OWASP{
 	"918": A10,
 }
 
-// owaspFromKeywords memindai string (gabungan tags+type, huruf kecil) untuk kata
-// kunci kelas kerentanan, dari yang paling spesifik ke paling umum (misconfig
-// paling akhir karena paling luas). Best-effort.
+// owaspFromKeywords scans a string (tags+type joined, lowercase) for
+// vulnerability class keywords, from the most specific to the most general
+// (misconfig comes last because it is the broadest). Best effort.
 func owaspFromKeywords(hay string) OWASP {
 	has := func(subs ...string) bool {
 		for _, s := range subs {

@@ -14,42 +14,42 @@ import (
 	"golang.org/x/net/publicsuffix"
 )
 
-// Importer mengonversi data scope platform (HackerOne, Bugcrowd) ke entri
-// kanonik BH-SPEC-SCOPE. Ia hanya MENGHASILKAN TEKS: tak mengambil keputusan
-// (itu tugas Guard) dan tak menyimpan apa pun — hasilnya mengisi form scope
-// editor untuk ditinjau, lalu lewat jalur simpan biasa.
+// Importer converts platform scope data (HackerOne, Bugcrowd) into canonical
+// BH-SPEC-SCOPE entries. It only PRODUCES TEXT: it makes no decision
+// (that is the Guard's job) and stores nothing. The result fills the scope
+// editor form for review, then goes through the ordinary save path.
 //
-// Data platform ditulis pihak ketiga dan bentuknya lebih longgar dari bahasa
-// scope bughound. Saat sebuah aset tak bisa diwakili persis, arah pembulatannya
-// wajib aman. INVARIAN inti berkas ini:
+// Platform data is written by a third party and its form is looser than
+// bughound's scope language. When an asset cannot be represented exactly, the
+// rounding direction must be safe. The core INVARIANTS of this file:
 //
-//   - In-scope hanya boleh MENYEMPIT: ragu = tak diimpor; default deny menutupnya.
-//   - Out-of-scope hanya boleh MELEBAR: ragu = diperluas. Eksklusi yang tak bisa
-//     diwakili sama sekali masuk Unresolved dan menahan impor sampai ditinjau,
-//     karena eksklusi yang hilang berarti under-blocking.
+//   - In-scope may only NARROW: in doubt = not imported; default deny covers it.
+//   - Out-of-scope may only WIDEN: in doubt = widened. An exclusion that cannot
+//     be represented at all goes to Unresolved and holds the import until reviewed,
+//     because a missing exclusion means under-blocking.
 //
-// "Lolos parseEntry" belum berarti layak dari data pihak ketiga: "all" dan
-// "localhost" sah untuk scope tulisan tangan (lab), tapi pada daftar program publik
-// itu teks bebas. Karena itu hasil parseEntry diperiksa lagi, lalu keluaran ditulis
-// ulang dari field entri ternormalkan, bukan dari string platform.
+// "Passes parseEntry" does not yet mean acceptable from third-party data: "all" and
+// "localhost" are valid for a hand-written scope (a lab), but on a public program
+// list they are free text. So the parseEntry result is checked again, then the output
+// is rewritten from the normalized entry fields, not from the platform string.
 
-// MaxImportBytes menjaga sumber daya, bukan menyaring dump platform (itu ditolak
-// dari bentuknya). Program besar nyata mencapai ~1,3 MiB (5 ribu aset). Form
-// dibatasi 10 MiB oleh net/http dan urlencode melebarkan data ~1,35x, jadi batas
-// ini masih muat dalam satu POST.
+// MaxImportBytes guards resources, it does not filter a platform dump (that is rejected
+// by its form). A real large program reaches ~1.3 MiB (5 thousand assets). The form
+// is capped at 10 MiB by net/http and urlencode widens the data ~1.35x, so this limit
+// still fits in one POST.
 const MaxImportBytes = 4 << 20
 
 const (
-	minBitsV4 = 8  // CIDR in-scope lebih lebar dari ini ditolak (bukan aset satu program)
-	minBitsV6 = 32 // setara alokasi RIR umum
+	minBitsV4 = 8  // an in-scope CIDR wider than this is rejected (not one program's asset)
+	minBitsV6 = 32 // matches a common RIR allocation
 	maxNote   = 300
 )
 
-// nonPublicPrefixes adalah rentang yang tak boleh masuk in-scope lewat impor.
-// Mencerminkan egress.isSpecialIP (IP internal hanya boleh bila EKSPLISIT
-// in-scope), ditambah 0.0.0.0/8 dan CGNAT. Data pihak ketiga tak boleh membuka
-// metadata cloud atau jaringan internal; bila memang sengaja, pengguna
-// menuliskannya sendiri. Paket scope tak bisa mengimpor egress (siklus).
+// nonPublicPrefixes are ranges that must not enter in-scope through an import.
+// It mirrors egress.isSpecialIP (an internal IP is allowed only when EXPLICITLY
+// in-scope), plus 0.0.0.0/8 and CGNAT. Third-party data must not open cloud
+// metadata or an internal network; if it is intentional, the user writes it
+// themselves. The scope package cannot import egress (a cycle).
 var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("10.0.0.0/8"),
@@ -66,50 +66,50 @@ var nonPublicPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("ff00::/8"),
 }
 
-// ImportItem adalah satu aset platform yang perlu dilihat pengguna.
+// ImportItem is one platform asset the user needs to see.
 type ImportItem struct {
-	Asset  string // identifier apa adanya dari platform
-	Type   string // tipe aset menurut platform
-	Detail string // alasan, hasil konversi, atau instruksi program
+	Asset  string // the identifier as-is from the platform
+	Type   string // the asset type per the platform
+	Detail string // the reason, conversion result, or program instruction
 }
 
-// ImportResult adalah hasil konversi data platform.
+// ImportResult is the result of converting platform data.
 type ImportResult struct {
-	Format   string   // format yang terdeteksi
-	Digest   string   // sidik jari input; persetujuan Unresolved terikat ke sini
-	InScope  []string // entri kanonik
-	OutScope []string // entri kanonik
+	Format   string   // the detected format
+	Digest   string   // input fingerprint; the Unresolved agreement is bound to this
+	InScope  []string // canonical entries
+	OutScope []string // canonical entries
 
-	Unresolved []ImportItem // eksklusi tak terwakili: wajib ditinjau sebelum impor
-	Shadowed   []ImportItem // in-scope yang tertimpa eksklusi: guard akan menolaknya
-	Widened    []ImportItem // eksklusi yang sengaja diperluas agar tetap efektif
-	Skipped    []ImportItem // in-scope yang tak diimpor & aset non-web
-	Notes      []ImportItem // instruksi program untuk aset in-scope
+	Unresolved []ImportItem // unrepresentable exclusions: must be reviewed before import
+	Shadowed   []ImportItem // in-scope overridden by an exclusion: the guard will deny it
+	Widened    []ImportItem // exclusions deliberately widened so they stay effective
+	Skipped    []ImportItem // in-scope not imported & non-web assets
+	Notes      []ImportItem // program instructions for an in-scope asset
 }
 
-// ImportPlatform mendeteksi format data lalu mengonversinya. Error berarti data
-// tak bisa dipercaya sebagai daftar scope utuh (format tak dikenal, terpotong,
-// lebih dari satu program): tak ada hasil parsial, fail closed.
+// ImportPlatform detects the data format, then converts it. An error means the data
+// cannot be trusted as a complete scope list (unknown format, truncated,
+// more than one program): no partial result, fail closed.
 func ImportPlatform(raw string) (ImportResult, error) {
 	if len(raw) > MaxImportBytes {
-		return ImportResult{}, fmt.Errorf("data melebihi batas %d KiB: tempel satu program saja", MaxImportBytes>>10)
+		return ImportResult{}, fmt.Errorf("data exceeds the %d KiB limit: paste a single program only", MaxImportBytes>>10)
 	}
 	s := strings.TrimSpace(strings.TrimPrefix(strings.ReplaceAll(raw, "\r\n", "\n"), "\xef\xbb\xbf"))
 	if s == "" {
-		return ImportResult{}, errors.New("data kosong")
+		return ImportResult{}, errors.New("empty data")
 	}
 	format, assets, err := parseAssets(s)
 	if err != nil {
 		return ImportResult{}, err
 	}
 	if len(assets) == 0 {
-		return ImportResult{}, errors.New("data tak memuat aset")
+		return ImportResult{}, errors.New("data holds no assets")
 	}
 	sum := sha256.Sum256([]byte(s))
 	res := ImportResult{Format: format, Digest: hex.EncodeToString(sum[:16])}
 
-	// In-scope lebih dulu: apex turunan eksklusi wildcard perlu tahu host mana
-	// yang eksplisit diizinkan program.
+	// In-scope first: the derived apex of a wildcard exclusion needs to know which host
+	// the program explicitly allows.
 	inHosts := map[string]bool{}
 	for _, a := range assets {
 		if a.inScope {
@@ -124,16 +124,16 @@ func ImportPlatform(raw string) (ImportResult, error) {
 	res.InScope = dedupe(res.InScope)
 	res.OutScope = dedupe(res.OutScope)
 
-	// Gerbang terakhir: keluaran wajib lolos kompilasi guard yang sama.
+	// Final gate: the output must pass the same guard compilation.
 	g, errs := New(res.InScope, res.OutScope)
 	if len(errs) > 0 {
-		return ImportResult{}, fmt.Errorf("hasil konversi ditolak guard: %w", errs[0])
+		return ImportResult{}, fmt.Errorf("the conversion result was rejected by the guard: %w", errs[0])
 	}
-	// Pola lazim "www.x in-scope, *.x out-of-scope": out-of-scope menang, jadi
-	// entri itu mati. Arahnya aman, tapi pengguna perlu tahu.
+	// The common pattern "www.x in-scope, *.x out-of-scope": out-of-scope wins, so
+	// that entry is dead. The direction is safe, but the user needs to know.
 	for _, s := range res.InScope {
 		if d := g.Evaluate(s); d.Reason == ReasonOutOfScope {
-			res.Shadowed = append(res.Shadowed, ImportItem{Asset: s, Detail: "ditolak oleh " + d.MatchedEntry})
+			res.Shadowed = append(res.Shadowed, ImportItem{Asset: s, Detail: "denied by " + d.MatchedEntry})
 		}
 	}
 	return res, nil
@@ -142,10 +142,10 @@ func ImportPlatform(raw string) (ImportResult, error) {
 func (r *ImportResult) addIn(a platformAsset, inHosts map[string]bool) {
 	switch classifyAsset(a.assetType) {
 	case classNonWeb:
-		r.Skipped = append(r.Skipped, a.item("aset non-web: bukan target DAST"))
+		r.Skipped = append(r.Skipped, a.item("non-web asset: not a DAST target"))
 		return
 	case classOther:
-		r.Skipped = append(r.Skipped, a.item("tipe ini tak ditebak; tambahkan manual bila memang aset web"))
+		r.Skipped = append(r.Skipped, a.item("this type is not guessed; add it manually if it is really a web asset"))
 		return
 	}
 	entries, err := convertIn(a.identifier)
@@ -166,17 +166,17 @@ func (r *ImportResult) addIn(a platformAsset, inHosts map[string]bool) {
 
 func (r *ImportResult) addOut(a platformAsset, inHosts map[string]bool) {
 	if classifyAsset(a.assetType) == classNonWeb {
-		r.Skipped = append(r.Skipped, a.item("aset non-web: bukan target DAST"))
+		r.Skipped = append(r.Skipped, a.item("non-web asset: not a DAST target"))
 		return
 	}
-	// Tipe OTHER/tak dikenal tetap dicoba: menambah eksklusi selalu arah aman.
+	// OTHER/unknown types are still attempted: adding an exclusion is always the safe direction.
 	ex, err := convertOut(a.identifier)
 	if err != nil {
 		r.Unresolved = append(r.Unresolved, a.item(err.Error()))
 		return
 	}
-	// Apex turunan tak boleh menimpa host yang eksplisit diizinkan program
-	// (pola sah: "acme.io" in-scope, "*.acme.io" out-of-scope).
+	// A derived apex must not override a host the program explicitly allows
+	// (valid pattern: "acme.io" in-scope, "*.acme.io" out-of-scope).
 	for _, apex := range ex.apexes {
 		if !inHosts[apex] {
 			ex.entries = append(ex.entries, apex)
@@ -189,14 +189,14 @@ func (r *ImportResult) addOut(a platformAsset, inHosts map[string]bool) {
 	}
 }
 
-// ---- Klasifikasi tipe aset ----
+// ---- Asset type classification ----
 
 type assetClass int
 
 const (
-	classWeb    assetClass = iota // target jaringan
-	classNonWeb                   // mobile, source, hardware: bukan target DAST
-	classOther                    // OTHER & tipe tak dikenal: jangan ditebak
+	classWeb    assetClass = iota // network target
+	classNonWeb                   // mobile, source, hardware: not a DAST target
+	classOther                    // OTHER & unknown types: do not guess
 )
 
 func classifyAsset(assetType string) assetClass {
@@ -211,27 +211,27 @@ func classifyAsset(assetType string) assetClass {
 	return classOther
 }
 
-// ---- Konversi identifier ----
+// ---- Identifier conversion ----
 
-// ident adalah identifier platform yang dipecah, belum ditafsirkan.
+// ident is a split platform identifier, not yet interpreted.
 type ident struct {
-	scheme string // huruf kecil, "" bila tak ada
-	host   string // host[:port], boleh memuat '*'
-	path   string // tanpa query/fragment, "" bila tak ada
-	extra  bool   // ada userinfo/query/fragment yang tak terwakili entri scope
+	scheme string // lowercase, "" if absent
+	host   string // host[:port], may contain '*'
+	path   string // without query/fragment, "" if absent
+	extra  bool   // has userinfo/query/fragment not representable as a scope entry
 }
 
 func splitIdent(raw string) (ident, error) {
 	s := strings.TrimSpace(raw)
 	if s == "" {
-		return ident{}, errors.New("identifier kosong")
+		return ident{}, errors.New("empty identifier")
 	}
 	if hasSuspiciousChars(s) {
-		return ident{}, errors.New("teks bebas, bukan host/URL")
+		return ident{}, errors.New("free text, not a host/URL")
 	}
 	var id ident
-	// Query/fragment dipotong lebih dulu: "://" di dalamnya bukan skema, dan
-	// "a.io#@evil.com" harus tetap ber-host a.io seperti tafsir browser.
+	// Query/fragment is trimmed first: a "://" inside it is not a scheme, and
+	// "a.io#@evil.com" must still have host a.io like a browser reads it.
 	if i := strings.IndexAny(s, "?#"); i >= 0 {
 		s, id.extra = s[:i], true
 	}
@@ -245,15 +245,15 @@ func splitIdent(raw string) (ident, error) {
 		s, id.extra = s[i+1:], true
 	}
 	if s == "" {
-		return ident{}, errors.New("identifier tanpa host")
+		return ident{}, errors.New("identifier without a host")
 	}
 	id.host = s
 	return id, nil
 }
 
-// splitHostList memecah daftar host dipisah koma ("a.io,b.io") yang lazim di data
-// platform. Identifier ber-path tak dipecah: koma di path bukan pemisah, dan
-// menebaknya bisa melahirkan host in-scope palsu.
+// splitHostList splits a comma-separated host list ("a.io,b.io") common in platform
+// data. An identifier with a path is not split: a comma in a path is not a separator, and
+// guessing could create a false in-scope host.
 func splitHostList(raw string) []string {
 	parts := strings.Split(raw, ",")
 	for i, p := range parts {
@@ -266,8 +266,8 @@ func splitHostList(raw string) []string {
 	return parts
 }
 
-// convertIn mengonversi aset in-scope. Hanya menyempit: apa pun yang tak bisa
-// diwakili tanpa melebar dikembalikan sebagai error.
+// convertIn converts an in-scope asset. Narrowing only: anything that cannot
+// be represented without widening is returned as an error.
 func convertIn(raw string) ([]string, error) {
 	parts := splitHostList(raw)
 	out := make([]string, 0, len(parts))
@@ -287,15 +287,15 @@ func convertOneIn(raw string) (string, error) {
 		return "", err
 	}
 	if id.extra {
-		return "", errors.New("memuat userinfo/query/fragment: mengimpornya berarti memperluas in-scope")
+		return "", errors.New("holds userinfo/query/fragment: importing it would widen in-scope")
 	}
 	if id.scheme != "" && id.scheme != "http" && id.scheme != "https" {
-		return "", fmt.Errorf("skema %q bukan web", id.scheme)
+		return "", fmt.Errorf("scheme %q is not web", id.scheme)
 	}
-	// "/x/*" setara prefix "/x"; "*" lain di path tak punya padanan.
+	// "/x/*" equals prefix "/x"; another "*" in the path has no equivalent.
 	path := strings.TrimSuffix(id.path, "/*")
 	if strings.ContainsAny(path, "*%") {
-		return "", errors.New("pola/encoding di path tak punya padanan entri scope")
+		return "", errors.New("a pattern/encoding in the path has no scope-entry equivalent")
 	}
 	if path == "/" {
 		path = ""
@@ -303,20 +303,20 @@ func convertOneIn(raw string) (string, error) {
 	cand := id.host + path
 	if strings.Contains(id.host, "*") {
 		if path != "" {
-			return "", errors.New("wildcard + path tak punya padanan entri scope")
+			return "", errors.New("wildcard + path has no scope-entry equivalent")
 		}
 	} else if id.scheme != "" {
 		cand = id.scheme + "://" + cand
 	}
 	e, err := parseEntry(cand)
 	if err != nil {
-		return "", errors.New("bentuk tak didukung entri scope")
+		return "", errors.New("form not supported as a scope entry")
 	}
-	// URL ber-host IP disamakan ke entri IP agar cek IP publik berlaku. Path pada
-	// host IP tak diimpor: keluaran kanonik tak memuat skema yang diwajibkannya.
+	// A URL with an IP host is treated as an IP entry so the public-IP check applies. A path on
+	// an IP host is not imported: the canonical output holds no scheme, which it would require.
 	if a, ok := urlHostIP(e); ok {
 		if e.path != "/" {
-			return "", errors.New("path pada host IP tak punya padanan entri scope")
+			return "", errors.New("a path on an IP host has no scope-entry equivalent")
 		}
 		e = entry{kind: kindIP, addr: a, port: e.port}
 	}
@@ -330,20 +330,20 @@ func convertOneIn(raw string) (string, error) {
 	return s, nil
 }
 
-// checkInScope menolak entri yang sah secara sintaks tapi tak layak diterima
-// dari data pihak ketiga.
+// checkInScope rejects an entry that is syntactically valid but not acceptable
+// from third-party data.
 func checkInScope(e entry) error {
 	switch e.kind {
 	case kindHostExact, kindURLPrefix:
 		return checkPublicHost(e.host)
 	case kindWildcard:
 		if _, err := publicsuffix.EffectiveTLDPlusOne(e.base); err != nil {
-			return errors.New("wildcard terlalu lebar: mencakup seluruh suffix publik")
+			return errors.New("wildcard too wide: covers an entire public suffix")
 		}
 		return checkPublicHost(e.base)
 	case kindIP:
 		if !publicAddr(e.addr) {
-			return errors.New("IP non-publik: tambahkan manual bila memang sengaja")
+			return errors.New("non-public IP: add it manually if it is intentional")
 		}
 	case kindCIDR:
 		minBits := minBitsV4
@@ -351,29 +351,29 @@ func checkInScope(e entry) error {
 			minBits = minBitsV6
 		}
 		if e.cidr.Bits() < minBits {
-			return errors.New("rentang CIDR terlalu lebar")
+			return errors.New("CIDR range too wide")
 		}
 		if !publicPrefix(e.cidr) {
-			return errors.New("rentang non-publik: tambahkan manual bila memang sengaja")
+			return errors.New("non-public range: add it manually if it is intentional")
 		}
 	}
 	return nil
 }
 
-// exclusion adalah hasil konversi satu aset out-of-scope.
+// exclusion is the result of converting one out-of-scope asset.
 type exclusion struct {
 	entries []string
-	apexes  []string // apex wildcard, dipakai bila tak eksplisit in-scope
-	widened bool     // lebih luas dari aslinya
+	apexes  []string // wildcard apex, used when not explicitly in-scope
+	widened bool     // wider than the original
 }
 
-// convertOut mengonversi aset out-of-scope. Hanya melebar: port, query, dan path
-// yang tak terwakili dibuang (keluaran mencakup aslinya); error berarti tak ada
-// superset yang masuk akal, dan aset itu wajib ditinjau manusia.
+// convertOut converts an out-of-scope asset. Widening only: a port, query, and path
+// that cannot be represented are dropped (the output covers the original); an error means there is no
+// sensible superset, and the asset must be reviewed by a human.
 func convertOut(raw string) (exclusion, error) {
-	// Selalu dipecah per koma, berbeda dari in-scope: bagian yang tak terbaca
-	// membuat seluruh aset ditinjau, sedangkan tak memecah berarti bagian
-	// sesudah koma hilang diam-diam (under-blocking).
+	// Always split on commas, unlike in-scope: an unreadable part
+	// sends the whole asset to review, while not splitting means the part
+	// after the comma is lost silently (under-blocking).
 	var ex exclusion
 	for _, p := range strings.Split(raw, ",") {
 		if strings.TrimSpace(p) == "" {
@@ -388,7 +388,7 @@ func convertOut(raw string) (exclusion, error) {
 		ex.widened = ex.widened || one.widened
 	}
 	if len(ex.entries) == 0 {
-		return exclusion{}, errors.New("identifier kosong")
+		return exclusion{}, errors.New("empty identifier")
 	}
 	return ex, nil
 }
@@ -398,13 +398,13 @@ func convertOneOut(raw string) (exclusion, error) {
 	if err != nil {
 		return exclusion{}, err
 	}
-	// Port dibuang: eksklusi lebih luas selalu aman, dan wildcard tak bisa memuatnya.
+	// The port is dropped: a wider exclusion is always safe, and a wildcard cannot hold it.
 	host, port, err := splitHostPort(id.host)
 	if err != nil {
-		return exclusion{}, errors.New("bentuk tak didukung entri scope")
+		return exclusion{}, errors.New("form not supported as a scope entry")
 	}
 	ex := exclusion{widened: id.extra || port != ""}
-	// ".acme.io" lazim berarti acme.io beserta subdomainnya.
+	// ".acme.io" commonly means acme.io and its subdomains.
 	if strings.HasPrefix(host, ".") {
 		host = "*" + host
 	}
@@ -412,8 +412,8 @@ func convertOneOut(raw string) (exclusion, error) {
 		return wildcardExclusion(host, id.path, ex)
 	}
 
-	// Path dipotong di batas segmen sebelum pola/encoding: path entri tanpa skema
-	// dibandingkan literal, sedangkan path target sudah di-decode.
+	// The path is trimmed at the segment boundary before a pattern/encoding: a schemeless entry's path
+	// is compared literally, while the target path is already decoded.
 	path := strings.TrimSuffix(id.path, "/*")
 	if i := strings.IndexAny(path, "*%"); i >= 0 {
 		path = path[:strings.LastIndexByte(path[:i], '/')+1]
@@ -421,14 +421,14 @@ func convertOneOut(raw string) (exclusion, error) {
 	}
 	var e entry
 	if a, err := netip.ParseAddr(host); err == nil && id.scheme != "" {
-		// Berskema berarti URL: seluruh IP pasti mencakup path-nya.
+		// A scheme means a URL: the whole IP surely covers its path.
 		ex.widened = ex.widened || strings.Trim(path, "/") != ""
 		e = entry{kind: kindIP, addr: a}
 	} else {
-		// Tanpa skema, IP ber-path bukan URL melainkan CIDR rusak; parseEntry
-		// menolaknya, jadi eksklusinya tak diam-diam menyusut jadi satu IP.
+		// Without a scheme, an IP with a path is not a URL but broken CIDR; parseEntry
+		// rejects it, so the exclusion does not silently shrink to a single IP.
 		if e, err = parseEntry(host + path); err != nil {
-			return exclusion{}, errors.New("bentuk tak didukung entri scope")
+			return exclusion{}, errors.New("form not supported as a scope entry")
 		}
 		if e.kind == kindHostExact || e.kind == kindURLPrefix {
 			if err := checkPublicHost(e.host); err != nil {
@@ -444,25 +444,25 @@ func convertOneOut(raw string) (exclusion, error) {
 	return ex, nil
 }
 
-// wildcardExclusion memetakan pola host ber-'*' ke wildcard kiri yang pasti
-// mencakupnya. Bentuk "*.x" tetap, ditambah apex x: makna platform soal apex
-// ambigu, dan arah aman eksklusi adalah melebar. Pola lain ("api.*.x", "a*.x")
-// melebar ke "*.x".
+// wildcardExclusion maps a host pattern with '*' to a left wildcard that surely
+// covers it. The form "*.x" stays, plus apex x: the platform's meaning for the apex
+// is ambiguous, and the safe direction for an exclusion is to widen. Other patterns ("api.*.x", "a*.x")
+// widen to "*.x".
 func wildcardExclusion(host, path string, ex exclusion) (exclusion, error) {
 	rest := host[strings.LastIndexByte(host, '*')+1:]
 	dot := strings.IndexByte(rest, '.')
 	if dot < 0 || rest[dot+1:] == "" {
-		return exclusion{}, errors.New("pola tak punya domain jangkar")
+		return exclusion{}, errors.New("the pattern has no anchor domain")
 	}
 	e, err := parseEntry("*." + rest[dot+1:])
 	if err != nil {
-		return exclusion{}, errors.New("bentuk tak didukung entri scope")
+		return exclusion{}, errors.New("form not supported as a scope entry")
 	}
 	exact := strings.HasPrefix(host, "*.") && strings.Count(host, "*") == 1
 	if !exact {
-		// Tanpa jangkar nyata "*foo.com" akan jadi "*.com": eksklusi semu.
+		// Without a real anchor "*foo.com" would become "*.com": a sham exclusion.
 		if _, err := publicsuffix.EffectiveTLDPlusOne(e.base); err != nil {
-			return exclusion{}, errors.New("pola tak punya domain jangkar")
+			return exclusion{}, errors.New("the pattern has no anchor domain")
 		}
 		ex.widened = true
 	}
@@ -480,17 +480,17 @@ func wildcardExclusion(host, path string, ex exclusion) (exclusion, error) {
 	return ex, nil
 }
 
-// urlHostIP melaporkan entri URL ber-host IP beserta alamatnya.
+// urlHostIP reports a URL entry with an IP host and its address.
 func urlHostIP(e entry) (netip.Addr, bool) {
 	return e.addr, e.kind == kindURLPrefix && e.addr.IsValid()
 }
 
-// renderEntry menulis entri ternormalkan sebagai teks kanonik: yang tersimpan
-// persis yang ditegakkan Guard, tanpa skema (Guard tak memakainya), userinfo,
-// atau query. Teks yang tak bisa diurai ulang ditolak.
+// renderEntry writes a normalized entry as canonical text: what is stored
+// is exactly what the Guard enforces, without a scheme (the Guard does not use it), userinfo,
+// or query. Text that cannot be re-parsed is rejected.
 //
-// Entri hasil urai ulang ikut dikembalikan karena itulah yang akan dikompilasi
-// Guard. Pemeriksaan keamanan memakai entri ini, bukan masukannya.
+// The re-parsed entry is returned too because that is what the Guard will
+// compile. The safety checks use this entry, not its input.
 func renderEntry(e entry) (string, entry, error) {
 	var s string
 	switch e.kind {
@@ -508,7 +508,7 @@ func renderEntry(e entry) (string, entry, error) {
 	}
 	final, err := parseEntry(s)
 	if err != nil {
-		return "", entry{}, errors.New("bentuk tak didukung entri scope")
+		return "", entry{}, errors.New("form not supported as a scope entry")
 	}
 	return s, final, nil
 }
@@ -520,20 +520,20 @@ func withPort(host, port string) string {
 	return net.JoinHostPort(host, port)
 }
 
-// checkPublicHost menolak nama tanpa TLD nyata ("all", "localhost", "app.internal"):
-// sah untuk scope tulisan tangan, tapi pada data program publik itu teks bebas.
+// checkPublicHost rejects a name without a real TLD ("all", "localhost", "app.internal"):
+// valid for a hand-written scope, but on public program data it is free text.
 func checkPublicHost(host string) error {
 	if suffix, icann := publicsuffix.PublicSuffix(host); !icann && !strings.Contains(suffix, ".") {
-		return errors.New("bukan domain publik (TLD tak dikenal)")
+		return errors.New("not a public domain (unknown TLD)")
 	}
 	return nil
 }
 
 func publicAddr(a netip.Addr) bool {
-	if a.Is4In6() { // Guard membandingkannya terpisah dari IPv4; jangan diimpor
+	if a.Is4In6() { // the Guard compares it separately from IPv4; do not import
 		return false
 	}
-	a = a.WithZone("") // Prefix.Contains selalu false untuk alamat ber-zone
+	a = a.WithZone("") // Prefix.Contains is always false for a zoned address
 	for _, p := range nonPublicPrefixes {
 		if p.Contains(a) {
 			return false
@@ -576,8 +576,8 @@ func truncateNote(s string) string {
 
 // ---- Parser format ----
 
-// platformAsset adalah satu aset dalam bentuk netral. inScope hanya true bila
-// platform menyatakannya eksplisit: status tak jelas tak pernah jadi izin.
+// platformAsset is one asset in neutral form. inScope is true only when the
+// platform states it explicitly: an unclear status never becomes an allow.
 type platformAsset struct {
 	identifier string
 	assetType  string
@@ -589,7 +589,7 @@ func (a platformAsset) item(detail string) ImportItem {
 	return ImportItem{Asset: a.identifier, Type: a.assetType, Detail: detail}
 }
 
-const unknownFormat = "format tak dikenali: gunakan CSV HackerOne (Download CSV), JSON API HackerOne (structured_scopes), JSON brief Bugcrowd, atau satu objek program bounty-targets-data"
+const unknownFormat = "unrecognized format: use HackerOne CSV (Download CSV), HackerOne JSON API (structured_scopes), Bugcrowd brief JSON, or a single bounty-targets-data program object"
 
 func parseAssets(s string) (string, []platformAsset, error) {
 	if s[0] == '{' || s[0] == '[' {
@@ -602,7 +602,7 @@ func parseAssets(s string) (string, []platformAsset, error) {
 func parseHackerOneCSV(s string) ([]platformAsset, error) {
 	rows, err := csv.NewReader(strings.NewReader(s)).ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("CSV tak valid: %w", err)
+		return nil, fmt.Errorf("invalid CSV: %w", err)
 	}
 	col := map[string]int{}
 	for i, h := range rows[0] {
@@ -630,8 +630,8 @@ func parseHackerOneCSV(s string) ([]platformAsset, error) {
 	return assets, nil
 }
 
-// platformTarget menampung field target HackerOne dan Bugcrowd sekaligus; hanya
-// satu kelompok yang terisi per format.
+// platformTarget holds the target fields of HackerOne and Bugcrowd together; only
+// one group is filled per format.
 type platformTarget struct {
 	// HackerOne
 	AssetIdentifier       string `json:"asset_identifier"`
@@ -649,7 +649,7 @@ type platformTarget struct {
 
 func (t platformTarget) asset(listedIn bool) platformAsset {
 	a := platformAsset{inScope: listedIn, note: t.Instruction}
-	// HackerOne bisa menandai aset tak layak submit walau tercantum.
+	// HackerOne may mark an asset ineligible for submission even if listed.
 	if t.EligibleForSubmission != nil && !*t.EligibleForSubmission {
 		a.inScope = false
 	}
@@ -673,10 +673,10 @@ func parsePlatformJSON(s string) (string, []platformAsset, error) {
 	if s[0] == '[' {
 		var arr []json.RawMessage
 		if err := json.Unmarshal(data, &arr); err != nil {
-			return "", nil, fmt.Errorf("JSON tak valid: %w", err)
+			return "", nil, fmt.Errorf("invalid JSON: %w", err)
 		}
 		if len(arr) != 1 {
-			return "", nil, fmt.Errorf("data memuat %d program: tempel tepat satu program", len(arr))
+			return "", nil, fmt.Errorf("data holds %d programs: paste exactly one program", len(arr))
 		}
 		data = arr[0]
 	}
@@ -691,7 +691,7 @@ func parsePlatformJSON(s string) (string, []platformAsset, error) {
 		} `json:"targets"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return "", nil, fmt.Errorf("JSON tak valid: %w", err)
+		return "", nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 	switch {
 	case doc.Targets != nil:
@@ -704,9 +704,9 @@ func parsePlatformJSON(s string) (string, []platformAsset, error) {
 		}
 		return "bounty-targets-data JSON", assets, nil
 	case len(doc.Data) > 0 && doc.Data[0] == '[':
-		// Halaman API yang terpotong bisa kehilangan eksklusi.
+		// A truncated API page can lose exclusions.
 		if doc.Links.Next != "" {
-			return "", nil, errors.New("hasil API terpotong (links.next ada): gabungkan semua halaman atau pakai page[size]=100")
+			return "", nil, errors.New("the API result is truncated (links.next present): merge all pages or use page[size]=100")
 		}
 		return parseHackerOneAPI(doc.Data)
 	case len(doc.Data) > 0 && doc.Data[0] == '{':
@@ -721,14 +721,14 @@ func parseHackerOneAPI(data json.RawMessage) (string, []platformAsset, error) {
 		Attributes platformTarget `json:"attributes"`
 	}
 	if err := json.Unmarshal(data, &items); err != nil {
-		return "", nil, fmt.Errorf("JSON tak valid: %w", err)
+		return "", nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 	assets := make([]platformAsset, 0, len(items))
 	for _, it := range items {
 		if it.Type != "structured-scope" {
 			return "", nil, errors.New(unknownFormat)
 		}
-		// Berbeda dari daftar in_scope: di sini flag inilah satu-satunya bukti.
+		// Unlike the in_scope list: here this flag is the only evidence.
 		elig := it.Attributes.EligibleForSubmission
 		assets = append(assets, it.Attributes.asset(elig != nil && *elig))
 	}
@@ -743,7 +743,7 @@ func parseBugcrowdBrief(data json.RawMessage) (string, []platformAsset, error) {
 		} `json:"scope"`
 	}
 	if err := json.Unmarshal(data, &brief); err != nil {
-		return "", nil, fmt.Errorf("JSON tak valid: %w", err)
+		return "", nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 	if brief.Scope == nil {
 		return "", nil, errors.New(unknownFormat)

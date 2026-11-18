@@ -1,6 +1,6 @@
 import { type Page, type Locator, expect } from '@playwright/test';
 
-/** Layar Scan: konfigurasi scope + target, jalankan scan (engine mock). */
+/** Scan screen: configure scope + targets, run the scan (mock engines). */
 export class ScanPage {
   readonly result: Locator;
   constructor(private readonly page: Page) {
@@ -27,26 +27,26 @@ export class ScanPage {
     if (opts.rps) await this.page.locator('input[name="rps"]').fill(opts.rps);
   }
 
-  /** Klik "Jalankan scan"; otomatis menerima dialog konfirmasi (hx-confirm). */
+  /** Click "Run scan"; auto-accept the confirm dialog (hx-confirm). */
   async run() {
     this.page.once('dialog', (d) => d.accept());
-    await this.page.getByRole('button', { name: 'Jalankan scan' }).click();
+    await this.page.getByRole('button', { name: 'Run scan' }).click();
   }
 
-  /** Menunggu run selesai: link "Lihat findings" muncul di keadaan terminal. */
+  /** Wait for the run to finish: the "View findings" link shows in a terminal state. */
   async waitForDone() {
-    await expect(this.result.getByRole('link', { name: /Lihat findings/ })).toBeVisible({ timeout: 20_000 });
+    await expect(this.result.getByRole('link', { name: /View findings/ })).toBeVisible({ timeout: 20_000 });
   }
 
   async openFindings() {
-    await this.result.getByRole('link', { name: /Lihat findings/ }).click();
+    await this.result.getByRole('link', { name: /View findings/ }).click();
   }
 
   savedChip(): Locator {
-    return this.result.getByText(/temuan baru/);
+    return this.result.getByText(/new findings/);
   }
 
   deniedHeading(): Locator {
-    return this.result.getByRole('heading', { name: /Ditolak scope guard/ });
+    return this.result.getByRole('heading', { name: /Denied by the scope guard/ });
   }
 }

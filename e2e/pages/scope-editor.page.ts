@@ -1,6 +1,6 @@
 import { type Page, type Locator } from '@playwright/test';
 
-/** Scope editor: buat/ubah definisi scope program + pratinjau izin/tolak. */
+/** Scope editor: create/change a program scope definition + preview allow/deny. */
 export class ScopeEditorPage {
   readonly preview: Locator;
   readonly inScope: Locator;
@@ -30,28 +30,28 @@ export class ScopeEditorPage {
     await this.page.locator('textarea[name="targets"]').fill(opts.targets ?? '');
   }
 
-  /** Pratinjau keputusan scope (HTMX, tanpa menyentuh jaringan). */
+  /** Preview the scope decisions (HTMX, without touching the network). */
   async clickPreview() {
-    await this.page.getByRole('button', { name: 'Pratinjau' }).click();
+    await this.page.getByRole('button', { name: 'Preview' }).click();
   }
 
   async save() {
-    await this.page.getByRole('button', { name: 'Simpan scope' }).click();
+    await this.page.getByRole('button', { name: 'Save scope' }).click();
   }
 
-  /** Buka panel impor platform. */
+  /** Open the platform import panel. */
   async openImport() {
-    await this.page.getByText('Impor dari platform').click();
+    await this.page.getByText('Import from a platform').click();
   }
 
-  /** Tempel data scope platform lalu konversi (mengisi form, tidak menyimpan). */
+  /** Paste platform scope data then convert (fills the form, does not save). */
   async importData(data: string) {
     await this.openImport();
     await this.platformData.fill(data);
-    await this.page.getByRole('button', { name: 'Konversi ke scope' }).click();
+    await this.page.getByRole('button', { name: 'Convert to scope' }).click();
   }
 
-  /** Baris pratinjau untuk satu target (cocok persis pada sel target). */
+  /** The preview row for one target (an exact match on the target cell). */
   previewRow(target: string): Locator {
     return this.preview.locator('table tbody tr', {
       has: this.page.getByText(target, { exact: true }),

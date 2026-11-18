@@ -5,34 +5,35 @@ import (
 	"strings"
 )
 
-// Enrichment route API. Selain wordlist direktori umum, banyak temuan bernilai
-// tinggi hidup di endpoint API yang tak tertaut/terdaftar (mis. /api/v1/...,
-// /rest/..., /graphql). Assetnote merilis "apiroutes" — daftar path API nyata
-// yang paling sering diamati di web (terurut frekuensi), ideal sebagai kamus
-// brute path API. bughound membundlenya saat build (lihat Dockerfile) lalu
-// mengumpankannya ke engine ffuf yang SUDAH ter-proxy, sehingga tiap probe path
-// API pun ditegakkan scope guard (sama seperti wordlist bawaan/robots/spec).
+// API route enrichment. Beyond a common directory wordlist, many high-value
+// findings live on API endpoints that are unlinked or undocumented (e.g.
+// /api/v1/..., /rest/..., /graphql). Assetnote publishes "apiroutes", a list of
+// real API paths most often seen on the web (ordered by frequency), a good
+// dictionary for brute-forcing API paths. bughound bundles it at build time
+// (see Dockerfile) and feeds it to the already-proxied ffuf engine, so every
+// API path probe is enforced by the scope guard too (same as the built-in
+// wordlist, robots, and spec).
 //
-// Opt-in: hanya aktif bila APIRoutes diset (per-scan dari form, atau preset
-// program). Volume besar (~ribuan path) → sengaja tidak default.
+// Opt-in: active only when APIRoutes is set (per scan from the form, or a
+// program preset). The volume is large (~thousands of paths), so it is off by default.
 
 const (
-	// defaultAPIWordlist adalah lokasi wordlist route API ter-bundle di image.
-	// Bisa ditimpa env BUGHOUND_API_WORDLIST (power user: tunjuk wordlist sendiri).
+	// defaultAPIWordlist is where the bundled API route wordlist sits in the image.
+	// Override it with BUGHOUND_API_WORDLIST (power user: point at your own wordlist).
 	defaultAPIWordlist = "/usr/local/share/bughound/wordlists/apiroutes.txt"
-	// maxAPIRoutePaths membatasi jumlah path yang dibaca (pagar pengaman bila env
-	// menunjuk berkas raksasa). Bundle bawaan sudah dipangkas lebih kecil dari ini.
+	// maxAPIRoutePaths caps how many paths are read (a guard rail in case the env
+	// points at a huge file). The bundled list is already trimmed smaller than this.
 	maxAPIRoutePaths = 20000
 )
 
-// apiRoutePaths mengembalikan path route API ter-bundle dalam bentuk FUZZ (tanpa
-// slash tepi) untuk di-merge ke wordlist ffuf. Hanya aktif bila APIRoutes=true.
+// apiRoutePaths returns the bundled API route paths in FUZZ form (no edge
+// slashes) to merge into the ffuf wordlist. Active only when APIRoutes=true.
 //
-// Keamanan: di-gate pada proxyAddr (seperti robotsPaths/specPaths). Pembacaan
-// berkas ini MURNI lokal (tanpa jaringan), tetapi amplifikasi ~ribuan path hanya
-// boleh terjadi lewat proxy egress yang scope-enforced — tanpa proxy, tak ada
-// enrichment, jadi tak pernah ada brute path API yang memintas scope guard.
-// Bundle absen (mis. dev lokal tanpa image) → nil (best-effort, bukan error).
+// Security: gated on proxyAddr (like robotsPaths/specPaths). Reading this file
+// is purely local (no network), but amplifying to ~thousands of paths may only
+// happen through the scope-enforced egress proxy. Without a proxy there is no
+// enrichment, so no API path brute-forcing ever bypasses the scope guard.
+// A missing bundle (e.g. local dev without the image) returns nil (best-effort, not an error).
 func (r *Runner) apiRoutePaths() []string {
 	if !r.APIRoutes || r.proxyAddr == "" {
 		return nil
@@ -43,16 +44,16 @@ func (r *Runner) apiRoutePaths() []string {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil // bundle/berkas absen → tanpa enrichment (bukan error)
+		return nil // bundle/file missing, no enrichment (not an error)
 	}
 	return normalizeAPIRoutes(data, maxAPIRoutePaths)
 }
 
-// normalizeAPIRoutes mengubah isi wordlist route API menjadi path bentuk FUZZ:
-// satu path per baris, slash tepi dibuang (buildArgs menyusun target + "/" +
-// FUZZ), query dibuang, baris kosong/komentar/wildcard/ber-spasi dilewati,
-// ter-dedup, dibatasi max. Tahan terhadap berkas mentah Assetnote (path
-// ber-leading-slash) maupun yang sudah dinormalkan saat build.
+// normalizeAPIRoutes turns the API route wordlist into FUZZ-form paths: one path
+// per line, edge slashes dropped (buildArgs assembles target + "/" + FUZZ),
+// query dropped, blank/comment/wildcard/whitespace lines skipped, deduped,
+// capped at max. Handles both the raw Assetnote file (paths with a leading
+// slash) and one already normalized at build time.
 func normalizeAPIRoutes(data []byte, max int) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -61,10 +62,10 @@ func normalizeAPIRoutes(data []byte, max int) []string {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		line = strings.SplitN(line, "?", 2)[0] // buang query
-		line = strings.Trim(line, "/")         // bentuk FUZZ (tanpa slash tepi)
+		line = strings.SplitN(line, "?", 2)[0] // drop the query
+		line = strings.Trim(line, "/")         // FUZZ form (no edge slashes)
 		if line == "" || strings.ContainsAny(line, " \t") || strings.ContainsAny(line, "*$") {
-			continue // kosong / ber-spasi / pola wildcard — bukan path probe literal
+			continue // blank / whitespace / wildcard pattern, not a literal probe path
 		}
 		if seen[line] {
 			continue

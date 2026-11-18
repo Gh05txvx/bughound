@@ -1,9 +1,10 @@
-// Package finding mendefinisikan Skema Temuan Seragam (BH-SPEC-FINDING):
-// satu format tunggal tempat semua engine (recon & DAST) menormalkan hasilnya,
-// sekaligus sumber data untuk triase dan report.
+// Package finding defines the Uniform Finding Schema (BH-SPEC-FINDING): the
+// single format every engine (recon and DAST) normalizes its results into, and
+// the data source for triage and reports.
 //
-// Paket ini sengaja tanpa dependency eksternal: ia fondasi yang dirujuk store,
-// triase, report, dan engine adapter, jadi harus stabil dan ringan.
+// The package has no external dependencies on purpose: it is the foundation
+// that the store, triage, report and engine adapters refer to, so it has to be
+// stable and light.
 package finding
 
 import (
@@ -15,16 +16,17 @@ import (
 	"unicode/utf8"
 )
 
-// CurrentSchemaVersion adalah versi skema yang ditulis komponen saat ini.
-// Kenaikan versi mengikuti aturan MAYOR.MINOR di BH-SPEC-FINDING.
+// CurrentSchemaVersion is the schema version components write today.
+// Version bumps follow the MAJOR.MINOR rule in BH-SPEC-FINDING.
 //
-// 1.0 → 1.1 (MINOR, aditif): menambah field opsional `impact` (dampak, diisi
-// hunter saat triase untuk melengkapi draft report). Konsumen lama tetap bisa
-// membaca; temuan lama (schema_version 1.0, tanpa impact) tetap valid. 1.2
-// menambah field `owasp` (klasifikasi OWASP 2021, aditif) — tetap kompatibel.
+// 1.0 → 1.1 (MINOR, additive): adds the optional `impact` field (filled in by
+// the hunter during triage to complete the draft report). Old consumers can
+// still read it; old findings (schema_version 1.0, no impact) stay valid. 1.2
+// adds the `owasp` field (OWASP 2021 classification, additive) and is also
+// compatible.
 const CurrentSchemaVersion = "1.2"
 
-// Severity: tingkat keparahan temuan. Enum tertutup (BH-SPEC-FINDING).
+// Severity: how severe a finding is. A closed enum (BH-SPEC-FINDING).
 type Severity string
 
 const (
@@ -35,7 +37,7 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
-// Valid melaporkan apakah s salah satu nilai severity yang sah.
+// Valid reports whether s is one of the valid severity values.
 func (s Severity) Valid() bool {
 	switch s {
 	case SeverityInfo, SeverityLow, SeverityMedium, SeverityHigh, SeverityCritical:
@@ -44,7 +46,7 @@ func (s Severity) Valid() bool {
 	return false
 }
 
-// Confidence: keyakinan otomatis sebelum verifikasi manual. Enum tertutup.
+// Confidence: the automatic confidence before manual verification. A closed enum.
 type Confidence string
 
 const (
@@ -53,7 +55,7 @@ const (
 	ConfidenceHigh   Confidence = "high"
 )
 
-// Valid melaporkan apakah c salah satu nilai confidence yang sah.
+// Valid reports whether c is one of the valid confidence values.
 func (c Confidence) Valid() bool {
 	switch c {
 	case ConfidenceLow, ConfidenceMedium, ConfidenceHigh:
@@ -62,7 +64,7 @@ func (c Confidence) Valid() bool {
 	return false
 }
 
-// Status: status triase temuan. Enum tertutup (BH-SPEC-FINDING).
+// Status: the triage status of a finding. A closed enum (BH-SPEC-FINDING).
 type Status string
 
 const (
@@ -73,7 +75,7 @@ const (
 	StatusIgnored       Status = "ignored"
 )
 
-// Valid melaporkan apakah s salah satu nilai status yang sah.
+// Valid reports whether s is one of the valid status values.
 func (s Status) Valid() bool {
 	switch s {
 	case StatusNew, StatusConfirmed, StatusDuplicate, StatusFalsePositive, StatusIgnored:
@@ -82,7 +84,7 @@ func (s Status) Valid() bool {
 	return false
 }
 
-// ParamLocation: lokasi parameter titik masuk. Opsional; divalidasi bila diisi.
+// ParamLocation: where the entry-point parameter is. Optional; validated when set.
 type ParamLocation string
 
 const (
@@ -93,7 +95,7 @@ const (
 	ParamPath   ParamLocation = "path"
 )
 
-// Valid melaporkan apakah p salah satu lokasi parameter yang sah.
+// Valid reports whether p is one of the valid parameter locations.
 func (p ParamLocation) Valid() bool {
 	switch p {
 	case ParamQuery, ParamBody, ParamHeader, ParamCookie, ParamPath:
@@ -102,22 +104,22 @@ func (p ParamLocation) Valid() bool {
 	return false
 }
 
-// timeLayout: UTC ISO 8601 presisi detik, mis. "2026-10-21T09:14:03Z".
+// timeLayout: UTC ISO 8601 with second precision, e.g. "2026-10-21T09:14:03Z".
 const timeLayout = "2006-01-02T15:04:05Z07:00"
 
-// Time adalah timestamp yang selalu diserialisasi sebagai UTC ISO 8601 presisi
-// detik, sesuai prinsip "Waktu dalam UTC ISO 8601" di BH-SPEC-FINDING.
+// Time is a timestamp that is always serialized as UTC ISO 8601 with second
+// precision, following the "Time in UTC ISO 8601" principle in BH-SPEC-FINDING.
 type Time struct{ time.Time }
 
-// NewTime menormalkan t ke UTC presisi detik.
+// NewTime normalizes t to UTC with second precision.
 func NewTime(t time.Time) Time { return Time{t.UTC().Truncate(time.Second)} }
 
-// MarshalJSON menulis waktu sebagai string UTC ISO 8601 presisi detik.
+// MarshalJSON writes the time as a UTC ISO 8601 string with second precision.
 func (t Time) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + t.UTC().Truncate(time.Second).Format(timeLayout) + `"`), nil
 }
 
-// UnmarshalJSON membaca string UTC ISO 8601; string kosong/null jadi waktu nol.
+// UnmarshalJSON reads a UTC ISO 8601 string; an empty string or null becomes the zero time.
 func (t *Time) UnmarshalJSON(b []byte) error {
 	s := strings.Trim(string(b), `"`)
 	if s == "" || s == "null" {
@@ -126,20 +128,20 @@ func (t *Time) UnmarshalJSON(b []byte) error {
 	}
 	parsed, err := time.Parse(timeLayout, s)
 	if err != nil {
-		return fmt.Errorf("finding: waktu tidak valid %q: %w", s, err)
+		return fmt.Errorf("finding: invalid time %q: %w", s, err)
 	}
 	t.Time = parsed.UTC()
 	return nil
 }
 
-// CVSS membawa skor CVSS opsional bila engine/template menyediakannya.
+// CVSS carries an optional CVSS score when the engine/template provides one.
 type CVSS struct {
 	Version string  `json:"version,omitempty"`
 	Vector  string  `json:"vector,omitempty"`
 	Score   float64 `json:"score,omitempty"`
 }
 
-// Location menunjuk di mana persisnya temuan berada. Hanya URL yang wajib.
+// Location points at exactly where the finding is. Only URL is required.
 type Location struct {
 	URL           string        `json:"url"`
 	Method        string        `json:"method,omitempty"`
@@ -147,10 +149,10 @@ type Location struct {
 	ParamLocation ParamLocation `json:"param_location,omitempty"`
 }
 
-// Evidence menyimpan bukti yang SUDAH dibersihkan dari secret. Semua sub-field
-// opsional, tapi minimal satu sebaiknya ada agar temuan bisa diverifikasi.
-// Penyensoran secret adalah tanggung jawab adapter sebelum mengisi struct ini
-// (BH-SPEC-FINDING: skema tidak pernah menyimpan secret mentah).
+// Evidence holds evidence that has ALREADY been cleaned of secrets. Every
+// sub-field is optional, but at least one should be set so the finding can be
+// verified. Redacting secrets is the adapter's job before it fills this struct
+// (BH-SPEC-FINDING: the schema never stores a raw secret).
 type Evidence struct {
 	Request         string `json:"request,omitempty"`
 	ResponseExcerpt string `json:"response_excerpt,omitempty"`
@@ -159,18 +161,19 @@ type Evidence struct {
 	ScreenshotRef   string `json:"screenshot_ref,omitempty"`
 }
 
-// maxEvidenceField membatasi panjang (byte) tiap sub-field evidence tekstual
-// yang disimpan inline. Request/response dari engine bisa sangat besar;
-// menyimpannya utuh membengkakkan store dan report tanpa menambah nilai
-// verifikasi. Batas ini cukup longgar untuk menjaga request tetap bisa diputar
-// ulang (mis. ke Burp) sekaligus mencegah bloat respons raksasa. (Menjawab
-// pertanyaan terbuka BH-SPEC-FINDING soal batas ukuran evidence.)
+// maxEvidenceField caps the length (in bytes) of each textual evidence
+// sub-field stored inline. Requests and responses from engines can be very
+// large; storing them whole bloats the store and the report without adding
+// verification value. The limit is loose enough to keep a request replayable
+// (e.g. in Burp) while preventing bloat from huge responses. (It answers the
+// open question in BH-SPEC-FINDING about an evidence size limit.)
 const maxEvidenceField = 32 * 1024
 
-// clampFields memotong tiap sub-field evidence tekstual yang melampaui
-// maxEvidenceField, pada batas rune (tak memenggal karakter UTF-8), lalu
-// menambah penanda jumlah byte yang dibuang. Idempoten. ScreenshotRef hanya
-// referensi (path/URL), bukan konten, jadi tidak dipotong.
+// clampFields truncates each textual evidence sub-field that exceeds
+// maxEvidenceField, at a rune boundary (it does not split a UTF-8 character),
+// then appends a marker with the number of bytes dropped. Idempotent.
+// ScreenshotRef is only a reference (path/URL), not content, so it is not
+// truncated.
 func (e *Evidence) clampFields() {
 	e.Request = clampText(e.Request, maxEvidenceField)
 	e.ResponseExcerpt = clampText(e.ResponseExcerpt, maxEvidenceField)
@@ -178,14 +181,15 @@ func (e *Evidence) clampFields() {
 	e.Matched = clampText(e.Matched, maxEvidenceField)
 }
 
-// clampText memotong s ke paling banyak limit byte (termasuk penanda) pada batas
-// rune, lalu menambah penanda jumlah byte yang dibuang. Mengembalikan s apa
-// adanya bila sudah <= limit, sehingga aman dipanggil berulang (idempoten).
+// clampText truncates s to at most limit bytes (including the marker) at a rune
+// boundary, then appends a marker with the number of bytes dropped. It returns
+// s unchanged when it is already <= limit, so it is safe to call repeatedly
+// (idempotent).
 func clampText(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	const markerBudget = 80 // ruang cadangan untuk penanda pemotongan
+	const markerBudget = 80 // room reserved for the truncation marker
 	budget := limit - markerBudget
 	if budget < 0 {
 		budget = 0
@@ -194,14 +198,14 @@ func clampText(s string, limit int) string {
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
-	return s[:cut] + fmt.Sprintf("\n…[evidence dipotong: %d byte dihapus, batas %d]", len(s)-cut, limit)
+	return s[:cut] + fmt.Sprintf("\n…[evidence truncated: %d bytes removed, limit %d]", len(s)-cut, limit)
 }
 
-// Finding adalah satu catatan ternormalisasi: satu isu keamanan pada satu
-// lokasi, dalam bentuk yang sama apa pun engine asalnya.
+// Finding is one normalized record: one security issue at one location, in the
+// same shape whatever engine it came from.
 //
-// Field opsional memakai omitempty sehingga dihilangkan dari JSON saat kosong,
-// bukan ditulis null (BH-SPEC-FINDING).
+// Optional fields use omitempty, so they are left out of the JSON when empty
+// instead of being written as null (BH-SPEC-FINDING).
 type Finding struct {
 	SchemaVersion string `json:"schema_version"`
 	ID            string `json:"id"`
@@ -218,12 +222,12 @@ type Finding struct {
 	CVSS       *CVSS      `json:"cvss,omitempty"`
 	CWE        []string   `json:"cwe,omitempty"`
 	Tags       []string   `json:"tags,omitempty"`
-	OWASP      OWASP      `json:"owasp,omitempty"` // kategori OWASP 2021 (aditif, hasil klasifikasi)
+	OWASP      OWASP      `json:"owasp,omitempty"` // OWASP 2021 category (additive, from classification)
 
 	Location     Location  `json:"location"`
 	Evidence     *Evidence `json:"evidence,omitempty"`
 	Reproduction []string  `json:"reproduction,omitempty"`
-	Impact       string    `json:"impact,omitempty"` // dampak; diisi hunter saat triase untuk draft report
+	Impact       string    `json:"impact,omitempty"` // impact; filled in by the hunter during triage for the draft report
 
 	SourceEngine   string          `json:"source_engine"`
 	SourceTemplate string          `json:"source_template,omitempty"`
@@ -239,9 +243,10 @@ type Finding struct {
 	UpdatedAt *Time `json:"updated_at,omitempty"`
 }
 
-// Finalize mengisi field turunan yang belum terisi (schema_version, created_at,
-// dedup_key) lalu memvalidasi. Adapter engine memanggil ini setelah memetakan
-// output mentah ke skema. ID tetap tanggung jawab pemanggil (UUID dari store).
+// Finalize fills in derived fields that are still empty (schema_version,
+// created_at, dedup_key) and then validates. Engine adapters call it after
+// mapping raw output to the schema. The ID stays the caller's job (a UUID from
+// the store).
 func (f *Finding) Finalize(now time.Time) error {
 	if f.SchemaVersion == "" {
 		f.SchemaVersion = CurrentSchemaVersion
@@ -261,8 +266,8 @@ func (f *Finding) Finalize(now time.Time) error {
 	return f.Validate()
 }
 
-// Validate memastikan semua field wajib terisi dan setiap enum sah. Store
-// memakai ini sebagai penjaga sebelum menyimpan.
+// Validate makes sure every required field is set and every enum is valid. The
+// store uses it as a guard before saving.
 func (f *Finding) Validate() error {
 	required := map[string]string{
 		"schema_version": f.SchemaVersion,
@@ -289,23 +294,23 @@ func (f *Finding) Validate() error {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		return fmt.Errorf("finding: field wajib kosong: %s", strings.Join(missing, ", "))
+		return fmt.Errorf("finding: required fields are empty: %s", strings.Join(missing, ", "))
 	}
 
 	if !f.Severity.Valid() {
-		return fmt.Errorf("finding: severity tidak sah: %q", f.Severity)
+		return fmt.Errorf("finding: invalid severity: %q", f.Severity)
 	}
 	if !f.Confidence.Valid() {
-		return fmt.Errorf("finding: confidence tidak sah: %q", f.Confidence)
+		return fmt.Errorf("finding: invalid confidence: %q", f.Confidence)
 	}
 	if !f.Status.Valid() {
-		return fmt.Errorf("finding: status tidak sah: %q", f.Status)
+		return fmt.Errorf("finding: invalid status: %q", f.Status)
 	}
 	if f.Location.ParamLocation != "" && !f.Location.ParamLocation.Valid() {
-		return fmt.Errorf("finding: param_location tidak sah: %q", f.Location.ParamLocation)
+		return fmt.Errorf("finding: invalid param_location: %q", f.Location.ParamLocation)
 	}
 	if f.Status == StatusDuplicate && strings.TrimSpace(f.DuplicateOf) == "" {
-		return fmt.Errorf("finding: status=duplicate wajib mengisi duplicate_of")
+		return fmt.Errorf("finding: status=duplicate requires duplicate_of")
 	}
 	return nil
 }

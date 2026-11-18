@@ -13,31 +13,31 @@ import (
 	"bughound/internal/payload"
 )
 
-// Mem adalah Store in-memory yang aman dipakai konkuren. Dipakai untuk unit
-// test dan untuk alur mock (E2E) sehingga tidak pernah menyentuh disk/jaringan.
+// Mem is an in-memory Store that is safe for concurrent use. It is used in unit
+// tests and in the mock flow (E2E), so it never touches disk or network.
 type Mem struct {
 	mu   sync.RWMutex
 	now  func() time.Time
 	byID map[string]*finding.Finding
-	// primary: program -> dedup_key -> id temuan utama.
+	// primary: program -> dedup_key -> id of the main finding.
 	primary  map[string]map[string]string
 	programs map[string]*Program
 	users    map[string]*User
 
-	// Bank Payload (BH-SPEC-PAYLOAD): katalog in-memory, diganti utuh saat refresh.
+	// Payload Bank (BH-SPEC-PAYLOAD): an in-memory catalog, replaced whole on refresh.
 	catalog        []payload.Entry
 	catalogSources []payload.SourceInfo
 	catalogBuiltAt time.Time
 
-	// Cache analisis AI per temuan + setelan aplikasi non-rahasia (AIStore).
+	// AI analysis cache per finding + non-secret app settings (AIStore).
 	aiAnalyses map[string]AIAnalysis
 	settings   map[string]string
 
-	// Riwayat run scan (jobs.Store) — persistensi queue saat memakai Mem (E2E/test).
+	// Scan run history (jobs.Store): queue persistence when Mem is used (E2E/tests).
 	runs map[string]*jobs.Run
 }
 
-// NewMem membuat store in-memory kosong.
+// NewMem creates an empty in-memory store.
 func NewMem() *Mem {
 	return &Mem{
 		now:      time.Now,
@@ -48,10 +48,10 @@ func NewMem() *Mem {
 	}
 }
 
-// SaveProgram: lihat Store.SaveProgram.
+// SaveProgram: see Store.SaveProgram.
 func (m *Mem) SaveProgram(ctx context.Context, p Program) error {
 	if strings.TrimSpace(p.Name) == "" {
-		return fmt.Errorf("store: nama program wajib")
+		return fmt.Errorf("store: program name is required")
 	}
 	p.UpdatedAt = m.now().UTC()
 	p.InScope = append([]string(nil), p.InScope...)
@@ -65,7 +65,7 @@ func (m *Mem) SaveProgram(ctx context.Context, p Program) error {
 	return nil
 }
 
-// GetProgram: lihat Store.GetProgram.
+// GetProgram: see Store.GetProgram.
 func (m *Mem) GetProgram(ctx context.Context, name string) (*Program, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -76,7 +76,7 @@ func (m *Mem) GetProgram(ctx context.Context, name string) (*Program, error) {
 	return cloneProgram(p), nil
 }
 
-// ListPrograms: lihat Store.ListPrograms.
+// ListPrograms: see Store.ListPrograms.
 func (m *Mem) ListPrograms(ctx context.Context) ([]*Program, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -88,7 +88,7 @@ func (m *Mem) ListPrograms(ctx context.Context) ([]*Program, error) {
 	return out, nil
 }
 
-// DeleteProgram: lihat Store.DeleteProgram.
+// DeleteProgram: see Store.DeleteProgram.
 func (m *Mem) DeleteProgram(ctx context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -99,7 +99,7 @@ func (m *Mem) DeleteProgram(ctx context.Context, name string) error {
 	return nil
 }
 
-// DeleteFindingsByProgram: lihat Store.DeleteFindingsByProgram.
+// DeleteFindingsByProgram: see Store.DeleteFindingsByProgram.
 func (m *Mem) DeleteFindingsByProgram(ctx context.Context, program string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -110,7 +110,7 @@ func (m *Mem) DeleteFindingsByProgram(ctx context.Context, program string) (int,
 			n++
 		}
 	}
-	delete(m.primary, program) // reset state dedup program (kunci dedup = baris temuan)
+	delete(m.primary, program) // reset the program's dedup state (dedup key = finding row)
 	return n, nil
 }
 
@@ -123,7 +123,7 @@ func cloneProgram(p *Program) *Program {
 	return &cp
 }
 
-// Save: lihat Store.Save. Dedup ditegakkan di sini.
+// Save: see Store.Save. Dedup is enforced here.
 func (m *Mem) Save(ctx context.Context, f *finding.Finding) (SaveResult, error) {
 	if err := prepare(f, m.now()); err != nil {
 		return SaveResult{}, err
@@ -147,14 +147,14 @@ func (m *Mem) Save(ctx context.Context, f *finding.Finding) (SaveResult, error) 
 			res.PrimaryID = primaryID
 		}
 	} else {
-		prog[f.DedupKey] = f.ID // temuan utama pertama untuk dedup_key ini
+		prog[f.DedupKey] = f.ID // the first main finding for this dedup_key
 	}
 
 	m.byID[f.ID] = clone(f)
 	return res, nil
 }
 
-// Get: lihat Store.Get.
+// Get: see Store.Get.
 func (m *Mem) Get(ctx context.Context, id string) (*finding.Finding, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -165,7 +165,7 @@ func (m *Mem) Get(ctx context.Context, id string) (*finding.Finding, error) {
 	return clone(f), nil
 }
 
-// List: lihat Store.List.
+// List: see Store.List.
 func (m *Mem) List(ctx context.Context, q Query) ([]*finding.Finding, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -205,7 +205,7 @@ func (m *Mem) List(ctx context.Context, q Query) ([]*finding.Finding, error) {
 	return out, nil
 }
 
-// Programs: lihat Store.Programs.
+// Programs: see Store.Programs.
 func (m *Mem) Programs(ctx context.Context) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -221,10 +221,10 @@ func (m *Mem) Programs(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-// SetStatus: lihat Store.SetStatus.
+// SetStatus: see Store.SetStatus.
 func (m *Mem) SetStatus(ctx context.Context, id string, status finding.Status, verifiedBy string) error {
 	if !status.Valid() {
-		return fmt.Errorf("store: status tidak sah: %q", status)
+		return fmt.Errorf("store: invalid status: %q", status)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -233,7 +233,7 @@ func (m *Mem) SetStatus(ctx context.Context, id string, status finding.Status, v
 		return ErrNotFound
 	}
 	if status == finding.StatusDuplicate && strings.TrimSpace(f.DuplicateOf) == "" {
-		return fmt.Errorf("store: status duplicate hanya lewat jalur dedup (duplicate_of kosong)")
+		return fmt.Errorf("store: status duplicate is only set by the dedup path (duplicate_of is empty)")
 	}
 	f.Status = status
 	if verifiedBy != "" {
@@ -244,7 +244,7 @@ func (m *Mem) SetStatus(ctx context.Context, id string, status finding.Status, v
 	return nil
 }
 
-// UpdateContent: lihat Store.UpdateContent.
+// UpdateContent: see Store.UpdateContent.
 func (m *Mem) UpdateContent(ctx context.Context, id, description, impact string, reproduction []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -262,10 +262,10 @@ func (m *Mem) UpdateContent(ctx context.Context, id, description, impact string,
 
 // ---- UserStore (RBAC) ----
 
-// CreateUser: lihat UserStore.CreateUser.
+// CreateUser: see UserStore.CreateUser.
 func (m *Mem) CreateUser(ctx context.Context, u User) error {
 	if strings.TrimSpace(u.Username) == "" {
-		return fmt.Errorf("store: username wajib")
+		return fmt.Errorf("store: username is required")
 	}
 	if u.Created.IsZero() {
 		u.Created = m.now().UTC()
@@ -280,7 +280,7 @@ func (m *Mem) CreateUser(ctx context.Context, u User) error {
 	return nil
 }
 
-// GetUser: lihat UserStore.GetUser.
+// GetUser: see UserStore.GetUser.
 func (m *Mem) GetUser(ctx context.Context, username string) (*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -292,7 +292,7 @@ func (m *Mem) GetUser(ctx context.Context, username string) (*User, error) {
 	return &cp, nil
 }
 
-// ListUsers: lihat UserStore.ListUsers.
+// ListUsers: see UserStore.ListUsers.
 func (m *Mem) ListUsers(ctx context.Context) ([]*User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -305,7 +305,7 @@ func (m *Mem) ListUsers(ctx context.Context) ([]*User, error) {
 	return out, nil
 }
 
-// DeleteUser: lihat UserStore.DeleteUser.
+// DeleteUser: see UserStore.DeleteUser.
 func (m *Mem) DeleteUser(ctx context.Context, username string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -316,7 +316,7 @@ func (m *Mem) DeleteUser(ctx context.Context, username string) error {
 	return nil
 }
 
-// SetPassword: lihat UserStore.SetPassword.
+// SetPassword: see UserStore.SetPassword.
 func (m *Mem) SetPassword(ctx context.Context, username, passHash string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -328,7 +328,7 @@ func (m *Mem) SetPassword(ctx context.Context, username, passHash string) error 
 	return nil
 }
 
-// CountUsers: lihat UserStore.CountUsers.
+// CountUsers: see UserStore.CountUsers.
 func (m *Mem) CountUsers(ctx context.Context) (int, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

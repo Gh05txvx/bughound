@@ -2,9 +2,9 @@ import { test, expect } from '../fixtures/test';
 import { runMockScan, confirmAllFindings } from '../utils/seed';
 import { ReportPage } from '../pages/report.page';
 
-// SKENARIO KRITIS #2 — tidak ada auto-submit. Report selalu berakhir sebagai
-// draft dengan ekspor manual; tidak ada jalur kirim otomatis ke platform.
-test('KRITIS: report draft tanpa auto-submit', async ({ page }) => {
+// CRITICAL SCENARIO #2: no auto-submit. A report always ends as a
+// draft with manual export; there is no automatic send path to a platform.
+test('CRITICAL: draft report with no auto-submit', async ({ page }) => {
   const program = 'e2e-nosubmit';
   await runMockScan(page, program);
   await confirmAllFindings(page, program);
@@ -12,15 +12,15 @@ test('KRITIS: report draft tanpa auto-submit', async ({ page }) => {
   const report = new ReportPage(page);
   await report.goto(program);
 
-  // Draft + ekspor manual tersedia.
+  // The draft + manual export are available.
   await expect(page.getByText('DRAFT', { exact: true })).toBeVisible();
   await expect(report.downloadMd()).toBeVisible();
   await expect(report.printPdf()).toBeVisible();
-  await expect(page.getByText(/tidak ada tombol submit/i)).toBeVisible();
+  await expect(page.getByText(/no submit button/i)).toBeVisible();
 
-  // Tidak ada satu pun kontrol kirim/submit otomatis.
+  // Not a single automatic send/submit control.
   await expect(report.submitLikeControls()).toHaveCount(0);
 
-  // Pengaman kebocoran: secret dari evidence engine tidak muncul mentah.
+  // Leak guard: a secret from engine evidence does not show up raw.
   await expect(page.getByText('SECRET-abc123')).toHaveCount(0);
 });

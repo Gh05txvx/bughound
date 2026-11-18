@@ -7,38 +7,40 @@ import (
 	"time"
 )
 
-// AIAnalysis adalah hasil analisis what-if AI untuk satu temuan, DI-CACHE agar
-// tak memanggil (dan membebani) Claude API tiap kali temuan dibuka. Payload = JSON
-// bagian yang ditalar LLM (why/decision/hypotheses). Bagian deterministik (target,
-// seed hint, safety) dibangun ulang saat render — tak perlu di-cache.
+// AIAnalysis is the result of the AI what-if analysis for one finding, CACHED so
+// the Claude API is not called (and loaded) every time the finding is opened.
+// Payload = the JSON of the part the LLM reasons out (why/decision/hypotheses).
+// The deterministic part (target, seed hints, safety) is rebuilt at render time
+// and does not need caching.
 //
-// SourceHash mengikat cache ke konten temuan + model: bila konten temuan berubah
-// atau model diganti, hash beda → cache basi dibuang & regenerasi. Rahasia (API
-// key Claude) TIDAK di sini — itu di vault terenkripsi (prinsip secret-isolasi).
+// SourceHash binds the cache to the finding content + model: when the finding
+// content changes or the model is switched, the hash differs → the stale cache
+// is dropped and regenerated. The secret (the Claude API key) is NOT here; it
+// lives in the encrypted vault (the secret isolation principle).
 type AIAnalysis struct {
 	FindingID  string
 	Program    string
 	Model      string
 	SourceHash string
-	Payload    string // JSON hasil penalaran LLM
+	Payload    string // JSON of the LLM's reasoning result
 	CreatedAt  time.Time
 }
 
-// AIStore menyimpan cache analisis AI + setelan aplikasi non-rahasia (mis. model
-// Claude terpilih). Diimplementasikan oleh *SQLite dan *Mem; web mengaksesnya
-// lewat type assertion (degradasi mulus bila store tak mendukung), sama seperti
-// CatalogStore/UserStore.
+// AIStore holds the AI analysis cache + non-secret app settings (e.g. the chosen
+// Claude model). *SQLite and *Mem implement it; the web layer reaches it through
+// a type assertion (graceful degradation when the store does not support it),
+// like CatalogStore/UserStore.
 type AIStore interface {
-	// GetAIAnalysis mengambil cache analisis sebuah temuan; ErrNotFound bila tak ada.
+	// GetAIAnalysis gets the cached analysis of a finding; ErrNotFound when there is none.
 	GetAIAnalysis(ctx context.Context, findingID string) (*AIAnalysis, error)
-	// PutAIAnalysis menyimpan/menimpa cache analisis sebuah temuan.
+	// PutAIAnalysis saves/overwrites the cached analysis of a finding.
 	PutAIAnalysis(ctx context.Context, a AIAnalysis) error
-	// DeleteAIAnalysisByProgram menghapus semua cache analisis milik sebuah program
-	// (dipanggil saat temuan program dibersihkan agar tak ada cache yatim).
+	// DeleteAIAnalysisByProgram deletes every cached analysis of a program (called
+	// when the program's findings are cleared, so no cache is left orphaned).
 	DeleteAIAnalysisByProgram(ctx context.Context, program string) (int, error)
-	// GetSetting mengambil setelan aplikasi (non-rahasia); "" bila tak ada.
+	// GetSetting gets an app setting (non-secret); "" when there is none.
 	GetSetting(ctx context.Context, key string) (string, error)
-	// PutSetting menyimpan setelan aplikasi (non-rahasia).
+	// PutSetting saves an app setting (non-secret).
 	PutSetting(ctx context.Context, key, value string) error
 }
 
@@ -54,7 +56,7 @@ func (s *SQLite) GetAIAnalysis(ctx context.Context, findingID string) (*AIAnalys
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("store: ambil analisis AI: %w", err)
+		return nil, fmt.Errorf("store: get AI analysis: %w", err)
 	}
 	a.CreatedAt, _ = time.Parse(time.RFC3339, created)
 	return &a, nil
@@ -73,7 +75,7 @@ func (s *SQLite) PutAIAnalysis(ctx context.Context, a AIAnalysis) error {
 		   payload=excluded.payload, created_at=excluded.created_at`,
 		a.FindingID, a.Program, a.Model, a.SourceHash, a.Payload, now.UTC().Format(time.RFC3339))
 	if err != nil {
-		return fmt.Errorf("store: simpan analisis AI: %w", err)
+		return fmt.Errorf("store: save AI analysis: %w", err)
 	}
 	return nil
 }
@@ -81,7 +83,7 @@ func (s *SQLite) PutAIAnalysis(ctx context.Context, a AIAnalysis) error {
 func (s *SQLite) DeleteAIAnalysisByProgram(ctx context.Context, program string) (int, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM ai_analysis WHERE program=?`, program)
 	if err != nil {
-		return 0, fmt.Errorf("store: hapus analisis AI: %w", err)
+		return 0, fmt.Errorf("store: delete AI analysis: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
@@ -94,7 +96,7 @@ func (s *SQLite) GetSetting(ctx context.Context, key string) (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("store: ambil setelan: %w", err)
+		return "", fmt.Errorf("store: get setting: %w", err)
 	}
 	return v, nil
 }
@@ -103,7 +105,7 @@ func (s *SQLite) PutSetting(ctx context.Context, key, value string) error {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO app_settings (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`,
 		key, value); err != nil {
-		return fmt.Errorf("store: simpan setelan: %w", err)
+		return fmt.Errorf("store: save setting: %w", err)
 	}
 	return nil
 }

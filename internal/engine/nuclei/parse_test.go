@@ -14,7 +14,7 @@ func TestParseSample(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 	if len(fs) != 2 {
-		t.Fatalf("ingin 2 temuan, dapat %d", len(fs))
+		t.Fatalf("want 2 findings, got %d", len(fs))
 	}
 
 	ssrf := fs[0]
@@ -43,16 +43,16 @@ func TestParseSample(t *testing.T) {
 		t.Errorf("location.url=%q", ssrf.Location.URL)
 	}
 	if ssrf.CreatedAt.IsZero() {
-		t.Error("created_at harus diambil dari timestamp nuclei")
+		t.Error("created_at must be taken from the nuclei timestamp")
 	}
 
-	// Setelah id diberikan (store yang biasanya mengisi), temuan harus valid.
+	// Once the id is assigned (normally by the store), the finding must be valid.
 	ssrf.ID = "11111111-1111-4111-8111-111111111111"
 	if err := ssrf.Finalize(time.Now()); err != nil {
 		t.Fatalf("Finalize: %v", err)
 	}
 	if ssrf.DedupKey == "" {
-		t.Error("dedup_key kosong setelah Finalize")
+		t.Error("dedup_key is empty after Finalize")
 	}
 }
 
@@ -67,18 +67,18 @@ func TestParseSanitizesSecrets(t *testing.T) {
 	}
 	req := ssrf.Evidence.Request
 	if !strings.Contains(req, redacted) {
-		t.Error("evidence.request harus memuat [REDACTED]")
+		t.Error("evidence.request must contain [REDACTED]")
 	}
 	for _, secret := range []string{"SECRET-abc123", "deadbeef"} {
 		if strings.Contains(req, secret) {
-			t.Errorf("evidence.request membocorkan secret %q", secret)
+			t.Errorf("evidence.request leaks the secret %q", secret)
 		}
 		if strings.Contains(string(ssrf.Raw), secret) {
-			t.Errorf("raw membocorkan secret %q", secret)
+			t.Errorf("raw leaks the secret %q", secret)
 		}
 	}
 	if !strings.Contains(req, "Host: demo.test") {
-		t.Error("header non-sensitif seharusnya dipertahankan")
+		t.Error("a non-sensitive header should be kept")
 	}
 }
 
@@ -86,18 +86,18 @@ func TestSanitizeHTTP(t *testing.T) {
 	in := "GET / HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer abc\r\nCookie: s=1\r\nAccept: */*\r\n"
 	out := sanitizeHTTP(in)
 	if strings.Contains(out, "Bearer abc") || strings.Contains(out, "s=1") {
-		t.Error("nilai sensitif tidak tersensor")
+		t.Error("a sensitive value was not redacted")
 	}
 	if !strings.Contains(out, "Host: x") || !strings.Contains(out, "Accept: */*") {
-		t.Error("header biasa tidak boleh berubah")
+		t.Error("an ordinary header must not change")
 	}
 	if !strings.Contains(out, "Authorization: "+redacted) {
-		t.Error("Authorization harus menjadi [REDACTED]")
+		t.Error("Authorization must become [REDACTED]")
 	}
 }
 
 func TestStringListFlexible(t *testing.T) {
-	// tags sebagai satu string "a, b"; reference sebagai array.
+	// tags as a single string "a, b"; reference as an array.
 	line := `{"template-id":"t","host":"https://demo.test","matched-at":"https://demo.test/x",` +
 		`"info":{"name":"n","severity":"low","tags":"a, b","reference":["https://e"]}}`
 	fs, err := Parse(strings.NewReader(line), "p", "r")
@@ -105,10 +105,10 @@ func TestStringListFlexible(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(fs) != 1 {
-		t.Fatalf("dapat %d temuan", len(fs))
+		t.Fatalf("got %d findings", len(fs))
 	}
 	if len(fs[0].Tags) != 2 || fs[0].Tags[0] != "a" || fs[0].Tags[1] != "b" {
-		t.Errorf("tags string gagal diurai jadi slice: %v", fs[0].Tags)
+		t.Errorf("the tags string failed to parse into a slice: %v", fs[0].Tags)
 	}
 }
 
@@ -120,12 +120,12 @@ func TestParseSkipsBannerAndBlank(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(fs) != 1 {
-		t.Fatalf("banner & baris kosong harus dilewati, dapat %d", len(fs))
+		t.Fatalf("banners & blank lines must be skipped, got %d", len(fs))
 	}
 }
 
 func TestParseMalformedJSONErrors(t *testing.T) {
 	if _, err := Parse(strings.NewReader(`{"template-id":"t",`), "p", "r"); err == nil {
-		t.Fatal("baris JSON rusak harus menghasilkan error")
+		t.Fatal("a broken JSON line must produce an error")
 	}
 }

@@ -1,10 +1,10 @@
-"""Enrichment scope asset dari CSV platform (HackerOne/Bugcrowd export).
+"""Scope asset enrichment from a platform CSV (HackerOne/Bugcrowd export).
 
-Memberi C3 (bounty) data nyata: `max_severity` + `eligible_for_bounty` per aset.
-Hanya aset in-scope (`eligible_for_submission=true`) yang dimuat. Cocokkan host
-temuan → entri scope dengan exact lalu wildcard (mis. `app.deriv.com` → `*.deriv.com`).
+Gives C3 (bounty) real data: `max_severity` + `eligible_for_bounty` per asset.
+Only in-scope assets (`eligible_for_submission=true`) are loaded. Match a finding
+host -> a scope entry by exact then wildcard (e.g. `app.deriv.com` -> `*.deriv.com`).
 
-Read-only, offline (baca file CSV lokal). Tak menyentuh jaringan/target.
+Read-only, offline (reads a local CSV file). Does not touch the network/target.
 """
 from __future__ import annotations
 
@@ -15,15 +15,15 @@ from typing import Dict, Optional
 
 def _host_of(identifier: str) -> str:
     s = identifier.strip().lower()
-    s = re.sub(r"^[a-z][\w+.\-]*://", "", s)   # buang skema
-    s = s.split("/", 1)[0].split("?", 1)[0]    # buang path/query
-    return s.split(":", 1)[0]                   # buang port
+    s = re.sub(r"^[a-z][\w+.\-]*://", "", s)   # drop the scheme
+    s = s.split("/", 1)[0].split("?", 1)[0]    # drop path/query
+    return s.split(":", 1)[0]                   # drop the port
 
 
 class ScopeTable:
-    """Lookup host → {max_severity, eligible_for_bounty}. Exact lalu wildcard.
-    Out-of-scope MENANG (sesuai BH-SPEC-SCOPE): host yang cocok exclusion → None,
-    walau ada wildcard in-scope yang menutupinya."""
+    """Look up host -> {max_severity, eligible_for_bounty}. Exact then wildcard.
+    Out-of-scope WINS (per BH-SPEC-SCOPE): a host matching an exclusion -> None,
+    even when an in-scope wildcard would cover it."""
 
     def __init__(self) -> None:
         self.exact: Dict[str, dict] = {}
@@ -34,7 +34,7 @@ class ScopeTable:
     @staticmethod
     def _wildcard_hit(h: str, table) -> Optional[str]:
         parts = h.split(".")
-        for i in range(len(parts) - 1):           # deriv.com, com → cocok *.deriv.com
+        for i in range(len(parts) - 1):           # deriv.com, com -> matches *.deriv.com
             base = ".".join(parts[i:])
             if base in table:
                 return base
@@ -50,7 +50,7 @@ class ScopeTable:
         if not host:
             return default
         h = _host_of(host)
-        if self.excluded(h):                      # out-of-scope menang
+        if self.excluded(h):                      # out-of-scope wins
             return default
         if h in self.exact:
             return self.exact[h]
@@ -69,9 +69,9 @@ def _meta(row: dict) -> dict:
 
 
 def load_csv(path: str) -> ScopeTable:
-    """Muat scope dari CSV HackerOne (kolom: identifier, eligible_for_submission,
-    eligible_for_bounty, max_severity). Baris in-scope (submission=true) → meta
-    bounty; baris out-of-scope → exclusion (menang atas wildcard in-scope)."""
+    """Load scope from a HackerOne CSV (columns: identifier, eligible_for_submission,
+    eligible_for_bounty, max_severity). An in-scope row (submission=true) -> bounty
+    meta; an out-of-scope row -> an exclusion (wins over an in-scope wildcard)."""
     t = ScopeTable()
     with open(path, newline="", encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
@@ -90,7 +90,7 @@ def load_csv(path: str) -> ScopeTable:
             else:
                 host = _host_of(ident)
                 if "*" in host or "." not in host:
-                    continue  # bentuk aneh / bukan host → lewati
+                    continue  # odd shape / not a host -> skip
                 if in_scope:
                     t.exact[host] = _meta(row)
                 else:

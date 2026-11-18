@@ -8,9 +8,9 @@ import (
 	"bughound/internal/jobs"
 )
 
-// TestRunStoreRoundTrip memverifikasi Mem & SQLite mengimplementasikan jobs.Store
-// dengan benar: simpan (termasuk upsert), muat terurut terlama-dulu dengan Summary
-// utuh, dan hapus.
+// TestRunStoreRoundTrip checks that Mem and SQLite implement jobs.Store
+// correctly: save (including upsert), load sorted oldest first with the Summary
+// intact, and delete.
 func TestRunStoreRoundTrip(t *testing.T) {
 	run := func(t *testing.T, st jobs.Store) {
 		ctx := context.Background()
@@ -36,20 +36,20 @@ func TestRunStoreRoundTrip(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(got) != 2 {
-			t.Fatalf("muat %d run, ingin 2", len(got))
+			t.Fatalf("loaded %d runs, want 2", len(got))
 		}
 		if got[0].ID != "run_a" || got[1].ID != "run_b" {
-			t.Errorf("harus terlama dulu, dapat %s,%s", got[0].ID, got[1].ID)
+			t.Errorf("must be oldest first, got %s,%s", got[0].ID, got[1].ID)
 		}
 		if g := got[0]; g.Summary.Saved != 3 || g.Summary.Discovered != 5 || g.Summary.Duplicates != 1 ||
 			len(g.Summary.Scanned) != 1 || len(g.Summary.Denied) != 1 {
-			t.Errorf("Summary tak bertahan utuh: %+v", g.Summary)
+			t.Errorf("the Summary did not survive intact: %+v", g.Summary)
 		}
 		if !got[0].FinishedAt.Equal(base.Add(2 * time.Second)) {
-			t.Errorf("FinishedAt tak bertahan: %v", got[0].FinishedAt)
+			t.Errorf("FinishedAt did not survive: %v", got[0].FinishedAt)
 		}
 
-		// Upsert: ubah status run_b.
+		// Upsert: change the status of run_b.
 		r2.Status = jobs.Done
 		r2.FinishedAt = base.Add(20 * time.Second)
 		if err := st.SaveRun(ctx, r2); err != nil {
@@ -57,7 +57,7 @@ func TestRunStoreRoundTrip(t *testing.T) {
 		}
 		got, _ = st.LoadRuns(ctx)
 		if len(got) != 2 {
-			t.Fatalf("upsert tak boleh menambah baris, ada %d", len(got))
+			t.Fatalf("an upsert must not add a row, there are %d", len(got))
 		}
 		var b *jobs.Run
 		for _, r := range got {
@@ -66,7 +66,7 @@ func TestRunStoreRoundTrip(t *testing.T) {
 			}
 		}
 		if b == nil || b.Status != jobs.Done {
-			t.Errorf("upsert status gagal: %+v", b)
+			t.Errorf("status upsert failed: %+v", b)
 		}
 
 		// Delete.
@@ -75,11 +75,11 @@ func TestRunStoreRoundTrip(t *testing.T) {
 		}
 		got, _ = st.LoadRuns(ctx)
 		if len(got) != 1 || got[0].ID != "run_b" {
-			t.Errorf("hapus gagal: %+v", got)
+			t.Errorf("delete failed: %+v", got)
 		}
-		// Hapus id tak dikenal = no-op tanpa error.
-		if err := st.DeleteRun(ctx, "tidak-ada"); err != nil {
-			t.Errorf("hapus id asing harus no-op: %v", err)
+		// Deleting an unknown id = a no-op without an error.
+		if err := st.DeleteRun(ctx, "missing"); err != nil {
+			t.Errorf("deleting an unknown id must be a no-op: %v", err)
 		}
 	}
 

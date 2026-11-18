@@ -7,8 +7,8 @@ import (
 	"bughound/internal/finding"
 )
 
-// codeqlSARIF: gaya CodeQL — rules dengan security-severity numerik + tag
-// external/cwe/cwe-###, results menunjuk rule via ruleIndex.
+// codeqlSARIF: CodeQL style. Rules with a numeric security-severity + tags
+// external/cwe/cwe-###; results point at a rule through ruleIndex.
 const codeqlSARIF = `{
   "runs": [{
     "tool": {"driver": {"name": "CodeQL", "rules": [
@@ -33,8 +33,8 @@ const codeqlSARIF = `{
   }]
 }`
 
-// gitleaksSARIF: gaya gitleaks — level error, cwe sebagai string tunggal, snippet
-// berisi rahasia (harus bisa diredaksi).
+// gitleaksSARIF: gitleaks style. Level error, cwe as a single string, a snippet
+// holding a secret (it must be redactable).
 const gitleaksSARIF = `{
   "runs": [{
     "tool": {"driver": {"name": "gitleaks", "rules": [
@@ -65,49 +65,49 @@ func TestNormalizeSARIFCodeQL(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(fs) != 2 {
-		t.Fatalf("mau 2 temuan, dapat %d", len(fs))
+		t.Fatalf("want 2 findings, got %d", len(fs))
 	}
 	sqli := findByType(fs, "js/sql-injection")
 	if sqli == nil {
-		t.Fatal("temuan sql-injection hilang")
+		t.Fatal("the sql-injection finding is missing")
 	}
-	// security-severity 9.8 → critical (menang atas level error=high).
+	// security-severity 9.8 → critical (wins over level error=high).
 	if sqli.Severity != finding.SeverityCritical {
-		t.Errorf("severity: mau critical, dapat %s", sqli.Severity)
+		t.Errorf("severity: want critical, got %s", sqli.Severity)
 	}
 	if sqli.Location.URL != "src/db.js:42" {
-		t.Errorf("location: mau src/db.js:42, dapat %s", sqli.Location.URL)
+		t.Errorf("location: want src/db.js:42, got %s", sqli.Location.URL)
 	}
 	if sqli.Title != "Database query built from user-controlled sources" {
-		t.Errorf("title dari shortDescription salah: %q", sqli.Title)
+		t.Errorf("wrong title from shortDescription: %q", sqli.Title)
 	}
 	if sqli.SourceEngine != "codeql" {
-		t.Errorf("source engine: mau codeql, dapat %s", sqli.SourceEngine)
+		t.Errorf("source engine: want codeql, got %s", sqli.SourceEngine)
 	}
 	if got := strings.Join(sqli.CWE, ","); got != "CWE-89" {
-		t.Errorf("CWE dari tag external/cwe/cwe-089: mau CWE-89, dapat %q", got)
+		t.Errorf("CWE from tag external/cwe/cwe-089: want CWE-89, got %q", got)
 	}
-	// tag teknis (external/cwe/..., precision/...) dibuang dari Tags tampil.
+	// Technical tags (external/cwe/..., precision/...) are dropped from the displayed Tags.
 	for _, tag := range sqli.Tags {
 		if strings.Contains(tag, "/") {
-			t.Errorf("tag teknis bocor ke Tags: %q", tag)
+			t.Errorf("a technical tag leaked into Tags: %q", tag)
 		}
 	}
 	if sqli.Evidence == nil || !strings.Contains(sqli.Evidence.Matched, "SELECT") {
-		t.Errorf("evidence snippet hilang")
+		t.Errorf("the evidence snippet is missing")
 	}
 	// security-severity 5.0 → medium.
 	rand := findByType(fs, "js/weak-rand")
 	if rand == nil || rand.Severity != finding.SeverityMedium {
-		t.Errorf("weak-rand: mau medium, dapat %v", rand)
+		t.Errorf("weak-rand: want medium, got %v", rand)
 	}
 	if rand.Evidence != nil {
-		t.Errorf("tanpa snippet seharusnya tak ada evidence, dapat %q", rand.Evidence.Matched)
+		t.Errorf("without a snippet there should be no evidence, got %q", rand.Evidence.Matched)
 	}
 }
 
 func TestNormalizeSARIFGitleaksRedaction(t *testing.T) {
-	// redact: ganti nilai setelah '=' dengan mask (simulasi sensor secret).
+	// redact: replace the value after '=' with a mask (simulates secret redaction).
 	redact := func(s string) string {
 		if i := strings.IndexByte(s, '='); i >= 0 {
 			return s[:i+1] + "***REDACTED***"
@@ -119,34 +119,34 @@ func TestNormalizeSARIFGitleaksRedaction(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(fs) != 1 {
-		t.Fatalf("mau 1, dapat %d", len(fs))
+		t.Fatalf("want 1, got %d", len(fs))
 	}
 	f := fs[0]
 	if f.Severity != finding.SeverityHigh { // level error → high
-		t.Errorf("severity: mau high, dapat %s", f.Severity)
+		t.Errorf("severity: want high, got %s", f.Severity)
 	}
 	if got := strings.Join(f.CWE, ","); got != "CWE-798" {
-		t.Errorf("CWE string tunggal: mau CWE-798, dapat %q", got)
+		t.Errorf("single-string CWE: want CWE-798, got %q", got)
 	}
 	if f.Evidence == nil {
-		t.Fatal("evidence hilang")
+		t.Fatal("the evidence is missing")
 	}
 	if strings.Contains(f.Evidence.Matched, "AKIAIOSFODNN7EXAMPLE") {
-		t.Errorf("SECRET BOCOR ke evidence: %q", f.Evidence.Matched)
+		t.Errorf("SECRET LEAKED into the evidence: %q", f.Evidence.Matched)
 	}
 	if !strings.Contains(f.Evidence.Matched, "REDACTED") {
-		t.Errorf("evidence tak teredaksi: %q", f.Evidence.Matched)
+		t.Errorf("the evidence is not redacted: %q", f.Evidence.Matched)
 	}
 }
 
 func TestNormalizeSARIFRedactDropsEvidence(t *testing.T) {
-	// redact mengembalikan kosong → evidence tak diisi sama sekali.
+	// redact returns empty → the evidence is not filled in at all.
 	fs, err := NormalizeSARIF([]byte(gitleaksSARIF), "gitleaks", func(string) string { return "" })
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
 	if fs[0].Evidence != nil {
-		t.Errorf("redact kosong harus hilangkan evidence, dapat %q", fs[0].Evidence.Matched)
+		t.Errorf("an empty redact must drop the evidence, got %q", fs[0].Evidence.Matched)
 	}
 }
 
@@ -156,12 +156,12 @@ func TestNormalizeSARIFEmpty(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 	if len(fs) != 0 {
-		t.Errorf("mau 0 temuan, dapat %d", len(fs))
+		t.Errorf("want 0 findings, got %d", len(fs))
 	}
 }
 
 func TestNormalizeSARIFInvalid(t *testing.T) {
-	if _, err := NormalizeSARIF([]byte("bukan json"), "x", nil); err == nil {
-		t.Error("mau error pada json rusak")
+	if _, err := NormalizeSARIF([]byte("not json"), "x", nil); err == nil {
+		t.Error("want an error on broken json")
 	}
 }

@@ -2,21 +2,21 @@ package bughound.burp;
 
 import java.util.List;
 
-// Model JSON dari API baca-saja bughound (/api/v1/findings — lihat
-// internal/web/api.go). Dipetakan Gson dengan kebijakan
-// LOWER_CASE_WITH_UNDERSCORES (lihat ApiClient), sehingga field camelCase di
-// sini otomatis cocok dengan snake_case di JSON (mis. responseExcerpt menerima
-// response_excerpt). Hanya field yang dipakai extension yang didefinisikan;
-// field lain di JSON diabaikan dengan aman.
+// JSON models from bughound's read-only API (/api/v1/findings, see
+// internal/web/api.go). Gson maps them with the
+// LOWER_CASE_WITH_UNDERSCORES policy (see ApiClient), so a camelCase field
+// here matches the snake_case JSON automatically (e.g. responseExcerpt takes
+// response_excerpt). Only the fields the extension uses are defined;
+// other JSON fields are ignored safely.
 
-// FindingsResponse membungkus hasil GET /api/v1/findings.
+// FindingsResponse wraps the result of GET /api/v1/findings.
 class FindingsResponse {
     String program;
     int count;
     List<Finding> findings;
 }
 
-// Finding: satu temuan dalam Skema Temuan Seragam (subset yang dipakai UI Burp).
+// Finding: one finding in the Unified Finding Schema (the subset the Burp UI uses).
 class Finding {
     String id;
     String program;
@@ -29,14 +29,14 @@ class Finding {
     Evidence evidence;
 }
 
-// Location: lokasi titik masuk temuan.
+// Location: the finding's entry-point location.
 class Location {
     String url;
     String method;
     String parameter;
 }
 
-// Evidence: bukti; `request` adalah request HTTP mentah yang dikirim ke Repeater.
+// Evidence: the proof; `request` is the raw HTTP request sent to Repeater.
 class Evidence {
     String request;
     String responseExcerpt;

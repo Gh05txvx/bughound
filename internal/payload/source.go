@@ -16,21 +16,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SourceKind menentukan cara sebuah sumber di-scan.
+// SourceKind decides how a source is scanned.
 type SourceKind string
 
 const (
-	// KindNucleiDir: direktori berisi template nuclei (YAML dengan blok `info:`).
-	// Metadata diturunkan otomatis dari body native (BH-SPEC-PAYLOAD §Format).
+	// KindNucleiDir: a directory of nuclei templates (YAML with an `info:` block).
+	// Metadata is derived automatically from the native body (BH-SPEC-PAYLOAD §Format).
 	KindNucleiDir SourceKind = "nuclei-dir"
-	// KindCustomDir: direktori template milik sendiri. Template nuclei-style
-	// diturunkan dari `info:`; payload lain memakai sidecar `<nama>.meta.yaml`.
+	// KindCustomDir: a directory of your own templates. nuclei-style templates
+	// are derived from `info:`; other payloads use a `<name>.meta.yaml` sidecar.
 	KindCustomDir SourceKind = "custom-dir"
 )
 
-// Source adalah satu sumber template yang didaftarkan di konfigurasi
-// (BH-SPEC-PAYLOAD §Struktur bank & sumber). Menambah sumber = menambah satu
-// entri konfigurasi; tak perlu mengubah kode.
+// Source is one template source registered in the configuration
+// (BH-SPEC-PAYLOAD §Bank structure and sources). Adding a source = adding one
+// configuration entry; no code change is needed.
 type Source struct {
 	ID     string
 	Engine string
@@ -39,18 +39,18 @@ type Source struct {
 	Trust  Trust
 }
 
-// maxTemplateBytes membatasi ukuran file yang dibaca untuk metadata (template
-// nuclei kecil; file raksasa hampir pasti bukan template). Menjaga memori.
+// maxTemplateBytes caps the size of a file read for metadata (nuclei templates
+// are small; a huge file is almost certainly not a template). It protects memory.
 const maxTemplateBytes = 1 << 20 // 1 MiB
 
-// Build men-scan semua sumber dan membangun katalog. Tidak pernah gagal fatal
-// karena satu file rusak atau satu sumber tak tersedia: file yang gagal diurai
-// dilewati, sumber yang direktorinya tak ada ditandai Available=false. Hanya
-// membaca file lokal — tanpa jaringan.
+// Build scans every source and builds the catalog. It never fails fatally
+// because of one broken file or one unavailable source: a file that fails to
+// parse is skipped, and a source whose directory is missing is marked
+// Available=false. It only reads local files, with no network.
 func Build(ctx context.Context, sources []Source) Catalog {
 	now := time.Now().UTC().Truncate(time.Second)
 	cat := Catalog{BuiltAt: now}
-	seen := map[string]bool{} // dedup template_id lintas sumber (yang pertama menang)
+	seen := map[string]bool{} // dedup template_id across sources (the first one wins)
 	for _, src := range sources {
 		entries, info := scanSource(ctx, src, now)
 		info.UpdatedAt = now
@@ -84,22 +84,22 @@ func scanSource(ctx context.Context, src Source, now time.Time) ([]Entry, Source
 		Path: src.Path, Trust: src.Trust,
 	}
 	if strings.TrimSpace(src.Path) == "" {
-		info.Note = "path sumber kosong"
+		info.Note = "source path is empty"
 		return nil, info
 	}
 	st, err := os.Stat(src.Path)
 	if err != nil || !st.IsDir() {
-		info.Note = "direktori tak tersedia"
+		info.Note = "directory not available"
 		return nil, info
 	}
 	info.Available = true
-	info.Version = nucleiTemplatesVersion(src) // best-effort, "" bila tak diketahui
+	info.Version = nucleiTemplatesVersion(src) // best effort, "" when unknown
 
 	var entries []Entry
 	var skipped int
 	_ = filepath.WalkDir(src.Path, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
-			return nil // lewati entri yang tak terbaca, jangan hentikan walk
+			return nil // skip entries that cannot be read, do not stop the walk
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -123,14 +123,13 @@ func scanSource(ctx context.Context, src Source, now time.Time) ([]Entry, Source
 		return nil
 	})
 	if skipped > 0 {
-		info.Note = fmt.Sprintf("%d berkas dilewati (bukan template / gagal urai)", skipped)
+		info.Note = fmt.Sprintf("%d files skipped (not a template / failed to parse)", skipped)
 	}
 	return entries, info
 }
 
-// entryFromFile membangun satu Entry dari file template. Mengembalikan ok=false
-// bila file bukan template yang bisa dikatalogkan (tak ada id/info dan tak ada
-// sidecar).
+// entryFromFile builds one Entry from a template file. It returns ok=false when
+// the file is not a template that can be cataloged (no id/info and no sidecar).
 func entryFromFile(src Source, path string, now time.Time) (Entry, bool) {
 	body, err := readCapped(path)
 	if err != nil {
@@ -140,14 +139,14 @@ func entryFromFile(src Source, path string, now time.Time) (Entry, bool) {
 	version := "sha256:" + hashHex(body)
 
 	var tmpl nucleiTemplate
-	_ = yaml.Unmarshal(body, &tmpl) // abaikan error: file bisa saja bukan template nuclei
+	_ = yaml.Unmarshal(body, &tmpl) // ignore the error: the file may not be a nuclei template
 
-	// Sidecar (opsional) melengkapi/menimpa metadata untuk payload non-nuclei.
+	// The (optional) sidecar completes or overrides the metadata for non-nuclei payloads.
 	sidecar, hasSidecar := readSidecar(path)
 
 	nativeID := strings.TrimSpace(tmpl.ID)
 	if nativeID == "" && !hasSidecar {
-		return Entry{}, false // bukan template nuclei & tak ada sidecar → bukan entri
+		return Entry{}, false // not a nuclei template and no sidecar → not an entry
 	}
 
 	engine := src.Engine
@@ -170,38 +169,38 @@ func entryFromFile(src Source, path string, now time.Time) (Entry, bool) {
 		References: dedupStrings(tmpl.Info.Reference),
 	}
 	if nativeID != "" {
-		e.Type = strings.ToLower(nativeID) // selaras finding.Type (adapter nuclei memakai template-id)
+		e.Type = strings.ToLower(nativeID) // in line with finding.Type (the nuclei adapter uses the template-id)
 	}
 	if sev, known := normSeverity(tmpl.Info.Severity); known {
 		e.SeverityDefault = sev
 	}
 
-	// template_id: "<engine>:<native-id>" (BH-SPEC-PAYLOAD §Pertanyaan terbuka).
+	// template_id: "<engine>:<native-id>" (BH-SPEC-PAYLOAD §Open questions).
 	idPart := nativeID
 	if idPart == "" {
 		idPart = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
 	e.TemplateID = engine + ":" + idPart
 
-	// Terapkan sidecar di atas metadata turunan.
+	// Apply the sidecar on top of the derived metadata.
 	if hasSidecar {
 		applySidecar(&e, sidecar)
 	}
 	if strings.TrimSpace(e.Name) == "" {
 		e.Name = idPart
-		e.Note = "metadata nama tak ditemukan — perlu dilengkapi"
+		e.Note = "name metadata not found; needs completing"
 	}
 	if !e.SeverityDefault.Valid() {
-		e.Note = strings.TrimSpace(e.Note + " severity_default tak diketahui")
+		e.Note = strings.TrimSpace(e.Note + " severity_default unknown")
 	}
-	// Safety: pakai nilai sidecar bila diset & sah; selain itu turunkan dari tag.
+	// Safety: use the sidecar value when it is set and valid; otherwise derive it from the tags.
 	if !e.Safety.Valid() {
 		e.Safety = classifySafety(e.Tags)
 	}
 
 	e.Enabled = e.canEnable()
 	if !e.Enabled && e.Note == "" && e.Trust != TrustTrusted {
-		e.Note = "sumber non-trusted — nonaktif sampai ditinjau"
+		e.Note = "non-trusted source; disabled until reviewed"
 	}
 	return e, true
 }
@@ -228,14 +227,14 @@ func applySidecar(e *Entry, s metaSidecar) {
 	if sf := Safety(strings.ToLower(strings.TrimSpace(s.Safety))); sf.Valid() {
 		e.Safety = sf
 	}
-	// trust sidecar hanya boleh MENURUNKAN, tak boleh menaikkan di atas sumber:
-	// sumber adalah batas kepercayaan, bukan file yang dikatalogkan.
+	// A sidecar's trust may only LOWER the level, never raise it above the source:
+	// the source is the trust boundary, not the cataloged file.
 	if t := Trust(strings.ToLower(strings.TrimSpace(s.Trust))); t.Valid() && trustRank(t) < trustRank(e.Trust) {
 		e.Trust = t
 	}
 }
 
-// nucleiTemplate adalah subset blok yang kita baca dari template nuclei.
+// nucleiTemplate is the subset of blocks we read from a nuclei template.
 type nucleiTemplate struct {
 	ID   string `yaml:"id"`
 	Info struct {
@@ -246,7 +245,7 @@ type nucleiTemplate struct {
 	} `yaml:"info"`
 }
 
-// metaSidecar adalah isi file "<nama>.meta.yaml" untuk payload non-nuclei.
+// metaSidecar is the content of a "<name>.meta.yaml" file for non-nuclei payloads.
 type metaSidecar struct {
 	TemplateID      string   `yaml:"template_id"`
 	Engine          string   `yaml:"engine"`
@@ -259,9 +258,9 @@ type metaSidecar struct {
 	Safety          string   `yaml:"safety"`
 }
 
-// yamlStrList menerima nilai YAML berupa sequence string ATAU satu skalar
-// (dipisah koma), karena template nuclei menulis tags/reference dengan salah
-// satu bentuk.
+// yamlStrList accepts a YAML value that is a sequence of strings OR a single
+// scalar (comma-separated), because nuclei templates write tags/reference in
+// either form.
 type yamlStrList []string
 
 func (s *yamlStrList) UnmarshalYAML(node *yaml.Node) error {
@@ -301,8 +300,9 @@ func readSidecar(templatePath string) (metaSidecar, bool) {
 	return metaSidecar{}, false
 }
 
-// nucleiTemplatesVersion mencoba membaca versi nuclei-templates dari konfigurasi
-// nuclei (~/.config/nuclei/.templates-config.json). Best-effort; "" bila gagal.
+// nucleiTemplatesVersion tries to read the nuclei-templates version from the
+// nuclei configuration (~/.config/nuclei/.templates-config.json). Best effort;
+// "" on failure.
 func nucleiTemplatesVersion(src Source) string {
 	if src.Kind != KindNucleiDir {
 		return ""
@@ -334,7 +334,7 @@ func readCapped(path string) ([]byte, error) {
 		return nil, err
 	}
 	if st.Size() > maxTemplateBytes {
-		return nil, fmt.Errorf("payload: berkas terlalu besar (%d byte)", st.Size())
+		return nil, fmt.Errorf("payload: file too large (%d bytes)", st.Size())
 	}
 	return os.ReadFile(path)
 }
@@ -388,8 +388,8 @@ func trustRank(t Trust) int {
 	return 0
 }
 
-// ResolveNucleiDir memilih direktori nuclei-templates: argumen eksplisit →
-// env NUCLEI_TEMPLATES_DIR → $HOME/nuclei-templates (lokasi default nuclei).
+// ResolveNucleiDir picks the nuclei-templates directory: the explicit argument
+// → env NUCLEI_TEMPLATES_DIR → $HOME/nuclei-templates (nuclei's default location).
 func ResolveNucleiDir(explicit string) string {
 	if strings.TrimSpace(explicit) != "" {
 		return explicit
@@ -403,9 +403,10 @@ func ResolveNucleiDir(explicit string) string {
 	return ""
 }
 
-// DefaultSources membangun daftar sumber bawaan: nuclei-templates resmi (trusted,
-// di-bake saat build image) + direktori custom milik sendiri bila dikonfigurasi.
-// customDir kosong → coba env BUGHOUND_CUSTOM_TEMPLATES; tetap kosong → dilewati.
+// DefaultSources builds the built-in source list: the official nuclei-templates
+// (trusted, baked in when the image is built) + your own custom directory when
+// one is configured. An empty customDir → try env BUGHOUND_CUSTOM_TEMPLATES;
+// still empty → skipped.
 func DefaultSources(nucleiDir, customDir string) []Source {
 	var out []Source
 	if d := ResolveNucleiDir(nucleiDir); d != "" {

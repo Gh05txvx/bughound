@@ -2,17 +2,18 @@ package finding
 
 import "strings"
 
-// RedactHeaders menyensor NILAI header bernama names (case-insensitive) dari
-// setiap field evidence tekstual, mengganti "Nama: <nilai>" menjadi
-// "Nama: [REDACTED]". Nama header & struktur request lain dipertahankan agar
-// evidence tetap berguna untuk verifikasi manual (mis. diputar ulang di Burp,
-// di mana hunter memasang sesinya sendiri).
+// RedactHeaders redacts the VALUE of the headers in names (case-insensitive)
+// from every textual evidence field, turning "Name: <value>" into
+// "Name: [REDACTED]". The header name and the rest of the request structure
+// are kept so the evidence stays useful for manual verification (e.g. replayed
+// in Burp, where the hunter supplies their own session).
 //
-// Dipakai saat scan membawa header autentikasi (Lever 1): engine mencatat
-// request lengkap termasuk header yang disuntikkan, jadi kredensial sesi bisa
-// ikut ke evidence. Redaksi ini memastikan secret tak pernah tersimpan di
-// evidence/report (Prinsip #5: secret tak bocor ke log/respons/report).
-// names = nama header yang disuntikkan (mis. "Cookie", "Authorization").
+// It is used when a scan carries authentication headers (Lever 1): engines
+// record the full request including the injected headers, so session
+// credentials can end up in the evidence. This redaction makes sure a secret
+// is never stored in evidence or reports (Principle #5: secrets do not leak to
+// logs/responses/reports). names = the injected header names (e.g. "Cookie",
+// "Authorization").
 func (e *Evidence) RedactHeaders(names []string) {
 	if e == nil || len(names) == 0 {
 		return
@@ -23,9 +24,9 @@ func (e *Evidence) RedactHeaders(names []string) {
 	e.Matched = redactHeaderLines(e.Matched, names)
 }
 
-// redactHeaderLines menyensor nilai pada baris yang namanya (sebelum ':')
-// cocok salah satu names. Hanya baris bergaya header "Nama: nilai" yang
-// terpengaruh; baris lain (request-line, body) utuh. CRLF dipertahankan.
+// redactHeaderLines redacts the value on lines whose name (before ':') matches
+// one of names. Only header-style "Name: value" lines are affected; other lines
+// (request line, body) are left intact. CRLF is preserved.
 func redactHeaderLines(s string, names []string) string {
 	if s == "" {
 		return s

@@ -10,9 +10,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// SQLiteVault adalah Vault berbasis SQLite (terisolasi; default di file terpisah
-// dari temuan). Hanya ciphertext yang disimpan — plaintext tak pernah menyentuh
-// disk.
+// SQLiteVault is a Vault backed by SQLite (isolated; by default in a file
+// separate from the findings). Only ciphertext is stored; plaintext never
+// touches the disk.
 type SQLiteVault struct {
 	db       *sql.DB
 	kr       *Keyring
@@ -20,14 +20,14 @@ type SQLiteVault struct {
 	onReveal func(scope, name string)
 }
 
-// SetRevealHook: lihat Vault.SetRevealHook.
+// SetRevealHook: see Vault.SetRevealHook.
 func (v *SQLiteVault) SetRevealHook(fn func(scope, name string)) { v.onReveal = fn }
 
-// OpenSQLiteVault membuka/membuat vault pada path.
+// OpenSQLiteVault opens or creates the vault at path.
 func OpenSQLiteVault(path string, kr *Keyring) (*SQLiteVault, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, fmt.Errorf("secret: buka vault: %w", err)
+		return nil, fmt.Errorf("secret: open vault: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	v := &SQLiteVault{db: db, kr: kr, now: time.Now}
@@ -62,7 +62,7 @@ func (v *SQLiteVault) init() error {
 
 func (v *SQLiteVault) Put(ctx context.Context, scope, name string, value []byte) error {
 	if name = strings.TrimSpace(name); name == "" {
-		return fmt.Errorf("secret: nama wajib")
+		return fmt.Errorf("secret: name is required")
 	}
 	token, err := v.kr.Encrypt(value)
 	if err != nil {
@@ -76,7 +76,7 @@ func (v *SQLiteVault) Put(ctx context.Context, scope, name string, value []byte)
 		   token=excluded.token, key_id=excluded.key_id, updated_at=excluded.updated_at`,
 		normScope(scope), name, token, v.kr.ActiveID(), now, now)
 	if err != nil {
-		return fmt.Errorf("secret: simpan: %w", err)
+		return fmt.Errorf("secret: save: %w", err)
 	}
 	return nil
 }
@@ -89,7 +89,7 @@ func (v *SQLiteVault) Reveal(ctx context.Context, scope, name string) ([]byte, e
 		return nil, ErrSecretNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("secret: ambil: %w", err)
+		return nil, fmt.Errorf("secret: get: %w", err)
 	}
 	pt, derr := v.kr.Decrypt(token)
 	if derr == nil && v.onReveal != nil {
@@ -103,7 +103,7 @@ func (v *SQLiteVault) List(ctx context.Context, scope string) ([]Meta, error) {
 		`SELECT name,key_id,created_at,updated_at FROM secrets WHERE scope=? ORDER BY name`,
 		normScope(scope))
 	if err != nil {
-		return nil, fmt.Errorf("secret: daftar: %w", err)
+		return nil, fmt.Errorf("secret: list: %w", err)
 	}
 	defer rows.Close()
 	var out []Meta
@@ -122,7 +122,7 @@ func (v *SQLiteVault) List(ctx context.Context, scope string) ([]Meta, error) {
 func (v *SQLiteVault) Delete(ctx context.Context, scope, name string) error {
 	res, err := v.db.ExecContext(ctx, `DELETE FROM secrets WHERE scope=? AND name=?`, normScope(scope), name)
 	if err != nil {
-		return fmt.Errorf("secret: hapus: %w", err)
+		return fmt.Errorf("secret: delete: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrSecretNotFound

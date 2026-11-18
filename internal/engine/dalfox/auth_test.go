@@ -15,10 +15,10 @@ func TestArgsAuthHeaders(t *testing.T) {
 	hdr := "Cookie: session=abc"
 	r := &Runner{proxyAddr: "127.0.0.1:1"}
 	if hasHeaderArg(r.args("http://t", "out.json"), hdr) {
-		t.Error("tanpa UseAuthHeaders tak boleh ada -H")
+		t.Error("without UseAuthHeaders there must be no -H")
 	}
 	r.UseAuthHeaders([]string{hdr})
 	if !hasHeaderArg(r.args("http://t", "out.json"), hdr) {
-		t.Errorf("args harus memuat -H %q", hdr)
+		t.Errorf("args must hold -H %q", hdr)
 	}
 }

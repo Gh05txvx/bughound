@@ -11,21 +11,21 @@ import (
 	"bughound/internal/store"
 )
 
-// Pengujian audit (BH-P03-APPSEC): nilai secret yang tersimpan tidak boleh
-// pernah muncul di endpoint mana pun (findings, report, audit, settings, scan).
+// Audit test (BH-P03-APPSEC): a stored secret value must
+// never appear on any endpoint (findings, report, audit, settings, scan).
 func TestAudit_SecretNeverLeaksAcrossEndpoints(t *testing.T) {
 	srv, st := newTestServer(t)
 	ctx := context.Background()
 	const canary = "LEAK-CANARY-9z8y7x"
 
-	// Simpan secret lewat Settings.
+	// Store a secret through Settings.
 	if rec := do(t, srv, "POST", "/settings/secrets", url.Values{
 		"scope": {"global"}, "name": {"engine-token"}, "value": {canary},
 	}); rec.Code != 303 {
-		t.Fatalf("simpan secret = %d", rec.Code)
+		t.Fatalf("save secret = %d", rec.Code)
 	}
 
-	// Jalankan scan + konfirmasi + report (jalur yang paling mungkin membocorkan).
+	// Run a scan + confirm + report (the paths most likely to leak).
 	rec := do(t, srv, "POST", "/scan", url.Values{
 		"program": {"demo"}, "in_scope": {"demo.test"}, "targets": {"demo.test"},
 	})
@@ -47,12 +47,12 @@ func TestAudit_SecretNeverLeaksAcrossEndpoints(t *testing.T) {
 	for _, ep := range endpoints {
 		body := do(t, srv, "GET", ep, nil).Body.String()
 		if strings.Contains(body, canary) {
-			t.Errorf("KEBOCORAN: nilai secret muncul di %s", ep)
+			t.Errorf("LEAK: the secret value appears at %s", ep)
 		}
 	}
 }
 
-// Audit trail harus tetap utuh (Verify OK) setelah banyak operasi.
+// The audit trail must stay intact (Verify OK) after many operations.
 func TestAudit_TrailIntegrityAfterManyOps(t *testing.T) {
 	srv, _ := newTestServer(t)
 	for i := 0; i < 3; i++ {
@@ -63,29 +63,29 @@ func TestAudit_TrailIntegrityAfterManyOps(t *testing.T) {
 		waitRunDone(t, srv, runIDFrom(t, rec.Body.String()))
 	}
 	body := do(t, srv, "GET", "/audit?program=demo", nil).Body.String()
-	if !strings.Contains(body, "integritas OK") {
-		t.Error("audit trail harus tetap terverifikasi utuh setelah banyak run")
+	if !strings.Contains(body, "integrity OK") {
+		t.Error("the audit trail must stay verified intact after many runs")
 	}
-	if strings.Contains(body, "INTEGRITAS RUSAK") {
-		t.Error("audit trail tidak boleh rusak")
+	if strings.Contains(body, "INTEGRITY BROKEN") {
+		t.Error("the audit trail must not be broken")
 	}
 }
 
-// Remediasi BH-F01: POST tanpa token CSRF / lintas-situs harus ditolak.
+// BH-F01 remediation: a POST without a CSRF token / cross-site must be denied.
 func TestAudit_CSRFBlocksForgedPost(t *testing.T) {
 	srv, _ := newTestServer(t)
 	form := url.Values{"program": {"x"}, "in_scope": {"demo.test"}, "targets": {"demo.test"}}
 
-	// Tanpa cookie & token -> 403.
+	// Without a cookie & token -> 403.
 	req := httptest.NewRequest("POST", "/scan", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
-		t.Fatalf("POST tanpa CSRF harus 403, dapat %d", rec.Code)
+		t.Fatalf("POST without CSRF must be 403, got %d", rec.Code)
 	}
 
-	// Token valid tapi Sec-Fetch-Site: cross-site -> tetap 403.
+	// Valid token but Sec-Fetch-Site: cross-site -> still 403.
 	gr := httptest.NewRecorder()
 	srv.ServeHTTP(gr, httptest.NewRequest("GET", "/scan", nil))
 	var tok string
@@ -102,19 +102,19 @@ func TestAudit_CSRFBlocksForgedPost(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	srv.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusForbidden {
-		t.Fatalf("POST lintas-situs harus 403, dapat %d", rec2.Code)
+		t.Fatalf("a cross-site POST must be 403, got %d", rec2.Code)
 	}
 }
 
-// Regresi: form POST non-HTMX yang SAH memakai token di field + `Origin: null`
-// (dikirim Chromium untuk navigasi form same-origin di bawah Referrer-Policy:
-// no-referrer) harus DITERIMA. Sebelum perbaikan, Origin "null" dianggap
-// mismatch dan menolak semua form non-HTMX. Pertahanan tetap: token wajib &
-// lintas-situs tetap ditolak.
+// Regression: a VALID non-HTMX form POST using the token in a field + `Origin: null`
+// (sent by Chromium for a same-origin form navigation under Referrer-Policy:
+// no-referrer) must be ACCEPTED. Before the fix, Origin "null" was treated as a
+// mismatch and rejected every non-HTMX form. The defense stays: the token is required &
+// cross-site is still denied.
 func TestAudit_CSRFFormFieldNullOriginAccepted(t *testing.T) {
 	srv, st := newTestServer(t)
 
-	// Ambil cookie token dari GET.
+	// Take the token cookie from the GET.
 	gr := httptest.NewRecorder()
 	srv.ServeHTTP(gr, httptest.NewRequest("GET", "/programs/edit", nil))
 	var tok string
@@ -124,11 +124,11 @@ func TestAudit_CSRFFormFieldNullOriginAccepted(t *testing.T) {
 		}
 	}
 	if tok == "" {
-		t.Fatal("tidak dapat token CSRF dari GET")
+		t.Fatal("could not get the CSRF token from the GET")
 	}
 	form := url.Values{"name": {"csrfnull"}, "in_scope": {"demo.test"}}
 
-	// Token di FIELD body (bukan header) + Origin: null + same-origin -> 303.
+	// Token in a body FIELD (not the header) + Origin: null + same-origin -> 303.
 	req := httptest.NewRequest("POST", "/programs", strings.NewReader(addField(form, "csrf", tok).Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(&http.Cookie{Name: csrfCookie, Value: tok})
@@ -137,24 +137,24 @@ func TestAudit_CSRFFormFieldNullOriginAccepted(t *testing.T) {
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("form POST sah (Origin: null) harus 303, dapat %d", rec.Code)
+		t.Fatalf("a valid form POST (Origin: null) must be 303, got %d", rec.Code)
 	}
 	if _, err := st.GetProgram(context.Background(), "csrfnull"); err != nil {
-		t.Fatalf("program harus tersimpan setelah POST diterima: %v", err)
+		t.Fatalf("the program must be stored after the POST is accepted: %v", err)
 	}
 
-	// Token SALAH + Origin: null -> tetap 403 (token tetap wajib).
-	bad := httptest.NewRequest("POST", "/programs", strings.NewReader(addField(form, "csrf", "salah").Encode()))
+	// A WRONG token + Origin: null -> still 403 (the token stays required).
+	bad := httptest.NewRequest("POST", "/programs", strings.NewReader(addField(form, "csrf", "wrong").Encode()))
 	bad.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	bad.AddCookie(&http.Cookie{Name: csrfCookie, Value: tok})
 	bad.Header.Set("Origin", "null")
 	badRec := httptest.NewRecorder()
 	srv.ServeHTTP(badRec, bad)
 	if badRec.Code != http.StatusForbidden {
-		t.Fatalf("token salah (Origin: null) harus tetap 403, dapat %d", badRec.Code)
+		t.Fatalf("a wrong token (Origin: null) must still be 403, got %d", badRec.Code)
 	}
 
-	// Origin: null + Sec-Fetch-Site: cross-site -> tetap 403 (lintas-situs ditolak).
+	// Origin: null + Sec-Fetch-Site: cross-site -> still 403 (cross-site denied).
 	xs := httptest.NewRequest("POST", "/programs", strings.NewReader(addField(form, "csrf", tok).Encode()))
 	xs.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	xs.AddCookie(&http.Cookie{Name: csrfCookie, Value: tok})
@@ -163,11 +163,11 @@ func TestAudit_CSRFFormFieldNullOriginAccepted(t *testing.T) {
 	xsRec := httptest.NewRecorder()
 	srv.ServeHTTP(xsRec, xs)
 	if xsRec.Code != http.StatusForbidden {
-		t.Fatalf("lintas-situs (Origin: null) harus 403, dapat %d", xsRec.Code)
+		t.Fatalf("cross-site (Origin: null) must be 403, got %d", xsRec.Code)
 	}
 }
 
-// addField mengembalikan salinan v dengan satu field tambahan.
+// addField returns a copy of v with one extra field.
 func addField(v url.Values, k, val string) url.Values {
 	out := url.Values{}
 	for kk, vv := range v {
@@ -177,38 +177,38 @@ func addField(v url.Values, k, val string) url.Values {
 	return out
 }
 
-// Remediasi BH-F01: HTTP Basic auth (otomasi/CLI) terhadap UserStore.
+// BH-F01 remediation: HTTP Basic auth (automation/CLI) against the UserStore.
 func TestAudit_BasicAuthEnforced(t *testing.T) {
 	srv, _ := newAuthServer(t, "ops", "s3kret")
 
-	// Tanpa kredensial (browser) -> redirect ke halaman login ber-sesi.
+	// Without credentials (browser) -> redirect to the session login page.
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/scan", nil))
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login" {
-		t.Fatalf("tanpa auth harus redirect ke /login, dapat %d (loc=%q)", rec.Code, rec.Header().Get("Location"))
+		t.Fatalf("without auth must redirect to /login, got %d (loc=%q)", rec.Code, rec.Header().Get("Location"))
 	}
-	// Username + password benar -> 200.
+	// Correct username + password -> 200.
 	req := httptest.NewRequest("GET", "/scan", nil)
 	req.SetBasicAuth("ops", "s3kret")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("auth benar harus 200, dapat %d", rec.Code)
+		t.Fatalf("correct auth must be 200, got %d", rec.Code)
 	}
-	// Password salah -> 401.
+	// Wrong password -> 401.
 	req = httptest.NewRequest("GET", "/scan", nil)
-	req.SetBasicAuth("ops", "salah")
+	req.SetBasicAuth("ops", "wrong")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("password salah harus 401, dapat %d", rec.Code)
+		t.Fatalf("a wrong password must be 401, got %d", rec.Code)
 	}
-	// Username tak dikenal -> 401.
+	// Unknown username -> 401.
 	req = httptest.NewRequest("GET", "/scan", nil)
 	req.SetBasicAuth("ghost", "s3kret")
 	rec = httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("username tak dikenal harus 401, dapat %d", rec.Code)
+		t.Fatalf("an unknown username must be 401, got %d", rec.Code)
 	}
 }

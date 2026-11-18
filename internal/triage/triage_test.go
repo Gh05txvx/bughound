@@ -22,12 +22,12 @@ func eqFloats(a, b []float64) bool {
 	return true
 }
 
-// mk membuat Finding uji minimal (semua field wajib terisi agar realistis).
+// mk builds a minimal test Finding (every required field set, to stay realistic).
 func mk(id string, opts ...func(*finding.Finding)) *finding.Finding {
 	f := &finding.Finding{
 		SchemaVersion: finding.CurrentSchemaVersion,
 		ID:            id,
-		DedupKey:      id, // default: tiap temuan klaster sendiri
+		DedupKey:      id, // default: each finding is its own cluster
 		Program:       "demo",
 		RunID:         "run1",
 		Target:        "https://demo.test",
@@ -83,10 +83,10 @@ func TestSignal(t *testing.T) {
 		{"high reflected xss", "reflected xss", "", 1.0},
 		{"high sql injection phrase", "sql injection in search", "", 1.0},
 		{"neutral default", "big-redirect detected", "", 0.5},
-		// substring-safety: pola pendek tak boleh nyangkut sebagai substring.
+		// substring safety: a short pattern must not match as a substring.
 		{"rce not in resource", "exposed resource endpoint", "", 0.5},
 		{"xss only via x-xss-protection stays noise", "x-xss-protection", "", 0.1},
-		// path (extra) hanya MEMPROMOSIKAN ke high, tak menurunkan.
+		// the path (extra) only PROMOTES to high; it never demotes.
 		{"path promote to git", "exposed-path", "/.git/config", 1.0},
 		{"path neutral asset", "exposed-path", "/assets/app.js", 0.5},
 	}
@@ -156,7 +156,7 @@ func TestHostPath(t *testing.T) {
 }
 
 func TestEffortOf(t *testing.T) {
-	// first-match-wins: "blind-sqli" → sqli(2) karena sqli lebih dulu dari blind.
+	// first match wins: "blind-sqli" → sqli(2) because sqli comes before blind.
 	for _, tc := range []struct {
 		typ  string
 		want int
@@ -169,10 +169,11 @@ func TestEffortOf(t *testing.T) {
 	}
 }
 
-// TestRankGolden mengunci pipeline SAW penuh: dua temuan identik kecuali
-// severity (high vs low) → semua kriteria lain ternormalisasi sama (1.0),
-// hanya severity+bounty (proxy severity) yang membedakan. Skor dapat dihitung
-// tangan: high = Σ semua bobot = 1.00 ; low = 1.00 − 0.12·0.5 − 0.16·0.5 = 0.86.
+// TestRankGolden pins the full SAW pipeline: two findings that are identical
+// except for severity (high vs low) → every other criterion normalizes to the
+// same value (1.0), and only severity+bounty (the severity proxy) differ. The
+// scores can be worked out by hand: high = Σ all weights = 1.00 ; low = 1.00 −
+// 0.12·0.5 − 0.16·0.5 = 0.86.
 func TestRankGolden(t *testing.T) {
 	base := func(id string, s finding.Severity) *finding.Finding {
 		return mk(id, dedup(id), typ("sqli"), eng("nuclei-dast"),
@@ -181,7 +182,7 @@ func TestRankGolden(t *testing.T) {
 	hi := base("hi", finding.SeverityHigh)
 	lo := base("lo", finding.SeverityLow)
 
-	got := Rank([]*finding.Finding{lo, hi}) // sengaja urutan input low-dulu
+	got := Rank([]*finding.Finding{lo, hi}) // input order is low first on purpose
 	if len(got) != 2 {
 		t.Fatalf("len = %d, want 2", len(got))
 	}
@@ -193,8 +194,9 @@ func TestRankGolden(t *testing.T) {
 	}
 }
 
-// TestRankSignalBeatsSeverity: temuan header-hygiene severity MEDIUM harus kalah
-// dari SQLi severity MEDIUM — justru inti lever "signal" anti header-noise.
+// TestRankSignalBeatsSeverity: a MEDIUM severity header-hygiene finding must
+// lose to a MEDIUM severity SQLi. That is what the "signal" lever against
+// header noise is for.
 func TestRankSignalBeatsSeverity(t *testing.T) {
 	sqli := mk("sqli", dedup("sqli"), typ("sql injection"), eng("nuclei-dast"),
 		conf(finding.ConfidenceHigh), sev(finding.SeverityMedium), owasp(finding.A03))
@@ -203,43 +205,43 @@ func TestRankSignalBeatsSeverity(t *testing.T) {
 
 	got := Rank([]*finding.Finding{header, sqli})
 	if got[0].Finding.ID != "sqli" {
-		t.Fatalf("rank1 = %q, want sqli (signal harus mengalahkan header-noise)", got[0].Finding.ID)
+		t.Fatalf("rank1 = %q, want sqli (signal must beat header noise)", got[0].Finding.ID)
 	}
-	// Pendorong teratas SQLi harus menyertakan exploitability/signal, bukan severity.
+	// The top drivers for the SQLi must include exploitability/signal, not severity.
 	top := got[0].TopFactors(2)
 	if len(top) != 2 {
 		t.Fatalf("TopFactors len = %d", len(top))
 	}
 	seen := map[string]bool{top[0].Name: true, top[1].Name: true}
 	if !seen["exploitability"] && !seen["signal"] {
-		t.Errorf("top factors = %v, harusnya didominasi exploitability/signal", top)
+		t.Errorf("top factors = %v, should be dominated by exploitability/signal", top)
 	}
 }
 
-// TestPrefilter: buang status duplikat/FP/ignored + info; kolaps klaster ke
-// severity tertinggi; satu wakil per dedup_key.
+// TestPrefilter: drop duplicate/FP/ignored statuses and info; collapse each
+// cluster to its highest severity; one representative per dedup_key.
 func TestPrefilter(t *testing.T) {
 	in := []*finding.Finding{
 		mk("1", dedup("k1"), sev(finding.SeverityLow)),
-		mk("2", dedup("k1"), sev(finding.SeverityHigh)),         // wakil klaster k1 (sev tertinggi)
-		mk("3", dedup("k2"), sev(finding.SeverityInfo)),         // dibuang (info)
-		mk("4", dedup("k3"), stat(finding.StatusDuplicate)),     // dibuang (duplicate)
-		mk("5", dedup("k4"), stat(finding.StatusFalsePositive)), // dibuang (FP)
+		mk("2", dedup("k1"), sev(finding.SeverityHigh)),         // representative of cluster k1 (highest sev)
+		mk("3", dedup("k2"), sev(finding.SeverityInfo)),         // dropped (info)
+		mk("4", dedup("k3"), stat(finding.StatusDuplicate)),     // dropped (duplicate)
+		mk("5", dedup("k4"), stat(finding.StatusFalsePositive)), // dropped (FP)
 		mk("6", dedup("k5"), sev(finding.SeverityMedium)),
 	}
 	got := prefilter(in)
 	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2 (k1 wakil + k5)", len(got))
+		t.Fatalf("len = %d, want 2 (k1 representative + k5)", len(got))
 	}
 	byID := map[string]bool{}
 	for _, f := range got {
 		byID[f.ID] = true
 	}
 	if !byID["2"] {
-		t.Errorf("klaster k1 harus diwakili temuan '2' (severity high), dapat %v", byID)
+		t.Errorf("cluster k1 must be represented by finding '2' (severity high), got %v", byID)
 	}
 	if !byID["6"] {
-		t.Errorf("k5 ('6') hilang, dapat %v", byID)
+		t.Errorf("k5 ('6') is missing, got %v", byID)
 	}
 }
 
@@ -249,6 +251,6 @@ func TestRankEmptyAfterPrefilter(t *testing.T) {
 		mk("2", stat(finding.StatusIgnored)),
 	}
 	if got := Rank(in); got != nil {
-		t.Errorf("Rank = %v, want nil (semua tersaring)", got)
+		t.Errorf("Rank = %v, want nil (everything filtered out)", got)
 	}
 }

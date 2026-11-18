@@ -1,19 +1,19 @@
 import { defineConfig, devices } from '@playwright/test';
 import path from 'node:path';
 
-// Port khusus E2E (hindari bentrok dengan instance dev 8787).
+// E2E-only port (avoid clashing with the dev instance on 8787).
 const PORT = Number(process.env.BH_E2E_PORT ?? 8799);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 const ROOT = path.resolve(__dirname, '..');
 const isWin = process.platform === 'win32';
-// Binary dibangun oleh global-setup (lihat global-setup.ts) ke root repo.
-// Pakai path absolut (dikutip) agar lepas dari resolusi cwd/PATH shell.
+// The binary is built by global-setup (see global-setup.ts) into the repo root.
+// Use an absolute path (quoted) to stay clear of shell cwd/PATH resolution.
 const BIN_ABS = path.join(ROOT, isWin ? 'bughound-e2e.exe' : 'bughound-e2e');
 
 export default defineConfig({
   testDir: './tests',
-  // Determinisme di atas kecepatan: satu server + store in-memory dibagi,
-  // tiap test dipisah oleh nama program unik, dijalankan serial.
+  // Determinism over speed: one shared server + in-memory store,
+  // each test separated by a unique program name, run serially.
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
@@ -30,21 +30,21 @@ export default defineConfig({
   },
 
   projects: [
-    // Aplikasi dioptimalkan desktop; Chromium cukup untuk happy-path.
+    // The app is desktop-optimized; Chromium is enough for the happy path.
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
 
   webServer: {
-    // Bangun lalu jalankan dalam satu perintah. globalSetup TIDAK dipakai:
-    // Playwright memulai webServer SEBELUM globalSetup, jadi binary harus
-    // dibangun di sini. Build hanya meng-compile dari cache modul (tanpa
-    // jaringan), sehingga env proxy mati di bawah tak mengganggu; di CI cache
-    // modul dihangatkan lebih dulu (.github/workflows/e2e.yml).
-    // Engine MOCK, store & kunci in-memory ephemeral, bind localhost → tak ada
-    // file (db/kunci) tersisa & tak pernah menyentuh jaringan.
-    // -no-auth: E2E memverifikasi alur produk langsung di halaman; login & RBAC
-    // diuji oleh unit test Go (internal/web). Tetap engine mock + localhost → tak
-    // ada jaringan tersentuh.
+    // Build then run in one command. globalSetup is NOT used: Playwright
+    // starts webServer BEFORE globalSetup, so the binary has to be built
+    // here. The build only compiles from the module cache (no network), so
+    // the dead proxy env below does not get in the way; in CI the module
+    // cache is warmed first (.github/workflows/e2e.yml).
+    // Engines are MOCK, the store & keys are ephemeral in-memory, bound to
+    // localhost, so no file (db/keys) is left behind and the network is never touched.
+    // -no-auth: E2E verifies the product flow straight on the page; login & RBAC
+    // are covered by Go unit tests (internal/web). Still mock engines + localhost,
+    // so no network is touched.
     command:
       `go build -trimpath -o "${BIN_ABS}" ./cmd/bughound && ` +
       `"${BIN_ABS}" -addr 127.0.0.1:${PORT} -db "" -key "" -engine mock -no-auth`,
@@ -55,9 +55,9 @@ export default defineConfig({
     stdout: 'pipe',
     stderr: 'pipe',
     env: {
-      // Pengaman egress tingkat lingkungan: arahkan outbound apa pun ke proxy
-      // mati sehingga koneksi keluar gagal (bukan benar-benar keluar). Engine
-      // mock memang tak pernah egress — ini defense-in-depth.
+      // Environment-level egress guard: point any outbound at a dead proxy so
+      // an outgoing connection fails (rather than actually leaving). The mock
+      // engines never egress anyway, so this is defense-in-depth.
       HTTP_PROXY: 'http://127.0.0.1:1',
       HTTPS_PROXY: 'http://127.0.0.1:1',
       ALL_PROXY: 'http://127.0.0.1:1',

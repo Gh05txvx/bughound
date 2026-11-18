@@ -10,7 +10,7 @@ import (
 const h1Header = "identifier,asset_type,instruction,eligible_for_bounty,eligible_for_submission," +
 	"availability_requirement,confidentiality_requirement,integrity_requirement,max_severity,system_tags,created_at,updated_at\n"
 
-// h1Row menulis satu baris CSV HackerOne; submit = kolom eligible_for_submission.
+// h1Row writes one HackerOne CSV row; submit = the eligible_for_submission column.
 func h1Row(id, assetType, submit string) string {
 	return id + "," + assetType + ",,true," + submit + ",,,,critical,,2024-01-01 00:00:00 UTC,2024-01-01 00:00:00 UTC\n"
 }
@@ -54,7 +54,7 @@ func TestConvertInNarrowsOrKeeps(t *testing.T) {
 		{"bücher.de", []string{"xn--bcher-kva.de"}},
 		{"a.acme.io, b.acme.io", []string{"a.acme.io", "b.acme.io"}},
 		{"https://a.acme.io,https://b.acme.io/", []string{"a.acme.io", "b.acme.io"}},
-		// Koma pada path bukan pemisah: tetap satu prefix, bukan host baru y.acme.io.
+		// A comma in a path is not a separator: it stays one prefix, not a new host y.acme.io.
 		{"https://a.acme.io/x,y.acme.io", []string{"a.acme.io/x,y.acme.io"}},
 	}
 	for _, c := range cases {
@@ -64,64 +64,64 @@ func TestConvertInNarrowsOrKeeps(t *testing.T) {
 			continue
 		}
 		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("convertIn(%q) = %v, ingin %v", c.raw, got, c.want)
+			t.Errorf("convertIn(%q) = %v, want %v", c.raw, got, c.want)
 		}
 	}
 }
 
-// Invarian utama: yang tak bisa diwakili tanpa melebar tak boleh masuk in-scope.
+// The main invariant: what cannot be represented without widening must not enter in-scope.
 func TestConvertInRefusesWhatWouldWiden(t *testing.T) {
 	cases := []struct{ raw, why string }{
-		{"*.com", "seluruh TLD"},
-		{"*.co.uk", "suffix publik multi-label"},
-		{"*.github.io", "suffix publik privat"},
-		{"0.0.0.0/0", "seluruh IPv4"},
-		{"::/0", "seluruh IPv6"},
-		{"203.0.0.0/7", "lebih lebar dari /8"},
-		{"10.0.0.0/8", "jaringan privat"},
-		{"169.0.0.0/8", "memuat metadata cloud"},
+		{"*.com", "a whole TLD"},
+		{"*.co.uk", "a multi-label public suffix"},
+		{"*.github.io", "a private public suffix"},
+		{"0.0.0.0/0", "all of IPv4"},
+		{"::/0", "all of IPv6"},
+		{"203.0.0.0/7", "wider than /8"},
+		{"10.0.0.0/8", "private network"},
+		{"169.0.0.0/8", "holds cloud metadata"},
 		{"169.254.169.254", "metadata cloud"},
 		{"http://169.254.169.254/", "metadata cloud via URL"},
-		// Bentuk IP tersamar tetap IP.
-		{"169.254.169.254.", "titik akhir menyamarkan metadata"},
-		{"169.254.169.254.:80", "titik akhir + port"},
-		{"127.0.0.1.", "titik akhir menyamarkan loopback"},
-		{"１２７.０.０.１", "digit fullwidth dipetakan idna jadi loopback"},
-		{"*.169.254.169.254", "wildcard di atas bentuk IP"},
+		// A disguised IP form is still an IP.
+		{"169.254.169.254.", "a trailing dot disguises metadata"},
+		{"169.254.169.254.:80", "trailing dot + port"},
+		{"127.0.0.1.", "a trailing dot disguises loopback"},
+		{"１２７.０.０.１", "fullwidth digits idna-mapped to loopback"},
+		{"*.169.254.169.254", "a wildcard over an IP form"},
 		{"127.0.0.1", "loopback"},
 		{"::1", "loopback IPv6"},
 		{"fe80::1%eth0", "link-local ber-zone"},
-		{"::ffff:169.254.169.254", "IPv4-mapped menyamarkan metadata"},
-		{"::ffff:169.254.0.0/112", "rentang IPv4-mapped"},
-		{"api.*.acme.io", "wildcard tengah"},
-		{"*-dev.acme.io", "wildcard parsial"},
+		{"::ffff:169.254.169.254", "IPv4-mapped disguises metadata"},
+		{"::ffff:169.254.0.0/112", "an IPv4-mapped range"},
+		{"api.*.acme.io", "middle wildcard"},
+		{"*-dev.acme.io", "partial wildcard"},
 		{"*.acme.*", "wildcard TLD"},
 		{"*.acme.io/api", "wildcard + path"},
-		{"https://acme.io/*/x", "pola tengah path"},
+		{"https://acme.io/*/x", "a middle-of-path pattern"},
 		{"https://acme.io/a%20b", "path ter-encode"},
-		{"https://acme.io/app?x=1", "query akan melebar ke seluruh path"},
-		{"https://acme.io/#/dash", "fragment akan melebar ke seluruh host"},
+		{"https://acme.io/app?x=1", "a query would widen to the whole path"},
+		{"https://acme.io/#/dash", "a fragment would widen to the whole host"},
 		{"https://user:pw@acme.io/", "userinfo"},
 		{"https://acme.io\\@evil.com/", "backslash parser-differential"},
-		{"ftp://acme.io/", "skema non-web"},
-		{"wss://acme.io", "skema non-web"},
-		{"mailto:a@acme.io", "bukan host"},
-		{"acme.io:abc", "port bukan angka"},
-		{"http://acme.io:99999/", "port di luar rentang"},
-		{"10.0.0.1-50", "rentang IP"},
-		{"all", "teks bebas tanpa spasi"},
-		{"localhost", "bukan domain publik"},
-		{"app.internal", "TLD tak dikenal"},
-		{".acme.io", "label kosong: entri semu"},
-		{"acme..io", "label kosong: entri semu"},
-		{"Any other subdomain of acme.io", "teks bebas"},
-		{"██████", "disensor"},
-		{"https://203.0.113.10/app", "path pada host IP"},
-		{"", "kosong"},
+		{"ftp://acme.io/", "non-web scheme"},
+		{"wss://acme.io", "non-web scheme"},
+		{"mailto:a@acme.io", "not a host"},
+		{"acme.io:abc", "port is not a number"},
+		{"http://acme.io:99999/", "port out of range"},
+		{"10.0.0.1-50", "IP range"},
+		{"all", "free text without a space"},
+		{"localhost", "not a public domain"},
+		{"app.internal", "unknown TLD"},
+		{".acme.io", "empty label: a sham entry"},
+		{"acme..io", "empty label: a sham entry"},
+		{"Any other subdomain of acme.io", "free text"},
+		{"██████", "censored"},
+		{"https://203.0.113.10/app", "a path on an IP host"},
+		{"", "empty"},
 	}
 	for _, c := range cases {
 		if got, err := convertIn(c.raw); err == nil {
-			t.Errorf("convertIn(%q) = %v, ingin ditolak (%s)", c.raw, got, c.why)
+			t.Errorf("convertIn(%q) = %v, want rejected (%s)", c.raw, got, c.why)
 		}
 	}
 }
@@ -162,29 +162,29 @@ func TestConvertOutOnlyWidens(t *testing.T) {
 			continue
 		}
 		if !reflect.DeepEqual(got.entries, c.want) || !reflect.DeepEqual(got.apexes, c.apexes) || got.widened != c.widened {
-			t.Errorf("convertOut(%q) = %+v, ingin entries=%v apexes=%v widened=%v", c.raw, got, c.want, c.apexes, c.widened)
+			t.Errorf("convertOut(%q) = %+v, want entries=%v apexes=%v widened=%v", c.raw, got, c.want, c.apexes, c.widened)
 		}
 	}
 }
 
-// Eksklusi tanpa superset yang masuk akal wajib ditolak agar ditinjau manusia.
+// An exclusion with no sensible superset must be rejected so a human reviews it.
 func TestConvertOutRefusesWithoutSuperset(t *testing.T) {
 	for _, raw := range []string{
 		"support.acme.*", "*", "https://*/arcgis/*", "*acme.com", "www.acme*.com", "/self-service-*",
 		"10.0.0.1-50", "107.167.127.4{0,1}", "all", "██████", "Other subdomains of acme.io",
 		"a.acme.io,Other subdomains", ",", "",
-		// CIDR rusak tak boleh menyusut jadi satu IP.
+		// Broken CIDR must not shrink to a single IP.
 		"203.0.113.0/24:443", "203.0.113.0/33", "203.0.113.10/x",
-		// Label kosong menghasilkan entri yang tak pernah cocok.
+		// An empty label produces an entry that never matches.
 		"acme..io", "*..acme.io", "acme.io..",
 	} {
 		if got, err := convertOut(raw); err == nil {
-			t.Errorf("convertOut(%q) = %+v, ingin ditolak", raw, got)
+			t.Errorf("convertOut(%q) = %+v, want rejected", raw, got)
 		}
 	}
 }
 
-// Bukti utama: eksklusi hasil impor benar-benar dihadang Guard.
+// The main proof: an imported exclusion really is blocked by the Guard.
 func TestImportedExclusionsAreEnforcedByGuard(t *testing.T) {
 	data := h1Header +
 		h1Row("*.acme.io", "WILDCARD", "true") +
@@ -209,12 +209,12 @@ func TestImportedExclusionsAreEnforcedByGuard(t *testing.T) {
 		"https://acme.io/a/1", "https://acme.io/b",
 	} {
 		if r := g.Evaluate(target); r.Allowed {
-			t.Errorf("eksklusi bocor: %q diizinkan via %q", target, r.MatchedEntry)
+			t.Errorf("exclusion leaked: %q allowed via %q", target, r.MatchedEntry)
 		}
 	}
 	for _, target := range []string{"https://acme.io/shop", "app.acme.io", "203.0.113.11"} {
 		if r := g.Evaluate(target); !r.Allowed {
-			t.Errorf("%q seharusnya tetap diizinkan (%s)", target, r.Reason)
+			t.Errorf("%q should still be allowed (%s)", target, r.Reason)
 		}
 	}
 }
@@ -226,10 +226,10 @@ func TestApexDerivedOnlyWhenNotExplicitlyInScope(t *testing.T) {
 		h1Row("*.other.io", "WILDCARD", "false"))
 	want := []string{"*.acme.io", "*.other.io", "other.io"}
 	if !reflect.DeepEqual(res.OutScope, want) {
-		t.Fatalf("OutScope = %v, ingin %v", res.OutScope, want)
+		t.Fatalf("OutScope = %v, want %v", res.OutScope, want)
 	}
 	if !mustGuard(t, res.InScope, res.OutScope).Evaluate("acme.io").Allowed {
-		t.Error("apex yang eksplisit in-scope tak boleh tertimpa eksklusi turunan")
+		t.Error("an apex explicitly in-scope must not be overridden by a derived exclusion")
 	}
 }
 
@@ -240,10 +240,10 @@ func TestShadowedInScopeIsReported(t *testing.T) {
 		h1Row("shop.other.io", "URL", "true")+
 		h1Row("*.acme.io", "WILDCARD", "false"))
 	if got, want := assets(res.Shadowed), []string{"www.acme.io"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("Shadowed = %v, ingin %v", got, want)
+		t.Fatalf("Shadowed = %v, want %v", got, want)
 	}
 	if !strings.Contains(res.Shadowed[0].Detail, "*.acme.io") {
-		t.Errorf("harus menyebut eksklusi pemicu: %q", res.Shadowed[0].Detail)
+		t.Errorf("must name the triggering exclusion: %q", res.Shadowed[0].Detail)
 	}
 }
 
@@ -257,17 +257,17 @@ func TestUnresolvedAndWidenedAreReported(t *testing.T) {
 		h1Row("https://acme.io:8443/x", "URL", "false"))
 
 	if got, want := assets(res.Unresolved), []string{"support.acme.*", "All other assets"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Unresolved = %v, ingin %v", got, want)
+		t.Errorf("Unresolved = %v, want %v", got, want)
 	}
 	if got, want := assets(res.Widened), []string{"https://acme.io:8443/x"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Widened = %v, ingin %v", got, want)
+		t.Errorf("Widened = %v, want %v", got, want)
 	}
 	if got, want := assets(res.Skipped), []string{"com.acme.app"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("Skipped = %v, ingin %v", got, want)
+		t.Errorf("Skipped = %v, want %v", got, want)
 	}
-	// Tipe OTHER tetap dipakai sebagai eksklusi: menambah eksklusi selalu aman.
+	// An OTHER type is still used as an exclusion: adding an exclusion is always safe.
 	if want := []string{"blog.acme.io", "acme.io/x"}; !reflect.DeepEqual(res.OutScope, want) {
-		t.Errorf("OutScope = %v, ingin %v", res.OutScope, want)
+		t.Errorf("OutScope = %v, want %v", res.OutScope, want)
 	}
 }
 
@@ -278,16 +278,16 @@ func TestInScopeOtherAndNonWebNeverImported(t *testing.T) {
 		h1Row("com.acme.android", "GOOGLE_PLAY_APP_ID", "true")+
 		h1Row("https://acme.io", "SOMETHING_NEW", "true"))
 	if len(res.InScope) != 0 {
-		t.Errorf("tipe tak dikenal/non-web masuk in-scope: %v", res.InScope)
+		t.Errorf("an unknown/non-web type entered in-scope: %v", res.InScope)
 	}
 	if len(res.Skipped) != 4 {
-		t.Errorf("Skipped = %v, ingin 4 aset dilaporkan", assets(res.Skipped))
+		t.Errorf("Skipped = %v, want 4 assets reported", assets(res.Skipped))
 	}
 }
 
 func TestParseHackerOneCSV(t *testing.T) {
-	data := "\xef\xbb\xbf" + h1Header + // BOM dari spreadsheet
-		"app.acme.io,URL,\"Uji dengan akun sendiri.\nJangan lebih dari 5 rps\",true,true,,,,critical,,,\n" +
+	data := "\xef\xbb\xbf" + h1Header + // BOM from a spreadsheet
+		"app.acme.io,URL,\"Test with your own account.\nNo more than 5 rps\",true,true,,,,critical,,,\n" +
 		h1Row("vdp.acme.io", "URL", "true") +
 		h1Row("support.acme.io", "URL", "false") +
 		h1Row("unknown.acme.io", "URL", "")
@@ -296,20 +296,20 @@ func TestParseHackerOneCSV(t *testing.T) {
 		t.Errorf("Format = %q", res.Format)
 	}
 	if want := []string{"app.acme.io", "vdp.acme.io"}; !reflect.DeepEqual(res.InScope, want) {
-		t.Errorf("InScope = %v, ingin %v", res.InScope, want)
+		t.Errorf("InScope = %v, want %v", res.InScope, want)
 	}
-	// Status eligible kosong bukan izin: diperlakukan sebagai eksklusi.
+	// An empty eligible status is not an allow: treated as an exclusion.
 	if want := []string{"support.acme.io", "unknown.acme.io"}; !reflect.DeepEqual(res.OutScope, want) {
-		t.Errorf("OutScope = %v, ingin %v", res.OutScope, want)
+		t.Errorf("OutScope = %v, want %v", res.OutScope, want)
 	}
 	if len(res.Notes) != 1 || !strings.Contains(res.Notes[0].Detail, "5 rps") {
-		t.Errorf("instruksi program hilang: %+v", res.Notes)
+		t.Errorf("the program instruction is lost: %+v", res.Notes)
 	}
 }
 
 func TestParseHackerOneAPI(t *testing.T) {
 	res := mustImport(t, `{"data":[
-		{"id":"1","type":"structured-scope","attributes":{"asset_type":"URL","asset_identifier":"https://api.acme.io","eligible_for_submission":true,"instruction":"API kami"}},
+		{"id":"1","type":"structured-scope","attributes":{"asset_type":"URL","asset_identifier":"https://api.acme.io","eligible_for_submission":true,"instruction":"our API"}},
 		{"id":"2","type":"structured-scope","attributes":{"asset_type":"URL","asset_identifier":"old.acme.io","eligible_for_submission":false}},
 		{"id":"3","type":"structured-scope","attributes":{"asset_type":"URL","asset_identifier":"flagless.acme.io"}}
 	],"links":{"self":"https://api.hackerone.com/v1/x"}}`)
@@ -317,32 +317,32 @@ func TestParseHackerOneAPI(t *testing.T) {
 		t.Errorf("Format = %q", res.Format)
 	}
 	if want := []string{"api.acme.io"}; !reflect.DeepEqual(res.InScope, want) {
-		t.Errorf("InScope = %v, ingin %v", res.InScope, want)
+		t.Errorf("InScope = %v, want %v", res.InScope, want)
 	}
 	if want := []string{"old.acme.io", "flagless.acme.io"}; !reflect.DeepEqual(res.OutScope, want) {
-		t.Errorf("OutScope = %v, ingin %v (tanpa flag bukan izin)", res.OutScope, want)
+		t.Errorf("OutScope = %v, want %v (without a flag is not an allow)", res.OutScope, want)
 	}
 }
 
 func TestParseBugcrowdBrief(t *testing.T) {
 	res := mustImport(t, `{"data":{"brief":{"name":"Acme"},"scope":[
 		{"name":"In Scope Targets","inScope":true,"targets":[
-			{"name":"Aplikasi utama","uri":"https://app.acme.io/","category":"website","ipAddress":null},
+			{"name":"Main app","uri":"https://app.acme.io/","category":"website","ipAddress":null},
 			{"name":"api.acme.io","uri":"","category":"api"},
 			{"name":"Acme iOS","uri":"","category":"ios"}]},
 		{"name":"Out of Scope","inScope":false,"targets":[
 			{"name":"Blog","uri":"https://blog.acme.io","category":"website"}]},
-		{"name":"Tanpa flag","targets":[
+		{"name":"No flag","targets":[
 			{"name":"flagless.acme.io","uri":"","category":"website"}]}
 	]}}`)
 	if res.Format != "Bugcrowd brief JSON" {
 		t.Errorf("Format = %q", res.Format)
 	}
 	if want := []string{"app.acme.io", "api.acme.io"}; !reflect.DeepEqual(res.InScope, want) {
-		t.Errorf("InScope = %v, ingin %v", res.InScope, want)
+		t.Errorf("InScope = %v, want %v", res.InScope, want)
 	}
 	if want := []string{"blog.acme.io", "flagless.acme.io"}; !reflect.DeepEqual(res.OutScope, want) {
-		t.Errorf("OutScope = %v, ingin %v", res.OutScope, want)
+		t.Errorf("OutScope = %v, want %v", res.OutScope, want)
 	}
 }
 
@@ -358,10 +358,10 @@ func TestParseBountyTargetsObject(t *testing.T) {
 
 	res := mustImport(t, h1)
 	if want := []string{"*.acme.io"}; !reflect.DeepEqual(res.InScope, want) {
-		t.Errorf("InScope = %v, ingin %v", res.InScope, want)
+		t.Errorf("InScope = %v, want %v", res.InScope, want)
 	}
 	if want := []string{"ineligible.acme.io", "old.acme.io"}; !reflect.DeepEqual(res.OutScope, want) {
-		t.Errorf("OutScope = %v, ingin %v (flag false mengalahkan daftar)", res.OutScope, want)
+		t.Errorf("OutScope = %v, want %v (a false flag beats the list)", res.OutScope, want)
 	}
 
 	res = mustImport(t, bc)
@@ -370,33 +370,33 @@ func TestParseBountyTargetsObject(t *testing.T) {
 	}
 }
 
-// Data yang tak bisa dipercaya sebagai daftar utuh ditolak seluruhnya.
+// Data that cannot be trusted as a complete list is rejected entirely.
 func TestImportRejectsUntrustworthyData(t *testing.T) {
 	cases := []struct{ name, raw, want string }{
-		{"kosong", "  \n", "kosong"},
-		{"terlalu besar", strings.Repeat("x", MaxImportBytes+1), "melebihi batas"},
-		{"daftar host polos", "acme.io\n*.acme.io", "format tak dikenali"},
-		{"CSV tanpa kolom eligible", "identifier,asset_type\nacme.io,URL\n", "format tak dikenali"},
-		{"CSV terpotong", h1Header + "app.acme.io,URL", "CSV tak valid"},
-		{"CSV hanya header", h1Header, "tak memuat aset"},
-		{"JSON rusak", `{"data":`, "JSON tak valid"},
-		{"JSON asing", `{"foo":1}`, "format tak dikenali"},
-		{"API terpotong", `{"data":[{"type":"structured-scope","attributes":{"asset_type":"URL","asset_identifier":"a.acme.io","eligible_for_submission":true}}],"links":{"next":"https://api.hackerone.com/x?page=2"}}`, "terpotong"},
-		{"API tipe asing", `{"data":[{"type":"report","attributes":{}}]}`, "format tak dikenali"},
-		{"brief tanpa scope", `{"data":{"brief":{}}}`, "format tak dikenali"},
-		// Respons targets_url Bugcrowd: flag in/out ada di grup, bukan di sini.
-		{"target tanpa status in/out", `{"targets":[{"name":"a.acme.io","uri":"https://a.acme.io","category":"website"}]}`, "JSON tak valid"},
-		{"banyak program", `[{"targets":{"in_scope":[],"out_of_scope":[]}},{"targets":{"in_scope":[],"out_of_scope":[]}}]`, "2 program"},
-		{"array kosong", `[]`, "0 program"},
+		{"empty", "  \n", "empty"},
+		{"too large", strings.Repeat("x", MaxImportBytes+1), "exceeds"},
+		{"plain host list", "acme.io\n*.acme.io", "unrecognized format"},
+		{"CSV without an eligible column", "identifier,asset_type\nacme.io,URL\n", "unrecognized format"},
+		{"truncated CSV", h1Header + "app.acme.io,URL", "invalid CSV"},
+		{"CSV header only", h1Header, "holds no assets"},
+		{"broken JSON", `{"data":`, "invalid JSON"},
+		{"foreign JSON", `{"foo":1}`, "unrecognized format"},
+		{"truncated API", `{"data":[{"type":"structured-scope","attributes":{"asset_type":"URL","asset_identifier":"a.acme.io","eligible_for_submission":true}}],"links":{"next":"https://api.hackerone.com/x?page=2"}}`, "truncated"},
+		{"foreign API type", `{"data":[{"type":"report","attributes":{}}]}`, "unrecognized format"},
+		{"brief without scope", `{"data":{"brief":{}}}`, "unrecognized format"},
+		// Bugcrowd targets_url response: the in/out flag is on the group, not here.
+		{"target without in/out status", `{"targets":[{"name":"a.acme.io","uri":"https://a.acme.io","category":"website"}]}`, "invalid JSON"},
+		{"many programs", `[{"targets":{"in_scope":[],"out_of_scope":[]}},{"targets":{"in_scope":[],"out_of_scope":[]}}]`, "2 programs"},
+		{"empty array", `[]`, "0 programs"},
 	}
 	for _, c := range cases {
 		res, err := ImportPlatform(c.raw)
 		if err == nil {
-			t.Errorf("%s: ingin ditolak, dapat %+v", c.name, res)
+			t.Errorf("%s: want rejected, got %+v", c.name, res)
 			continue
 		}
 		if !strings.Contains(err.Error(), c.want) {
-			t.Errorf("%s: error %q tak memuat %q", c.name, err, c.want)
+			t.Errorf("%s: error %q does not hold %q", c.name, err, c.want)
 		}
 	}
 }
@@ -404,12 +404,12 @@ func TestImportRejectsUntrustworthyData(t *testing.T) {
 func TestImportDigestBindsToContent(t *testing.T) {
 	data := h1Header + h1Row("app.acme.io", "URL", "true")
 	a := mustImport(t, data)
-	// Textarea browser mengirim CRLF; sidik jari tak boleh berubah karenanya.
+	// A browser textarea sends CRLF; the fingerprint must not change because of it.
 	if b := mustImport(t, strings.ReplaceAll(data, "\n", "\r\n")); a.Digest != b.Digest {
-		t.Error("digest berubah hanya karena CRLF")
+		t.Error("the digest changed only because of CRLF")
 	}
 	if c := mustImport(t, data+h1Row("x.acme.io", "URL", "false")); a.Digest == c.Digest {
-		t.Error("digest harus berubah saat isi berubah")
+		t.Error("the digest must change when the content changes")
 	}
 }
 
@@ -427,9 +427,9 @@ func TestImportDedupesAndTruncatesNotes(t *testing.T) {
 	}
 	res := mustImport(t, string(raw))
 	if want := []string{"acme.io"}; !reflect.DeepEqual(res.InScope, want) {
-		t.Errorf("InScope = %v, ingin %v", res.InScope, want)
+		t.Errorf("InScope = %v, want %v", res.InScope, want)
 	}
 	if got := []rune(res.Notes[0].Detail); len(got) != maxNote+1 || got[maxNote] != '…' {
-		t.Errorf("catatan tak dipotong rune-safe: %d rune", len(got))
+		t.Errorf("the note is not rune-safe truncated: %d runes", len(got))
 	}
 }

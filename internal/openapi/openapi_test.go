@@ -16,7 +16,7 @@ func TestEndpointsOpenAPI3Absolute(t *testing.T) {
 	}
 	want := []string{"https://api.demo.test/v1/orders/1", "https://api.demo.test/v1/users"}
 	if joined(got) != joined(want) {
-		t.Errorf("endpoints = %v; ingin %v", got, want)
+		t.Errorf("endpoints = %v; want %v", got, want)
 	}
 }
 
@@ -27,7 +27,7 @@ func TestEndpointsOpenAPI3RelativeServerWithFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0] != "https://demo.test/api/ping" {
-		t.Errorf("relative server + fallback salah: %v", got)
+		t.Errorf("relative server + fallback is wrong: %v", got)
 	}
 }
 
@@ -38,7 +38,7 @@ func TestEndpointsSwagger2PrefersHTTPS(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0] != "https://api.demo.test/v2/a" {
-		t.Errorf("swagger2 salah (harus pilih https): %v", got)
+		t.Errorf("swagger2 is wrong (must pick https): %v", got)
 	}
 }
 
@@ -49,7 +49,7 @@ func TestEndpointsYAML(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0] != "https://y.demo.test/x" {
-		t.Errorf("yaml parse salah: %v", got)
+		t.Errorf("yaml parse is wrong: %v", got)
 	}
 }
 
@@ -59,15 +59,15 @@ func TestEndpointsFallbackNoServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0] != "https://t.demo.test/p" {
-		t.Errorf("fallback base salah: %v", got)
+		t.Errorf("fallback base is wrong: %v", got)
 	}
 }
 
 func TestEndpointsErrors(t *testing.T) {
 	if _, err := Endpoints([]byte(`{"openapi":"3.0.0","paths":{}}`), "x"); err == nil {
-		t.Error("spec tanpa paths harus error")
+		t.Error("a spec without paths must error")
 	}
 	if _, err := Endpoints([]byte(`{"openapi":"3.0.0","paths":{"/p":{"get":{}}}}`), ""); err == nil {
-		t.Error("tanpa server & fallback harus error")
+		t.Error("no server and no fallback must error")
 	}
 }

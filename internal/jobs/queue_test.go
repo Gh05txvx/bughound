@@ -12,8 +12,9 @@ import (
 	"time"
 )
 
-// fakeStore adalah jobs.Store in-memory untuk menguji persistensi tanpa mengimpor
-// paket store (yang mengimpor jobs → akan jadi siklus impor di test paket jobs).
+// fakeStore is an in-memory jobs.Store for testing persistence without
+// importing package store (which imports jobs → an import cycle in this
+// package's tests).
 type fakeStore struct {
 	mu      sync.Mutex
 	runs    map[string]*Run
@@ -79,27 +80,27 @@ func TestQueueRunsTask(t *testing.T) {
 	id := q.Enqueue("demo", "scan demo.test", func(_ context.Context, runID string) (Summary, error) {
 		atomic.AddInt32(&ran, 1)
 		if runID == "" {
-			t.Error("task harus menerima run id")
+			t.Error("the task must receive the run id")
 		}
-		return Summary{Saved: 2, Scanned: []string{"demo.test"}, Denied: []string{"evil.test — tidak in-scope"}}, nil
+		return Summary{Saved: 2, Scanned: []string{"demo.test"}, Denied: []string{"evil.test — not in scope"}}, nil
 	})
-	q.Close() // tunggu semua pekerjaan selesai
+	q.Close() // wait for every job to finish
 
 	if atomic.LoadInt32(&ran) != 1 {
-		t.Fatalf("task harus dijalankan sekali, dapat %d", ran)
+		t.Fatalf("the task must run once, got %d", ran)
 	}
 	run, ok := q.Get(id)
 	if !ok {
-		t.Fatal("run tak ditemukan")
+		t.Fatal("run not found")
 	}
 	if run.Status != Done {
-		t.Errorf("status=%s, ingin done", run.Status)
+		t.Errorf("status=%s, want done", run.Status)
 	}
 	if run.Summary.Saved != 2 || len(run.Summary.Scanned) != 1 {
-		t.Errorf("summary tak sesuai: %+v", run.Summary)
+		t.Errorf("unexpected summary: %+v", run.Summary)
 	}
 	if run.FinishedAt.IsZero() || run.StartedAt.IsZero() {
-		t.Error("StartedAt/FinishedAt harus terisi")
+		t.Error("StartedAt/FinishedAt must be set")
 	}
 }
 
@@ -111,19 +112,19 @@ func TestQueueFailedTask(t *testing.T) {
 	q.Close()
 	run, _ := q.Get(id)
 	if run.Status != Failed || run.Err == "" {
-		t.Errorf("harus failed dengan err; dapat %+v", run)
+		t.Errorf("must be failed with an err; got %+v", run)
 	}
 }
 
 func TestQueueRecoversPanic(t *testing.T) {
 	q := New(1)
 	id := q.Enqueue("demo", "x", func(_ context.Context, _ string) (Summary, error) {
-		panic("ledakan")
+		panic("boom")
 	})
 	q.Close()
 	run, _ := q.Get(id)
 	if run.Status != Failed || run.Err == "" {
-		t.Errorf("panic harus jadi Failed; dapat %+v", run)
+		t.Errorf("a panic must become Failed; got %+v", run)
 	}
 }
 
@@ -136,28 +137,28 @@ func TestQueueListNewestFirst(t *testing.T) {
 
 	runs := q.List("demo")
 	if len(runs) != 2 {
-		t.Fatalf("list demo = %d, ingin 2", len(runs))
+		t.Fatalf("list demo = %d, want 2", len(runs))
 	}
 	if runs[0].ID != b || runs[1].ID != a {
-		t.Error("List harus terbaru dulu")
+		t.Error("List must be newest first")
 	}
 }
 
 func TestQueueGetUnknown(t *testing.T) {
 	q := New(1)
 	defer q.Close()
-	if _, ok := q.Get("tidak-ada"); ok {
-		t.Error("run tak dikenal harus ok=false")
+	if _, ok := q.Get("missing"); ok {
+		t.Error("an unknown run must return ok=false")
 	}
 }
 
-// blockingTask memberi tanda saat mulai lalu menunggu ctx dibatalkan (meniru
-// engine yang dibunuh lewat exec.CommandContext) dan mengembalikan hasil parsial.
+// blockingTask signals when it starts, then waits for ctx to be cancelled (like
+// an engine killed through exec.CommandContext) and returns a partial result.
 func blockingTask(started chan<- struct{}) Task {
 	return func(ctx context.Context, _ string) (Summary, error) {
 		close(started)
 		<-ctx.Done()
-		return Summary{Saved: 3}, fmt.Errorf("orchestrator: dibatalkan: %w", ctx.Err())
+		return Summary{Saved: 3}, fmt.Errorf("orchestrator: cancelled: %w", ctx.Err())
 	}
 }
 
@@ -168,40 +169,40 @@ func TestQueueCancelRunning(t *testing.T) {
 	<-started
 
 	if !q.Cancel(id) {
-		t.Fatal("Cancel run berjalan harus true")
+		t.Fatal("Cancel on a running run must be true")
 	}
 	if q.Cancel(id) {
-		t.Error("Cancel kedua harus false (Stop sudah diminta)")
+		t.Error("a second Cancel must be false (Stop was already requested)")
 	}
 	q.Close()
 
 	run, _ := q.Get(id)
 	if run.Status != Cancelled {
-		t.Fatalf("status=%s, ingin cancelled", run.Status)
+		t.Fatalf("status=%s, want cancelled", run.Status)
 	}
 	if run.Stopping {
-		t.Error("Stopping harus padam setelah run final")
+		t.Error("Stopping must clear once the run is final")
 	}
 	if run.Summary.Saved != 3 {
-		t.Errorf("hasil parsial harus dipertahankan, dapat %+v", run.Summary)
+		t.Errorf("the partial result must be kept, got %+v", run.Summary)
 	}
 	if run.FinishedAt.IsZero() || !strings.Contains(run.Err, "canceled") {
-		t.Errorf("FinishedAt & Err harus terisi: %+v", run)
+		t.Errorf("FinishedAt and Err must be set: %+v", run)
 	}
 	if n := len(q.cancels); n != 0 {
-		t.Errorf("pembatal harus dibersihkan setelah run selesai, sisa %d", n)
+		t.Errorf("the cancel func must be cleaned up after the run ends, %d left", n)
 	}
 }
 
 func TestQueueCancelQueued(t *testing.T) {
-	q := New(1) // satu worker: run kedua tertahan antre
+	q := New(1) // one worker: the second run waits in the queue
 	started := make(chan struct{})
 	release := make(chan struct{})
 	first := q.Enqueue("demo", "1", func(ctx context.Context, _ string) (Summary, error) {
 		close(started)
 		<-release
 		if ctx.Err() != nil {
-			t.Error("ctx run lain tak boleh ikut batal")
+			t.Error("another run's ctx must not be cancelled too")
 		}
 		return Summary{}, nil
 	})
@@ -213,22 +214,22 @@ func TestQueueCancelQueued(t *testing.T) {
 	})
 
 	if !q.Cancel(second) {
-		t.Fatal("Cancel run antre harus true")
+		t.Fatal("Cancel on a queued run must be true")
 	}
 	if run, _ := q.Get(second); run.Status != Cancelled || run.FinishedAt.IsZero() {
-		t.Errorf("run antre harus langsung cancelled: %+v", run)
+		t.Errorf("a queued run must be cancelled right away: %+v", run)
 	}
 	close(release)
 	q.Close()
 
 	if atomic.LoadInt32(&ran) != 0 {
-		t.Error("run yang dihentikan saat antre tak boleh dijalankan")
+		t.Error("a run stopped while queued must not run")
 	}
 	if run, _ := q.Get(second); !run.StartedAt.IsZero() {
-		t.Error("run yang tak pernah jalan tak boleh punya StartedAt")
+		t.Error("a run that never ran must not have a StartedAt")
 	}
 	if run, _ := q.Get(first); run.Status != Done {
-		t.Errorf("run lain tak terpengaruh: status=%s", run.Status)
+		t.Errorf("the other run must be unaffected: status=%s", run.Status)
 	}
 }
 
@@ -237,36 +238,36 @@ func TestQueueCancelNoop(t *testing.T) {
 	id := q.Enqueue("demo", "x", okTask)
 	q.Close()
 
-	if q.Cancel("tidak-ada") {
-		t.Error("Cancel id asing harus false")
+	if q.Cancel("missing") {
+		t.Error("Cancel on an unknown id must be false")
 	}
 	if q.Cancel(id) {
-		t.Error("Cancel run yang sudah selesai harus false")
+		t.Error("Cancel on a finished run must be false")
 	}
 	if run, _ := q.Get(id); run.Status != Done {
-		t.Errorf("run selesai tak boleh berubah: %s", run.Status)
+		t.Errorf("a finished run must not change: %s", run.Status)
 	}
 }
 
 func TestQueueRemove(t *testing.T) {
 	q := New(1)
 	id := q.Enqueue("demo", "x", okTask)
-	q.Close() // run selesai (Done)
+	q.Close() // the run is finished (Done)
 
-	if q.Remove("tidak-ada") {
-		t.Error("Remove id asing harus false")
+	if q.Remove("missing") {
+		t.Error("Remove on an unknown id must be false")
 	}
 	if !q.Remove(id) {
-		t.Fatal("Remove run selesai harus true")
+		t.Fatal("Remove on a finished run must be true")
 	}
 	if _, ok := q.Get(id); ok {
-		t.Error("run yang dihapus tak boleh lagi ada")
+		t.Error("a removed run must no longer exist")
 	}
 	if n := len(q.List("")); n != 0 {
-		t.Errorf("daftar harus kosong setelah hapus, ada %d", n)
+		t.Errorf("the list must be empty after the removal, %d left", n)
 	}
 	if q.Remove(id) {
-		t.Error("Remove kedua harus false (sudah hilang)")
+		t.Error("a second Remove must be false (already gone)")
 	}
 }
 
@@ -277,23 +278,23 @@ func TestQueueRemoveActiveRefused(t *testing.T) {
 	<-started
 
 	if q.Remove(id) {
-		t.Error("Remove run berjalan harus false (hentikan dulu)")
+		t.Error("Remove on a running run must be false (stop it first)")
 	}
 	if _, ok := q.Get(id); !ok {
-		t.Error("run berjalan harus tetap terlacak")
+		t.Error("a running run must stay tracked")
 	}
 	q.Cancel(id)
 	q.Close()
-	// Setelah dihentikan (Cancelled) baru boleh dihapus.
+	// Only after it is stopped (Cancelled) may it be removed.
 	if run, _ := q.Get(id); run.Status != Cancelled {
-		t.Fatalf("status=%s, ingin cancelled", run.Status)
+		t.Fatalf("status=%s, want cancelled", run.Status)
 	}
 	if !q.Remove(id) {
-		t.Error("Remove run yang sudah dihentikan harus true")
+		t.Error("Remove on a stopped run must be true")
 	}
 }
 
-// --- Persistensi riwayat run (WithStore) ---
+// --- Run history persistence (WithStore) ---
 
 func TestQueuePersistWriteThrough(t *testing.T) {
 	fs := newFakeStore()
@@ -301,30 +302,30 @@ func TestQueuePersistWriteThrough(t *testing.T) {
 	id := q.Enqueue("demo", "scan demo.test", func(_ context.Context, _ string) (Summary, error) {
 		return Summary{Saved: 2, Scanned: []string{"demo.test"}}, nil
 	})
-	q.Close() // tunggu selesai → finish() sudah persist status terminal
+	q.Close() // wait for it to finish → finish() has persisted the terminal status
 
 	r, ok := fs.get(id)
 	if !ok {
-		t.Fatal("run harus tersimpan di store")
+		t.Fatal("the run must be saved in the store")
 	}
 	if r.Status != Done {
-		t.Errorf("status tersimpan=%s, ingin done", r.Status)
+		t.Errorf("stored status=%s, want done", r.Status)
 	}
 	if r.Summary.Saved != 2 || len(r.Summary.Scanned) != 1 {
-		t.Errorf("summary tak ikut tersimpan: %+v", r.Summary)
+		t.Errorf("the summary was not saved: %+v", r.Summary)
 	}
 	if r.FinishedAt.IsZero() || r.StartedAt.IsZero() {
-		t.Error("StartedAt/FinishedAt harus ikut tersimpan")
+		t.Error("StartedAt/FinishedAt must be saved too")
 	}
 }
 
 func TestQueueReloadReconcilesOrphans(t *testing.T) {
 	fs := newFakeStore()
 	base := time.Now().UTC().Add(-time.Hour)
-	// Pra-isi store: satu run selesai + satu yatim (proses lama mati saat Running).
-	fs.runs["run_done"] = &Run{ID: "run_done", Program: "demo", Label: "lama", Status: Done,
+	// Pre-fill the store: one finished run + one orphan (the old process died while it was Running).
+	fs.runs["run_done"] = &Run{ID: "run_done", Program: "demo", Label: "old", Status: Done,
 		EnqueuedAt: base, StartedAt: base, FinishedAt: base.Add(time.Minute), Summary: Summary{Saved: 1}}
-	fs.runs["run_orphan"] = &Run{ID: "run_orphan", Program: "demo", Label: "keputus", Status: Running,
+	fs.runs["run_orphan"] = &Run{ID: "run_orphan", Program: "demo", Label: "interrupted", Status: Running,
 		EnqueuedAt: base.Add(time.Minute)}
 
 	q := New(1, WithStore(fs))
@@ -332,26 +333,26 @@ func TestQueueReloadReconcilesOrphans(t *testing.T) {
 
 	runs := q.List("demo")
 	if len(runs) != 2 {
-		t.Fatalf("riwayat dimuat = %d, ingin 2", len(runs))
+		t.Fatalf("history loaded = %d, want 2", len(runs))
 	}
-	// Terbaru dulu: orphan (di-enqueue belakangan) lalu done.
+	// Newest first: the orphan (enqueued later), then done.
 	if runs[0].ID != "run_orphan" || runs[1].ID != "run_done" {
-		t.Fatalf("urutan muat salah: %s, %s", runs[0].ID, runs[1].ID)
+		t.Fatalf("wrong load order: %s, %s", runs[0].ID, runs[1].ID)
 	}
 	orphan, _ := q.Get("run_orphan")
 	if orphan.Status != Failed {
-		t.Errorf("run yatim harus difinalkan Failed, dapat %s", orphan.Status)
+		t.Errorf("the orphan run must be finalized as Failed, got %s", orphan.Status)
 	}
 	if orphan.Err == "" || orphan.FinishedAt.IsZero() {
-		t.Errorf("run yatim harus punya Err + FinishedAt: %+v", orphan)
+		t.Errorf("the orphan run must have Err + FinishedAt: %+v", orphan)
 	}
-	// Koreksi harus dipersist (bukan cuma in-memory).
+	// The correction must be persisted (not only in memory).
 	if saved, _ := fs.get("run_orphan"); saved == nil || saved.Status != Failed {
-		t.Errorf("koreksi run yatim harus tersimpan ke store: %+v", saved)
+		t.Errorf("the orphan run's correction must be saved to the store: %+v", saved)
 	}
-	// Run selesai tak boleh berubah.
+	// The finished run must not change.
 	if done, _ := q.Get("run_done"); done.Status != Done || done.Summary.Saved != 1 {
-		t.Errorf("run selesai tak boleh tersentuh rekonsiliasi: %+v", done)
+		t.Errorf("reconciliation must not touch the finished run: %+v", done)
 	}
 }
 
@@ -361,10 +362,10 @@ func TestQueueRemovePersistsDelete(t *testing.T) {
 	id := q.Enqueue("demo", "x", okTask)
 	q.Close()
 	if !q.Remove(id) {
-		t.Fatal("Remove run selesai harus true")
+		t.Fatal("Remove on a finished run must be true")
 	}
 	if _, ok := fs.get(id); ok {
-		t.Error("run yang dihapus harus ikut hilang dari store")
+		t.Error("a removed run must be gone from the store too")
 	}
 }
 
@@ -374,38 +375,38 @@ func TestQueueRemoveByProgram(t *testing.T) {
 	a1 := q.Enqueue("A", "1", okTask)
 	a2 := q.Enqueue("A", "2", okTask)
 	b1 := q.Enqueue("B", "3", okTask)
-	q.Close() // semua Done
+	q.Close() // all Done
 
 	if n := q.RemoveByProgram("A"); n != 2 {
-		t.Fatalf("RemoveByProgram(A) = %d, ingin 2", n)
+		t.Fatalf("RemoveByProgram(A) = %d, want 2", n)
 	}
 	if _, ok := q.Get(a1); ok {
-		t.Error("run A1 harus hilang dari riwayat")
+		t.Error("run A1 must be gone from the history")
 	}
 	if _, ok := q.Get(a2); ok {
-		t.Error("run A2 harus hilang dari riwayat")
+		t.Error("run A2 must be gone from the history")
 	}
 	if _, ok := fs.get(a1); ok {
-		t.Error("run A1 harus ikut terhapus dari store")
+		t.Error("run A1 must be deleted from the store too")
 	}
 	if len(q.List("A")) != 0 {
-		t.Error("riwayat program A harus kosong")
+		t.Error("program A's history must be empty")
 	}
 	if _, ok := q.Get(b1); !ok {
-		t.Error("run program lain (B) tak boleh terhapus")
+		t.Error("another program's run (B) must not be deleted")
 	}
 	if fs.len() != 1 {
-		t.Errorf("store harus sisa 1 run (B), ada %d", fs.len())
+		t.Errorf("the store must have 1 run left (B), has %d", fs.len())
 	}
 }
 
 func TestQueueNoStoreStillWorks(t *testing.T) {
-	// Tanpa WithStore, queue tetap in-memory seperti dulu (tak ada panic/nil deref).
+	// Without WithStore the queue stays in-memory as before (no panic / nil deref).
 	q := New(1)
 	id := q.Enqueue("demo", "x", okTask)
 	q.Close()
 	if run, _ := q.Get(id); run.Status != Done {
-		t.Errorf("tanpa store, run tetap jalan & Done: %+v", run)
+		t.Errorf("without a store the run still runs and is Done: %+v", run)
 	}
 }
 
@@ -415,7 +416,7 @@ func TestQueueStopTooLateStaysDone(t *testing.T) {
 	release := make(chan struct{})
 	id := q.Enqueue("demo", "x", func(context.Context, string) (Summary, error) {
 		close(started)
-		<-release // abaikan ctx: pekerjaan tetap tuntas walau Stop diminta
+		<-release // ignore ctx: the job still completes even though Stop was requested
 		return Summary{Saved: 1}, nil
 	})
 	<-started
@@ -424,6 +425,6 @@ func TestQueueStopTooLateStaysDone(t *testing.T) {
 	q.Close()
 
 	if run, _ := q.Get(id); run.Status != Done || run.Summary.Saved != 1 {
-		t.Errorf("task yang tuntas tanpa galat harus tetap done: %+v", run)
+		t.Errorf("a task that completes without an error must stay done: %+v", run)
 	}
 }

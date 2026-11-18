@@ -37,33 +37,33 @@ func TestVaultPutRevealListDelete(t *testing.T) {
 			}
 			got, err := v.Reveal(ctx, "progA", "engine-token")
 			if err != nil || string(got) != "s3cr3t" {
-				t.Fatalf("reveal gagal: %q %v", got, err)
+				t.Fatalf("reveal failed: %q %v", got, err)
 			}
 
 			metas, err := v.List(ctx, "progA")
 			if err != nil || len(metas) != 1 || metas[0].Name != "engine-token" {
-				t.Fatalf("list meta salah: %+v %v", metas, err)
+				t.Fatalf("wrong list meta: %+v %v", metas, err)
 			}
 			if metas[0].KeyID != kr.ActiveID() {
-				t.Errorf("key id meta=%s, ingin %s", metas[0].KeyID, kr.ActiveID())
+				t.Errorf("key id meta=%s, want %s", metas[0].KeyID, kr.ActiveID())
 			}
 
-			// Isolasi scope: scope lain tak melihatnya.
+			// Scope isolation: another scope does not see it.
 			if m, _ := v.List(ctx, "progB"); len(m) != 0 {
-				t.Errorf("scope lain tak boleh melihat secret; dapat %d", len(m))
+				t.Errorf("another scope must not see the secret; got %d", len(m))
 			}
-			if _, err := v.Reveal(ctx, "progA", "tidak-ada"); err != ErrSecretNotFound {
-				t.Errorf("secret tak ada harus ErrSecretNotFound, dapat %v", err)
+			if _, err := v.Reveal(ctx, "progA", "missing"); err != ErrSecretNotFound {
+				t.Errorf("a missing secret must return ErrSecretNotFound, got %v", err)
 			}
 
 			if err := v.Delete(ctx, "progA", "engine-token"); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := v.Reveal(ctx, "progA", "engine-token"); err != ErrSecretNotFound {
-				t.Error("setelah delete harus tak ditemukan")
+				t.Error("after delete it must not be found")
 			}
 			if err := v.Delete(ctx, "progA", "engine-token"); err != ErrSecretNotFound {
-				t.Error("delete dua kali harus ErrSecretNotFound")
+				t.Error("deleting twice must return ErrSecretNotFound")
 			}
 		})
 	}
@@ -75,7 +75,7 @@ func TestVaultRevealHookAudited(t *testing.T) {
 			kr := mustKeyring(t)
 			v := f.open(t, kr)
 			ctx := context.Background()
-			v.Put(ctx, "progA", "token", []byte("rahasia"))
+			v.Put(ctx, "progA", "token", []byte("top-secret"))
 
 			var calls int
 			var gotScope, gotName string
@@ -90,10 +90,10 @@ func TestVaultRevealHookAudited(t *testing.T) {
 			if calls != 1 || gotScope != "progA" || gotName != "token" {
 				t.Errorf("hook reveal: calls=%d scope=%q name=%q", calls, gotScope, gotName)
 			}
-			// Reveal gagal (tak ada) tidak boleh memicu hook.
-			v.Reveal(ctx, "progA", "tidak-ada")
+			// A failed Reveal (missing) must not fire the hook.
+			v.Reveal(ctx, "progA", "missing")
 			if calls != 1 {
-				t.Errorf("hook tak boleh dipanggil saat secret tak ada; calls=%d", calls)
+				t.Errorf("the hook must not be called when the secret is missing; calls=%d", calls)
 			}
 		})
 	}
@@ -117,16 +117,16 @@ func TestVaultRotate(t *testing.T) {
 				t.Fatal(err)
 			}
 			if n != 2 {
-				t.Errorf("harus re-enkripsi 2 secret, dapat %d", n)
+				t.Errorf("must re-encrypt 2 secrets, got %d", n)
 			}
-			// Nilai tetap utuh, kini di bawah kunci baru.
+			// The values are intact, now under the new key.
 			if a, _ := v.Reveal(ctx, "g", "a"); string(a) != "AAA" {
-				t.Error("nilai harus utuh setelah rotasi")
+				t.Error("the value must be intact after rotation")
 			}
 			metas, _ := v.List(ctx, "g")
 			for _, m := range metas {
 				if m.KeyID != k2.ID() {
-					t.Errorf("setelah rotasi key id harus %s, dapat %s", k2.ID(), m.KeyID)
+					t.Errorf("after rotation the key id must be %s, got %s", k2.ID(), m.KeyID)
 				}
 			}
 		})

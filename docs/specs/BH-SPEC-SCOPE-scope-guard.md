@@ -1,202 +1,202 @@
-# Spesifikasi — Scope Guard (BugHound)
+# Spec: Scope Guard (BugHound)
 
 Oct 21, 2026 · @Gh05t
 
-Scope guard adalah kontrol keamanan paling kritis di BugHound: satu titik penegakan yang memastikan hanya target in-scope yang boleh disentuh, dan menolak sisanya secara default. Karena BugHound adalah tool offensive, kegagalan scope guard berdampak hukum dan reputasi. Dokumen ini mendefinisikan format scope, normalisasi, algoritma keputusan, presedensi, kasus tepi, dan titik penegakan secara pasti, agar implementasi, audit (BH-P03-APPSEC), dan test (BH-P05-E2E) sepakat pada definisi yang sama. ID: `BH-SPEC-SCOPE`.
+The scope guard is BugHound's most critical security control: one enforcement point that makes sure only in-scope targets can be touched, and denies the rest by default. Because BugHound is an offensive tool, a scope-guard failure has legal and reputational consequences. This document fixes the scope format, normalization, decision algorithm, precedence, edge cases, and enforcement points so the implementation, the audit (BH-P03-APPSEC), and the tests (BH-P05-E2E) agree on the same definition. ID: `BH-SPEC-SCOPE`.
 
-## Ringkasan & peran
+## Summary & role
 
-Scope guard menjawab satu pertanyaan untuk setiap target: **boleh disentuh atau tidak?** Jawabannya mengikat seluruh aktivitas scan. Bila guard salah meloloskan satu target, BugHound bisa memindai aset yang tidak diizinkan, dan itu konsekuensi hukum, bukan sekadar bug.
+The scope guard answers one question for every target: **may it be touched or not?** The answer binds all scan activity. If the guard lets one target through by mistake, BugHound could scan an asset that is not authorized, and that is a legal consequence, not just a bug.
 
-Karena itu guard dirancang dengan sikap paling konservatif: **default deny**. Target hanya diizinkan bila terbukti in-scope dan tidak terbukti out-of-scope. Semua keraguan berujung tolak.
+So the guard is built with the most conservative stance: **default deny**. A target is allowed only when it is proven in-scope and not proven out-of-scope. All doubt ends in a denial.
 
-Guard ini dirujuk oleh tiga pihak yang harus sepakat pada definisi yang sama:
+This guard is referenced by three parties who must agree on the same definition:
 
-- **Implementasi** menegakkannya di jalur eksekusi.
-- **Audit (BH-P03-APPSEC)** mengujinya paling keras, mencari cara membypass.
-- **E2E (BH-P05-E2E)** mengetesnya paling awal, memastikan target luar scope ditolak di UI.
+- **The implementation** enforces it in the execution path.
+- **The audit (BH-P03-APPSEC)** tests it hardest, looking for a way to bypass it.
+- **E2E (BH-P05-E2E)** tests it earliest, making sure an out-of-scope target is denied in the UI.
 
-## Prinsip
+## Principles
 
-1. **Default deny.** Bila tidak terbukti in-scope, tolak. Tidak ada "mungkin boleh".
-2. **Out-of-scope menang.** Bila sebuah target cocok in-scope sekaligus out-of-scope, hasilnya tolak. Pengecualian selalu mengalahkan izin.
-3. **Satu titik penegakan.** Keputusan diambil di satu modul (scope guard). Tidak ada komponen lain yang punya logika scope sendiri.
-4. **Tak bisa dilewati.** Tidak ada jalur eksekusi scan yang bisa mencapai target tanpa melewati guard. Ini sifat struktural, bukan konvensi.
-5. **Deterministik.** Input yang sama selalu memberi keputusan yang sama; tidak bergantung waktu atau urutan.
-6. **Fail closed.** Bila guard error atau scope tidak bisa diurai, hasilnya tolak, bukan loloskan.
-7. **Keputusan tercatat.** Setiap penolakan (dan izin, minimal ringkas) masuk audit trail.
+1. **Default deny.** If it is not proven in-scope, deny. There is no "maybe allowed".
+2. **Out-of-scope wins.** If a target matches both in-scope and out-of-scope, the result is a denial. An exclusion always beats an allow.
+3. **One enforcement point.** The decision is made in one module (the scope guard). No other component has its own scope logic.
+4. **Cannot be bypassed.** No scan execution path can reach a target without going through the guard. This is structural, not a convention.
+5. **Deterministic.** The same input always gives the same decision; it does not depend on time or order.
+6. **Fail closed.** If the guard errors or the scope cannot be parsed, the result is a denial, not an allow.
+7. **Decisions are recorded.** Every denial (and allow, at least in summary) goes into the audit trail.
 
-## Format input scope
+## Scope input format
 
-Sebuah program punya dua daftar: **in-scope** dan **out-of-scope**. Tiap entri memakai salah satu bentuk berikut.
+A program has two lists: **in-scope** and **out-of-scope**. Each entry uses one of the forms below.
 
-| Bentuk | Contoh | Cocok dengan |
+| Form | Example | Matches |
 | --- | --- | --- |
-| Domain eksak | `app.acme.io` | Host itu saja |
-| Wildcard subdomain | `*.acme.io` | Semua subdomain acme.io (lihat aturan wildcard) |
-| URL / prefix path | `https://acme.io/api/` | URL di bawah prefix itu |
-| Alamat IP | `203.0.113.10` | IP itu saja |
-| Rentang CIDR | `203.0.113.0/24` | Semua IP dalam rentang |
+| Exact domain | `app.acme.io` | That host only |
+| Subdomain wildcard | `*.acme.io` | Every subdomain of acme.io (see the wildcard rule) |
+| URL / path prefix | `https://acme.io/api/` | URLs under that prefix |
+| IP address | `203.0.113.10` | That IP only |
+| CIDR range | `203.0.113.0/24` | Every IP in the range |
 
-Aturan:
+Rules:
 
-- Daftar out-of-scope memakai bentuk yang sama dan dievaluasi dengan presedensi lebih tinggi.
-- Entri yang tidak bisa diurai ditolak saat input (guard fail closed), dan pengguna diberi tahu, bukan diam-diam diabaikan.
-- Skema input disimpan apa adanya untuk audit; pencocokan dilakukan pada bentuk ternormalisasi (bagian berikutnya).
-- Bentuk yang tidak didukung di v1 (mis. regex bebas) ditolak, bukan ditebak maknanya.
-- Entri yang terurai tapi takkan pernah cocok target juga ditolak saat input: port di luar 1-65535, host berlabel kosong (`.acme.io`), dan notasi rentang IP (`10.0.0.1-50`, pakai CIDR). Di out-of-scope, entri semacam itu berarti eksklusi yang mati tanpa peringatan.
-- IP dengan path wajib berskema (`http://203.0.113.10/admin`). Tanpa skema ia ambigu dengan CIDR rusak (`203.0.113.0/33`), jadi ditolak.
+- The out-of-scope list uses the same forms and is evaluated with higher precedence.
+- An entry that cannot be parsed is rejected at input (the guard fails closed), and the user is told, it is not quietly ignored.
+- The input text is kept as is for audit; matching is done on the normalized form (next section).
+- A form not supported in v1 (e.g. a free-form regex) is rejected, not guessed at.
+- An entry that parses but can never match a target is also rejected at input: a port outside 1-65535, a host with an empty label (`.acme.io`), and IP range notation (`10.0.0.1-50`, use CIDR). In out-of-scope, such an entry is a dead exclusion with no warning.
+- An IP with a path must have a scheme (`http://203.0.113.10/admin`). Without a scheme it is ambiguous with a broken CIDR (`203.0.113.0/33`), so it is rejected.
 
-## Normalisasi target & scope
+## Target & scope normalization
 
-Sebelum dibandingkan, target dan entri scope dinormalkan ke bentuk kanonik yang sama. Normalisasi mencegah bypass lewat variasi penulisan.
+Before they are compared, the target and the scope entries are normalized to the same canonical form. Normalization prevents a bypass through a spelling variant.
 
-Langkah normalisasi host:
+Host normalization steps:
 
-- **Huruf kecil** seluruh host.
-- **Buang skema** (`https://`, `http://`) dan kredensial userinfo (`user:pass@`).
-- **IDN ke punycode** (`xn--`), lalu bandingkan dalam bentuk punycode. Ini menutup bypass lewat homoglyph/unicode.
-- **Buang titik akhir** (trailing dot) pada FQDN.
-- **Port**: pisahkan host dan port, lalu tulis tanpa nol di depan (`0443` = `443`). Kebijakan port default v1: scope berbasis host mencakup semua port kecuali entri menyebut port eksplisit. Untuk entri berport, port target dihitung dari skema bila tak ditulis (`https://x` = 443, `http://x` = 80). Bila tetap tak diketahui (`x`, atau skema lain), eksklusi menang saat ragu dan izin tidak diberikan.
-- **Path**: untuk entri URL, bandingkan path setelah dinormalkan (resolusi `.`/`..`, decoding persen yang aman, hilangkan slash ganda).
+- **Lowercase** the whole host.
+- **Strip the scheme** (`https://`, `http://`) and the userinfo credentials (`user:pass@`).
+- **IDN to punycode** (`xn--`), then compare in punycode form. This closes a bypass through a homoglyph/unicode.
+- **Strip the trailing dot** on an FQDN.
+- **Port**: split the host and port, then write it without leading zeros (`0443` = `443`). The v1 default port policy: host-based scope covers all ports unless an entry states a port explicitly. For an entry with a port, the target port is computed from the scheme when it is not written (`https://x` = 443, `http://x` = 80). If it is still unknown (`x`, or another scheme), the exclusion wins on doubt and no allow is granted.
+- **Path**: for a URL entry, compare the path after it is normalized (resolve `.`/`..`, safe percent-decoding, remove double slashes).
 
-Langkah normalisasi IP:
+IP normalization steps:
 
-- Normalkan representasi (mis. IPv6 dikompres konsisten; tolak atau normalkan bentuk desimal/oktal yang menyesatkan seperti `0x7f.0.0.1`).
-- Bandingkan IP sebagai nilai numerik dalam rentang CIDR, bukan sebagai string.
-- Host yang setelah normalisasi berbentuk IP (`203.0.113.10.`, digit fullwidth): pada **entri** diperlakukan sebagai IP agar eksklusinya bekerja; pada **target** ditolak, karena engine tetap me-resolve-nya lewat DNS sehingga tujuannya tak terbukti IP yang dinilai guard.
+- Normalize the representation (e.g. IPv6 compressed consistently; reject or normalize a misleading decimal/octal form like `0x7f.0.0.1`).
+- Compare the IP as a numeric value within the CIDR range, not as a string.
+- A host that is an IP after normalization (`203.0.113.10.`, fullwidth digits): on an **entry** it is treated as an IP so its exclusion works; on a **target** it is rejected, because the engine still resolves it through DNS, so the destination is not proven to be the IP the guard evaluated.
 
-Setelah normalisasi, target direpresentasikan sebagai pasangan (host-atau-IP ternormalkan, port, path) yang dipakai algoritma keputusan.
+After normalization, the target is represented as a (normalized host-or-IP, port, path) tuple used by the decision algorithm.
 
-## Algoritma keputusan
+## Decision algorithm
 
-Untuk setiap target, guard menjalankan langkah berurutan berikut. Urutannya penting: out-of-scope diperiksa lebih dulu agar selalu menang, dan default-nya tolak.
+For each target, the guard runs the following ordered steps. The order matters: out-of-scope is checked first so it always wins, and the default is a denial.
 
-> _Diagram: keputusan scope guard · out-of-scope menang, default deny — tersedia di versi Claude Docs (tidak terbawa ke ekspor Markdown)._
+> _Diagram: scope guard decision · out-of-scope wins, default deny (available in the Claude Docs version; not carried into the Markdown export)._
 
-Dibaca sebagai aturan: **tolak bila cocok out-of-scope; jika tidak, izinkan hanya bila cocok in-scope; selain itu tolak.** Normalisasi selalu dijalankan lebih dulu agar perbandingan adil. Bila normalisasi atau pencocokan gagal/error, hasilnya tolak (fail closed).
+Read as a rule: **deny if it matches out-of-scope; otherwise allow only if it matches in-scope; otherwise deny.** Normalization always runs first so the comparison is fair. If normalization or matching fails/errors, the result is a denial (fail closed).
 
-## Presedensi & aturan pencocokan
+## Precedence & matching rules
 
-**Presedensi:** out-of-scope selalu menang. Sebuah target yang cocok dengan entri in-scope *dan* entri out-of-scope diperlakukan sebagai out-of-scope (tolak). Ini memungkinkan pola umum "izinkan `*.acme.io` kecuali `admin.acme.io`".
+**Precedence:** out-of-scope always wins. A target that matches an in-scope entry *and* an out-of-scope entry is treated as out-of-scope (deny). This enables the common pattern "allow `*.acme.io` except `admin.acme.io`".
 
-**Aturan wildcard (`*.domain`):**
+**Wildcard rule (`*.domain`):**
 
-- `*.acme.io` cocok dengan subdomain seperti `app.acme.io` dan `a.b.acme.io`.
-- Secara default `*.acme.io` **tidak** mencakup apex `acme.io` itu sendiri; bila apex juga in-scope, ia harus didaftarkan terpisah. (Kebijakan ini dinyatakan eksplisit agar audit dan test sepakat.)
-- Wildcard hanya di posisi subdomain paling kiri; bentuk seperti `a.*.io` tidak didukung di v1.
+- `*.acme.io` matches subdomains like `app.acme.io` and `a.b.acme.io`.
+- By default `*.acme.io` does **not** cover the apex `acme.io` itself; if the apex is also in-scope, it must be registered separately. (This policy is stated explicitly so the audit and tests agree.)
+- A wildcard is only in the leftmost subdomain position; a form like `a.*.io` is not supported in v1.
 
-**Pencocokan host:** perbandingan dilakukan pada label domain yang sudah dinormalkan (punycode, huruf kecil), bukan substring. `notacme.io` tidak cocok dengan entri `acme.io`, dan `acme.io.evil.com` tidak cocok dengan `acme.io`.
+**Host matching:** the comparison is on normalized domain labels (punycode, lowercase), not a substring. `notacme.io` does not match the entry `acme.io`, and `acme.io.evil.com` does not match `acme.io`.
 
-**Pencocokan IP/CIDR:** IP target diuji keanggotaannya dalam rentang CIDR secara numerik.
+**IP/CIDR matching:** the target IP is tested for membership in the CIDR range numerically.
 
-**Pencocokan URL/path:** entri prefix path cocok bila host sama dan path target berada di bawah prefix (batas segmen), bukan sekadar awalan string. Host URL boleh berupa IP; ia hanya cocok target IP yang sama.
+**URL/path matching:** a path-prefix entry matches when the host is the same and the target path is under the prefix (at a segment boundary), not merely a string prefix. A URL host may be an IP; it only matches a target with the same IP.
 
-## Kasus tepi
+## Edge cases
 
-Kasus yang sering jadi celah bypass dan cara guard menanganinya:
+Cases that often become a bypass gap and how the guard handles them:
 
-| Kasus | Risiko | Kebijakan guard |
+| Case | Risk | Guard policy |
 | --- | --- | --- |
-| Redirect saat scan | Scan diarahkan ke host luar scope | Host tujuan redirect dievaluasi ulang; di luar scope = berhenti, tidak diikuti |
-| IP privat / metadata | SSRF ke 169.254.169.254, 10.0.0.0/8, dll | Rentang privat/link-local ditolak kecuali eksplisit in-scope (default deny lebih ketat di sini) |
-| Homoglyph / IDN | `аcme.io` (huruf Cyrillic) menyamar | Dinormalkan ke punycode sebelum dibandingkan |
-| IP menyesatkan | `0x7f.0.0.1`, desimal, oktal | Dinormalkan ke bentuk kanonik atau ditolak |
-| Port tak terduga | Target di port lain | Sesuai kebijakan port (lihat Normalisasi); bila ketat, port di luar daftar ditolak |
-| Port bawaan | Eksklusi `acme.io:80` dilewati `http://acme.io/` | Port target dihitung dari skema |
-| Port tak diketahui | Target `acme.io` melawan entri berport | Eksklusi menang saat ragu; izin tidak diberikan |
-| Port bernol di depan | `https://acme.io:0443/` melewati eksklusi port 443 | Port dikanonkan sebelum dibandingkan |
-| IP tersamar | `203.0.113.10.`, digit fullwidth | Entri menjadi IP; target ditolak |
-| Eksklusi ber-path di HTTPS | CONNECT hanya memperlihatkan `host:port`, jadi `/admin` lolos lewat tunnel | `host:port` itu dibuka dan tiap request dinilai; yang tak terbaca sebagai HTTP/1 ditutup |
-| Nama menuju IP yang dikecualikan | `app.acme.io` in-scope, tapi resolve ke `203.0.113.10` yang out-of-scope | Ditolak saat connect; IP lain dari nama yang sama tetap boleh. Eksklusi ber-path pada IP tak berlaku untuk request lewat nama, karena guard tak memetakan nama ke IP saat menilai path |
-| Port pada IP privat | Eksklusi `10.0.0.5:8080` menutup port lain, atau izin berport tak berlaku saat connect | Dinilai per port tujuan. Entri ber-path tak memberi izin, karena saat connect belum ada path |
-| Entri tak pernah cocok | Eksklusi mati tanpa peringatan | Ditolak saat input (lihat Format input scope) |
-| Apex vs wildcard | `acme.io` lolos lewat `*.acme.io` | Apex tidak tercakup wildcard kecuali didaftarkan |
-| Case & trailing dot | `ACME.io`, `acme.io.` | Dinormalkan sebelum dibandingkan |
-| Credential di URL | `user:pass@acme.io` | Userinfo dibuang saat normalisasi; host tetap diuji |
-| Out-of-scope tumpang in-scope | `admin.acme.io` dalam `*.acme.io` | Out-of-scope menang, tolak |
+| Redirect during a scan | The scan is steered to an out-of-scope host | The redirect destination host is re-evaluated; out of scope = stop, not followed |
+| Private IP / metadata | SSRF to 169.254.169.254, 10.0.0.0/8, etc. | Private/link-local ranges are denied unless explicitly in-scope (default deny is stricter here) |
+| Homoglyph / IDN | `аcme.io` (Cyrillic letter) in disguise | Normalized to punycode before comparison |
+| Misleading IP | `0x7f.0.0.1`, decimal, octal | Normalized to the canonical form or rejected |
+| Unexpected port | The target is on another port | Per the port policy (see Normalization); when strict, a port not on the list is denied |
+| Default port | The exclusion `acme.io:80` is skipped by `http://acme.io/` | The target port is computed from the scheme |
+| Unknown port | The target `acme.io` against an entry with a port | The exclusion wins on doubt; no allow is granted |
+| Leading-zero port | `https://acme.io:0443/` skips the port-443 exclusion | The port is canonicalized before comparison |
+| Disguised IP | `203.0.113.10.`, fullwidth digits | The entry becomes an IP; the target is rejected |
+| Path-based exclusion on HTTPS | CONNECT only reveals `host:port`, so `/admin` passes through the tunnel | That `host:port` is opened and each request is evaluated; whatever is not readable as HTTP/1 is closed |
+| A name to an excluded IP | `app.acme.io` is in-scope, but resolves to `203.0.113.10` which is out-of-scope | Denied at connect; another IP from the same name is still allowed. A path-based exclusion on an IP does not apply to a request via a name, because the guard does not map the name to an IP when it evaluates the path |
+| A port on a private IP | The exclusion `10.0.0.5:8080` closes another port, or a port-based allow does not apply at connect | Evaluated per destination port. An entry with a path grants no allow, because at connect there is no path yet |
+| Entry that never matches | A dead exclusion with no warning | Rejected at input (see Scope input format) |
+| Apex vs wildcard | `acme.io` passes through `*.acme.io` | The apex is not covered by the wildcard unless registered |
+| Case & trailing dot | `ACME.io`, `acme.io.` | Normalized before comparison |
+| Credentials in a URL | `user:pass@acme.io` | The userinfo is stripped during normalization; the host is still tested |
+| Out-of-scope overlapping in-scope | `admin.acme.io` inside `*.acme.io` | Out-of-scope wins, deny |
 
-Setiap kasus di tabel ini sebaiknya punya test E2E atau unit tersendiri, karena inilah yang paling mungkin diserang saat audit.
+Each case in this table should have its own E2E or unit test, because this is what is most likely to be attacked during an audit.
 
-## Penegakan di runtime
+## Runtime enforcement
 
-Memeriksa scope hanya saat input tidak cukup. Target bisa berubah di tengah jalan (redirect, URL baru dari crawling, permintaan yang dibuat engine). Karena itu guard ditegakkan di **dua lapis**:
+Checking scope only at input is not enough. A target can change mid-flight (a redirect, a new URL from crawling, a request the engine makes). So the guard is enforced in **two layers**:
 
-1. **Saat input/perencanaan.** Semua target awal (dari scope, recon, crawling) disaring sebelum masuk antrean scan. Yang di luar scope dibuang di sini.
-2. **Saat egress, tepat sebelum koneksi keluar.** Setiap permintaan yang akan dikirim engine worker ke jaringan diperiksa ulang terhadap guard. Ini menutup target yang muncul di runtime (redirect, link baru) yang tidak terlihat saat perencanaan.
+1. **At input/planning.** Every initial target (from scope, recon, crawling) is filtered before it enters the scan queue. What is out of scope is dropped here.
+2. **At egress, right before the outbound connection.** Every request an engine worker is about to send to the network is re-checked against the guard. This closes a target that appears at runtime (a redirect, a new link) that was not visible at planning.
 
-Lapis kedua adalah yang membuat jaminan "tidak pernah menyentuh aset luar scope" benar-benar struktural: sekalipun ada bug di tahap sebelumnya, koneksi keluar tetap dihadang. Idealnya diperkuat lagi dengan pembatasan jaringan di level lingkungan (allowlist egress), sebagai pertahanan berlapis.
+The second layer is what makes the "never touches an out-of-scope asset" guarantee truly structural: even if there is a bug in an earlier stage, the outbound connection is still blocked. Ideally it is reinforced with a network restriction at the environment level (an egress allowlist), as defense in depth.
 
-Di HTTPS, CONNECT hanya memperlihatkan `host:port`, jadi tunnel buta tak bisa menegakkan eksklusi ber-path. Karena itu `host:port` yang punya eksklusi ber-path dibuka: proxy mengakhiri koneksi klien dan menilai tiap request lewat gerbang yang sama dengan HTTP biasa. Host lain tetap tunnel buta. Tak ada jalan mundur: koneksi yang tak terbaca sebagai HTTP/1 ditutup, bukan diteruskan. Alasan dan batasannya ada di ADR `BH-ADR-egress-isolation`.
+On HTTPS, CONNECT only reveals `host:port`, so a blind tunnel cannot enforce a path-based exclusion. So a `host:port` that has a path-based exclusion is opened: the proxy terminates the client connection and evaluates each request through the same gate as plain HTTP. Other hosts stay a blind tunnel. There is no way back: a connection not readable as HTTP/1 is closed, not forwarded. The reasons and limits are in the ADR `BH-ADR-egress-isolation`.
 
-Guard tidak boleh bisa dinonaktifkan lewat konfigurasi biasa. Tidak ada flag "lewati scope guard" untuk kenyamanan; mematikannya (bila ada, untuk pengujian internal) harus jelas, tercatat, dan tidak mungkin aktif di jalur produksi.
+The guard must not be disablable through ordinary configuration. There is no "skip the scope guard" flag for convenience; turning it off (if it exists, for internal testing) must be explicit, recorded, and impossible to enable on the production path.
 
 ## Logging & audit
 
-Setiap keputusan guard yang menolak dicatat ke audit trail dengan: waktu, target (ternormalkan), program, run\_id, alasan (out-of-scope / tidak in-scope / gagal urai), dan entri scope yang memicu (bila penolakan karena out-of-scope).
+Every denying guard decision is recorded to the audit trail with: the time, the target (normalized), the program, the run\_id, the reason (out-of-scope / not in-scope / parse failure), and the scope entry that triggered it (when the denial is because of out-of-scope).
 
-- Penolakan di lapis egress diperlakukan sebagai sinyal penting: bila sering terjadi, itu bisa menandakan bug di tahap perencanaan atau upaya penyalahgunaan.
-- Kolom lapis membedakan `input` (saat perencanaan), `egress` (request ditahan sebelum koneksi dibuat), dan `finding` (temuan di luar scope dibuang sesudah engine selesai). `finding` menilai hasil, jadi bukan bukti koneksinya diblok. Entri lama dari sebelum pemisahan ini tetap berlabel `egress`.
-- Audit trail scope tidak boleh bisa dihapus diam-diam (sejalan prinsip audit trail BugHound).
-- Target yang diizinkan boleh dicatat ringkas (minimal jumlah/agregat) agar jejak lengkap tersedia untuk audit (BH-P03-APPSEC), tanpa membebani log.
+- A denial at the egress layer is treated as an important signal: if it happens often, it can indicate a bug at the planning stage or an abuse attempt.
+- The layer column distinguishes `input` (at planning), `egress` (a request held before the connection is made), and `finding` (an out-of-scope finding dropped after the engine finished). `finding` evaluates a result, so it is not evidence that the connection was blocked. Old entries from before this split stay labeled `egress`.
+- The scope audit trail must not be deletable quietly (in line with BugHound's audit-trail principle).
+- Allowed targets may be recorded in summary (at least a count/aggregate) so a full trail is available for the audit (BH-P03-APPSEC), without overloading the log.
 
-Log ini adalah bukti utama saat audit pre-launch menilai apakah scope guard benar-benar menegakkan batas.
+This log is the main evidence when the pre-launch audit judges whether the scope guard really enforces the boundary.
 
-## Importer format platform
+## Platform format importer
 
-Scope program bisa diimpor dari data platform alih-alih diketik. Importer (`internal/scope/importer.go`) hanya **menghasilkan teks**: ia tidak mengambil keputusan (tetap tugas guard) dan tidak menyimpan apa pun. Hasilnya mengisi form scope editor untuk ditinjau, lalu lewat jalur simpan biasa yang fail-closed. Tidak ada koneksi keluar: pengguna memuat atau menempel datanya sendiri, satu program per impor.
+A program's scope can be imported from platform data instead of typed. The importer (`internal/scope/importer.go`) only **produces text**: it makes no decision (that stays the guard's job) and stores nothing. The result fills the scope editor form for review, then goes through the ordinary fail-closed save path. There is no outbound connection: the user loads or pastes the data themselves, one program per import.
 
-| Sumber | Bentuk | Bukti in-scope |
+| Source | Form | In-scope evidence |
 | --- | --- | --- |
-| HackerOne, tombol **Download CSV** | `identifier,asset_type,…` | `eligible_for_submission` = `true` |
+| HackerOne, the **Download CSV** button | `identifier,asset_type,…` | `eligible_for_submission` = `true` |
 | HackerOne API | `GET /v1/hackers/programs/{handle}/structured_scopes` | `eligible_for_submission` = `true` |
-| Bugcrowd, dokumen brief | `data.scope[].targets[]` | `inScope` = `true` pada grup |
-| `bounty-targets-data` | satu objek program | tercantum di `in_scope` dan tidak ditandai `eligible_for_submission` = `false` |
+| Bugcrowd, the brief document | `data.scope[].targets[]` | `inScope` = `true` on the group |
+| `bounty-targets-data` | one program object | listed in `in_scope` and not marked `eligible_for_submission` = `false` |
 
-Bentuk brief Bugcrowd tidak terdokumentasi resmi; ia mengikuti yang dibaca `arkadiyt/bounty-targets`. Status yang tidak jelas tidak pernah menjadi izin: aset tanpa bukti in-scope diperlakukan sebagai out-of-scope.
+The Bugcrowd brief form is not officially documented; it follows what `arkadiyt/bounty-targets` reads. An unclear status is never an allow: an asset without in-scope evidence is treated as out-of-scope.
 
-**Invarian arah pembulatan.** Data platform lebih longgar dari bahasa scope ini. Saat sebuah aset tidak bisa diwakili persis, in-scope hanya boleh **menyempit** (ragu = tidak diimpor, default deny menutupnya) dan out-of-scope hanya boleh **melebar** (ragu = diperluas), karena eksklusi yang hilang berarti under-blocking.
+**The rounding-direction invariant.** Platform data is looser than this scope language. When an asset cannot be represented exactly, in-scope may only **narrow** (doubt = not imported, default deny covers it) and out-of-scope may only **widen** (doubt = widened), because a missing exclusion means under-blocking.
 
-| Kasus | In-scope | Out-of-scope |
+| Case | In-scope | Out-of-scope |
 | --- | --- | --- |
-| Host, `*.domain`, IP, CIDR | Apa adanya, ternormalkan | Apa adanya; `*.x` ditambah apex `x`, kecuali `x` eksplisit in-scope |
-| Titik di depan (`.x`) | Tidak diimpor | Sama dengan `*.x` |
-| Port | Dipertahankan | Dibuang |
+| Host, `*.domain`, IP, CIDR | As is, normalized | As is; `*.x` adds the apex `x`, unless `x` is explicitly in-scope |
+| Leading dot (`.x`) | Not imported | Same as `*.x` |
+| Port | Kept | Dropped |
 | Path `/x/*` | Prefix `/x` | Prefix `/x` |
-| Pola lain atau encoding di path | Tidak diimpor | Dipotong ke batas segmen |
-| Query, fragment, userinfo | Tidak diimpor | Dibuang |
-| Wildcard tengah/parsial (`api.*.x`, `a*.x`) | Tidak diimpor | Melebar ke `*.x` |
-| URL ber-host IP | Hanya pada root, jadi entri IP | Jadi entri seluruh IP |
-| Suffix publik (`*.com`, `*.github.io`), CIDR lebih lebar dari /8 (IPv4) atau /32 (IPv6) | Tidak diimpor | Apa adanya |
-| IP/CIDR non-publik (privat, loopback, metadata) | Tidak diimpor; tulis manual bila sengaja | Apa adanya |
-| Skema selain http/https | Tidak diimpor | Hostnya dipakai |
-| Tipe mobile, source code, hardware | Tidak diimpor | Dilewati |
-| Tipe `OTHER` dan tak dikenal | Tidak diimpor | Dicoba; gagal = tak terwakili |
-| Tak terbaca (teks bebas, disensor, `acme.*`) | Tidak diimpor | Tak terwakili |
+| Another pattern or encoding in the path | Not imported | Trimmed to the segment boundary |
+| Query, fragment, userinfo | Not imported | Dropped |
+| Middle/partial wildcard (`api.*.x`, `a*.x`) | Not imported | Widened to `*.x` |
+| URL with an IP host | Only at the root, so an IP entry | Becomes a whole-IP entry |
+| Public suffix (`*.com`, `*.github.io`), CIDR wider than /8 (IPv4) or /32 (IPv6) | Not imported | As is |
+| Non-public IP/CIDR (private, loopback, metadata) | Not imported; write it by hand if deliberate | As is |
+| A scheme other than http/https | Not imported | Its host is used |
+| Mobile, source-code, hardware types | Not imported | Skipped |
+| `OTHER` and unknown types | Not imported | Attempted; failure = not represented |
+| Unreadable (free text, redacted, `acme.*`) | Not imported | Not represented |
 
-Keluaran ditulis ulang dari entri ternormalkan, bukan disalin dari string platform, sehingga yang tersimpan persis yang ditegakkan guard. Pemeriksaan in-scope dijalankan pada hasil urai ulang teks keluaran, yaitu entri yang benar-benar dikompilasi guard. Lolos parser saja tidak cukup: `all` dan `localhost` sah untuk scope tulisan tangan (lab), tetapi pada data program publik itu teks bebas, jadi host impor wajib ber-TLD dikenal.
+The output is rewritten from the normalized entries, not copied from the platform string, so what is stored is exactly what the guard enforces. The in-scope check is run on the re-parsed output text, that is, the entries the guard actually compiles. Passing the parser is not enough: `all` and `localhost` are valid for hand-written scope (a lab), but on public program data that is free text, so an imported host must have a known TLD.
 
-**Eksklusi tak terwakili menahan impor.** Form tidak diisi sampai pengguna membaca daftarnya dan menyetujuinya. Persetujuan terikat sidik jari data, jadi tidak berlaku untuk data lain. Eksklusi semacam ini tetap tanggung jawab pengguna: guard tidak menghadangnya sampai ditulis sebagai entri.
+**An unrepresentable exclusion holds the import.** The form is not filled until the user reads the list and approves it. The approval is bound to the data's fingerprint, so it does not apply to other data. Such an exclusion stays the user's responsibility: the guard does not block it until it is written as an entry.
 
-**Ditolak seluruhnya, tanpa hasil parsial:** format tak dikenal, data terpotong (`links.next` pada API, baris CSV tak utuh), lebih dari satu program, target tanpa status in/out (respons `targets_url` Bugcrowd), dan data di atas 4 MiB.
+**Rejected entirely, with no partial result:** an unknown format, truncated data (`links.next` on the API, an incomplete CSV row), more than one program, a target without an in/out status (the Bugcrowd `targets_url` response), and data over 4 MiB.
 
-**Penggabungan dengan isi form:** in-scope **diganti** (entri lama bisa jadi aset yang sudah dicabut program, dan yang digantikan ditampilkan), out-of-scope **digabung** (eksklusi tulisan tangan tidak boleh hilang).
+**Merging with the form contents:** in-scope is **replaced** (old entries could be an asset the program has since dropped, and what is replaced is shown), out-of-scope is **merged** (a hand-written exclusion must not be lost).
 
-**In-scope yang tertimpa eksklusi dilaporkan.** Pola lazim "`www.x` in-scope, `*.x` out-of-scope" membuat entri itu mati karena out-of-scope menang. Importer tidak melonggarkan eksklusinya; ia menyebut entri dan eksklusi pemicunya agar pengguna yang memutuskan.
+**In-scope entries overridden by an exclusion are reported.** The common pattern "`www.x` in-scope, `*.x` out-of-scope" makes that entry dead because out-of-scope wins. The importer does not loosen the exclusion; it names the entry and the exclusion that triggered it so the user decides.
 
-**Audit:** setiap percobaan dicatat sebagai `program.import` (berhasil, ditahan, gagal) beserta jumlah dan sidik jari data, tanpa isi datanya. Penyimpanan scope dicatat sebagai `program.save`.
+**Audit:** every attempt is recorded as `program.import` (succeeded, held, failed) along with the count and the data fingerprint, without the data contents. A scope save is recorded as `program.save`.
 
-**Batasan:** aturan teks bebas di policy program tidak terbaca, dan apex wildcard in-scope tidak ditambahkan otomatis (sejalan aturan wildcard di atas). Hunter tetap wajib membaca brief program.
+**Limits:** a free-text rule in a program policy is not read, and an in-scope wildcard apex is not added automatically (in line with the wildcard rule above). The hunter must still read the program brief.
 
-## Pertanyaan terbuka
+## Open questions
 
-> Direkonsiliasi dengan implementasi 2026-11-04. `[x]` = sudah diputuskan/diimplementasi, `[ ]` = masih terbuka.
+> Reconciled with the implementation on 2026-11-04. `[x]` = decided/implemented, `[ ]` = still open.
 
-- [x] Kebijakan port: **default v1 = scope berbasis host mencakup semua port**, kecuali entri menyebut port eksplisit (lihat §Format di atas). Pengetatan ke 80/443-saja tetap opsi masa depan bila dibutuhkan.
-- [x] Apex + wildcard: **tetap dipisah** — `*.domain` hanya mencakup subdomain (wildcard di posisi paling kiri), apex harus didaftarkan sebagai entri sendiri (`internal/scope/entry.go`). Pilihan yang lebih ketat dan aman.
-- [x] IP privat/metadata: **tolak saat connect kecuali eksplisit in-scope** untuk port tujuan (IP, `IP:port`, CIDR, atau URL ber-host IP tanpa path). Dialer egress menolak loopback/privat/link-local/metadata lalu me-*pin* IP yang sudah dicek (anti-rebinding). Lihat `BH-AUDIT-M2` BH-F02, `internal/egress/ssrf_test.go`.
-- [x] Format scope platform: **importer HackerOne/Bugcrowd dibuat** (lihat §Importer format platform). Bentuk kanonik dokumen ini tetap satu-satunya yang disimpan dan ditegakkan.
-- [x] Penegakan egress: **di aplikasi (proxy paksa)** — engine aktif dipaksa lewat `-proxy` + env `HTTP(S)_PROXY`/`ALL_PROXY`. Allowlist jaringan / kontainer per scan = hardening opt-in; residual egress non-HTTP diterima untuk threat model saat ini (ADR `BH-ADR-egress-isolation`, BH-F03).
-- [x] Resolusi DNS: **ya, ditolak** — hostname in-scope yang resolve ke IP out-of-scope/privat ditolak saat connect dengan IP-pinning (mencegah DNS rebinding). Lihat BH-F02.
+- [x] Port policy: **v1 default = host-based scope covers all ports**, unless an entry states a port explicitly (see the §Format above). Tightening to 80/443-only stays a future option if needed.
+- [x] Apex + wildcard: **kept separate**: `*.domain` only covers subdomains (a wildcard in the leftmost position), the apex must be registered as its own entry (`internal/scope/entry.go`). The stricter, safer choice.
+- [x] Private/metadata IP: **deny at connect unless explicitly in-scope** for the destination port (an IP, `IP:port`, CIDR, or a URL with an IP host and no path). The egress dialer rejects loopback/private/link-local/metadata then *pins* the checked IP (anti-rebinding). See `BH-AUDIT-M2` BH-F02, `internal/egress/ssrf_test.go`.
+- [x] Platform scope format: **a HackerOne/Bugcrowd importer is built** (see the §Platform format importer). This document's canonical form stays the only one stored and enforced.
+- [x] Egress enforcement: **in the application (forced proxy)**: active engines are forced through `-proxy` + the `HTTP(S)_PROXY`/`ALL_PROXY` env. A network/container allowlist per scan = opt-in hardening; residual non-HTTP egress is accepted for the current threat model (ADR `BH-ADR-egress-isolation`, BH-F03).
+- [x] DNS resolution: **yes, denied**: an in-scope hostname that resolves to an out-of-scope/private IP is denied at connect with IP-pinning (prevents DNS rebinding). See BH-F02.
 
-Catatan: jawaban condong ke lebih ketat seperti diarahkan; scope guard tetap default-deny.
+Note: the answers lean stricter as directed; the scope guard stays default-deny.

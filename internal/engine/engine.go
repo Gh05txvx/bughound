@@ -1,10 +1,10 @@
-// Package engine mendefinisikan kontrak engine scan. Implementasi nyata
-// mengeksekusi binary engine (nuclei, ZAP, dll) sebagai subprocess; implementasi
-// mock mengembalikan hasil rekaman tanpa jaringan (dipakai di M0 & E2E).
+// Package engine defines the scan engine contract. A real implementation
+// runs an engine binary (nuclei, ZAP, etc.) as a subprocess; a mock
+// implementation returns recorded results with no network (used in M0 & E2E).
 //
-// Hanya engine (worker) yang boleh menjangkau target, dan hanya target in-scope
-// (BH-SPEC-SCOPE). Orchestrator menegakkan scope guard sebelum memanggil Scan
-// dan memeriksa ulang setiap temuan yang keluar.
+// Only an engine (worker) may reach a target, and only an in-scope target
+// (BH-SPEC-SCOPE). The orchestrator enforces the scope guard before calling Scan
+// and re-checks every finding that comes out.
 package engine
 
 import (
@@ -14,16 +14,16 @@ import (
 	"bughound/internal/finding"
 )
 
-// logoutWord: route logout (logout, log-out, log_out, logoff, signout, sign-out,
-// signoff, ...). Saat scan membawa header auth (AuthAware), crawler & engine
-// MENGHINDARINYA: satu GET ke route logout mematikan sesi server-side dan sisa
-// scan diam-diam jalan tanpa login (terbukti live 2026-11-16: katana, nuclei,
+// logoutWord: a logout route (logout, log-out, log_out, logoff, signout, sign-out,
+// signoff, ...). When a scan carries auth headers (AuthAware), the crawler & engines
+// AVOID it: one GET to a logout route kills the server-side session and the rest of the
+// scan runs silently without login (proven live 2026-11-16: katana, nuclei,
 // ffuf, ZAP).
 const logoutWord = `(log|sign)[-_]?(out|off)`
 
-// LogoutPattern mencocokkan URL ABSOLUT yang path/query-nya route logout; host
-// dilewati (catalogoutlet.com bukan logout). Sah untuk regex Go/katana (-cos)
-// maupun Java/ZAP excludePaths (cocok-penuh — karena itu `.*` di ujung).
+// LogoutPattern matches an ABSOLUTE URL whose path/query is a logout route; the host
+// is skipped (catalogoutlet.com is not logout). Valid for Go/katana regex (-cos)
+// and Java/ZAP excludePaths (full match — hence the `.*` at the end).
 const LogoutPattern = `(?i)^[a-z][a-z0-9+.-]*://[^/?#]*[/?#].*` + logoutWord + `.*`
 
 var (
@@ -31,48 +31,48 @@ var (
 	logoutPathRE = regexp.MustCompile(`(?i)` + logoutWord)
 )
 
-// IsLogoutURL: URL absolut yang path/query-nya route logout. Host polos /
-// host:port (tanpa skema) tak pernah dianggap logout.
+// IsLogoutURL: an absolute URL whose path/query is a logout route. A bare host /
+// host:port (without a scheme) is never considered logout.
 func IsLogoutURL(u string) bool { return logoutURLRE.MatchString(u) }
 
-// IsLogoutPath: path atau entri wordlist (tanpa skema/host) yang memuat route logout.
+// IsLogoutPath: a path or wordlist entry (without scheme/host) that holds a logout route.
 func IsLogoutPath(p string) bool { return logoutPathRE.MatchString(p) }
 
-// Engine menjalankan satu engine terhadap satu target dan mengembalikan temuan
-// yang sudah dinormalkan ke Skema Temuan Seragam (BH-SPEC-FINDING).
+// Engine runs one engine against one target and returns findings
+// already normalized to the Uniform Finding Schema (BH-SPEC-FINDING).
 type Engine interface {
 	Name() string
 	Scan(ctx context.Context, target, program, runID string) ([]*finding.Finding, error)
 }
 
-// ProxyAware ditandai oleh engine yang koneksinya bisa diarahkan lewat proxy
-// egress bughound (internal/egress). Orchestrator memanggil UseProxy sebelum
-// Scan agar engine eksternal menegakkan scope guard pada setiap koneksi keluar
-// (bukan hanya pemeriksaan setelah hasil). Engine mock tidak perlu ini.
+// ProxyAware marks an engine whose connections can be routed through bughound's
+// egress proxy (internal/egress). The orchestrator calls UseProxy before
+// Scan so an external engine enforces the scope guard on every outbound connection
+// (not just a check after the result). A mock engine does not need this.
 type ProxyAware interface {
 	UseProxy(addr string)
 }
 
-// OpenAPIAware ditandai oleh engine yang bisa memfuzz dari spesifikasi
-// OpenAPI/Swagger (membangkitkan request lengkap termasuk BODY, bukan hanya
-// query pada URL hasil crawl). Orchestrator memanggil UseOpenAPISpec sebelum Scan
-// bila request membawa spec. Request yang dibangkitkan TETAP lewat proxy egress
-// (scope guard menegakkan tiap koneksi; spec tak memintas batas).
+// OpenAPIAware marks an engine that can fuzz from an OpenAPI/Swagger
+// spec (generating a complete request including the BODY, not just a
+// query on a crawled URL). The orchestrator calls UseOpenAPISpec before Scan
+// when the request carries a spec. The generated request STILL goes through the egress proxy
+// (the scope guard enforces every connection; the spec does not bypass the boundary).
 type OpenAPIAware interface {
 	UseOpenAPISpec(spec []byte)
 }
 
-// AuthAware ditandai oleh engine yang bisa menyertakan header autentikasi
-// (mis. Cookie / Authorization) pada setiap request-nya, agar scan menjangkau
-// konten di balik login (Lever 1: authenticated scanning). Orchestrator memanggil
-// UseAuthHeaders sebelum Scan bila request membawa kredensial sesi. Tiap elemen
-// berbentuk "Nama: nilai" (siap diteruskan sebagai `-H` ke tool).
+// AuthAware marks an engine that can include authentication headers
+// (e.g. Cookie / Authorization) on every request, so a scan reaches
+// content behind a login (Lever 1: authenticated scanning). The orchestrator calls
+// UseAuthHeaders before Scan when the request carries session credentials. Each element
+// has the form "Name: value" (ready to pass as `-H` to the tool).
 //
-// KEAMANAN: header hanya menumpang request yang SUDAH lolos scope guard. Bila
-// engine mengikuti redirect ke host luar-scope, egress menolak dial sebelum
-// koneksi sehingga kredensial tak pernah keluar scope. Nilai header adalah
-// secret: jangan pernah dicetak ke log/temuan/report — orchestrator meredaksi
-// nilainya dari evidence sebelum simpan (lihat Evidence.RedactHeaders).
+// SECURITY: the headers only ride a request that has ALREADY passed the scope guard. If
+// an engine follows a redirect to an out-of-scope host, egress refuses the dial before
+// the connection so the credentials never leave the scope. A header value is a
+// secret: never print it to a log/finding/report — the orchestrator redacts
+// its value from evidence before saving (see Evidence.RedactHeaders).
 type AuthAware interface {
 	UseAuthHeaders(headers []string)
 }

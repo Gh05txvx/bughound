@@ -40,7 +40,7 @@
           <a href="/programs" class="{{if eq .Body.Nav "programs"}}active{{end}}"><svg class="ico"><use href="#i-target"/></svg>Programs</a>
         </div>
         <div class="nav-group">
-          <div class="ng-label">Pengujian</div>
+          <div class="ng-label">Testing</div>
           <a href="/scan{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "scan"}}active{{end}}"><svg class="ico"><use href="#i-radio"/></svg>Scan</a>
           <a href="/payloads{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "payloads"}}active{{end}}"><svg class="ico"><use href="#i-database"/></svg>Bank Payload</a>
           <a href="/sast{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "sast"}}active{{end}}"><svg class="ico"><use href="#i-code"/></svg>SAST</a>
@@ -49,14 +49,14 @@
           <a href="/proxy{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "proxy"}}active{{end}}"><svg class="ico"><use href="#i-share"/></svg>Proxy</a>
         </div>
         <div class="nav-group">
-          <div class="ng-label">Triase</div>
+          <div class="ng-label">Triage</div>
           <a href="/findings{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "findings"}}active{{end}}"><svg class="ico"><use href="#i-alert"/></svg>Findings</a>
-          <a href="/priority{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "priority"}}active{{end}}"><svg class="ico"><use href="#i-activity"/></svg>Prioritas</a>
+          <a href="/priority{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "priority"}}active{{end}}"><svg class="ico"><use href="#i-activity"/></svg>Priority</a>
           <a href="/report{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "report"}}active{{end}}"><svg class="ico"><use href="#i-file"/></svg>Reports</a>
           <a href="/burp{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "burp"}}active{{end}}"><svg class="ico"><use href="#i-share"/></svg>Burp</a>
         </div>
         <div class="nav-group">
-          <div class="ng-label">Sistem</div>
+          <div class="ng-label">System</div>
           <a href="/audit{{if .Body.Program}}?program={{.Body.Program}}{{end}}" class="{{if eq .Body.Nav "audit"}}active{{end}}"><svg class="ico"><use href="#i-shield"/></svg>Audit</a>
           {{if eq .Role "admin"}}<a href="/users" class="{{if eq .Body.Nav "users"}}active{{end}}"><svg class="ico"><use href="#i-users"/></svg>Users</a>{{end}}
           {{if eq .Role "admin"}}<a href="/ai/settings" class="{{if eq .Body.Nav "ai"}}active{{end}}"><svg class="ico"><use href="#i-cpu"/></svg>MCP / AI</a>{{end}}
@@ -64,10 +64,10 @@
         </div>
       </nav>
       <div class="sidebar-foot">
-        <div class="pill st-confirmed small">scope guard aktif</div>
+        <div class="pill st-confirmed small">scope guard on</div>
         <div class="muted small">{{engineLabel}}</div>
         <div class="muted small">BugHound {{appVersion}}</div>
-        {{if .User}}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf" value="{{.Body.CSRF}}"><button type="submit" class="linklike">Keluar</button></form>{{end}}
+        {{if .User}}<form method="post" action="/logout" class="logout-form"><input type="hidden" name="csrf" value="{{.Body.CSRF}}"><button type="submit" class="linklike">Sign out</button></form>{{end}}
       </div>
     </aside>
     <main class="content">
@@ -79,7 +79,7 @@
         <div class="topbar-right">
           <a class="btn primary" href="/scan{{if .Body.Program}}?program={{.Body.Program}}{{end}}"><svg class="ico"><use href="#i-plus"/></svg>New scan</a>
           <span class="pill st-confirmed small"><span class="dot ok"></span>scope guard: default-deny</span>
-          {{if .User}}<span class="chip user" title="pengguna masuk">{{.User}} · {{.Role}}</span>{{end}}
+          {{if .User}}<span class="chip user" title="signed-in user">{{.User}} · {{.Role}}</span>{{end}}
         </div>
       </header>
       <section class="bodywrap">

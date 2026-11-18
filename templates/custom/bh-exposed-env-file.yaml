@@ -5,10 +5,10 @@ info:
   author: bughound
   severity: high
   description: |
-    File .env aplikasi terekspos di webroot dan dapat diambil tanpa autentikasi.
-    File ini umumnya berisi kredensial basis data, kunci API, dan rahasia aplikasi
-    lain. Deteksi READ-ONLY: hanya satu GET; cocokkan pola kunci di awal baris,
-    bukan nilainya, agar rahasia tak diseret ke evidence lebih dari perlu.
+    The application .env file is exposed in the webroot and can be fetched without authentication.
+    It usually holds database credentials, API keys, and other application
+    secrets. READ-ONLY detection: a single GET; match the key pattern at the start of a line,
+    not its value, so secrets are not dragged into evidence more than needed.
   reference:
     - https://owasp.org/Top10/A05_2021-Security_Misconfiguration/
     - https://cwe.mitre.org/data/definitions/200.html
@@ -29,7 +29,7 @@ http:
       - type: status
         status:
           - 200
-      # Hindari false-positive SPA/catch-all yang mengembalikan HTML untuk semua path.
+      # Avoid SPA/catch-all false positives that return HTML for every path.
       - type: word
         part: header
         words:
