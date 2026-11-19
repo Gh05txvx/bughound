@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"bughound/internal/audit"
@@ -91,6 +92,8 @@ type Server struct {
 	sessions map[string]sessionInfo // login session token → user+role
 
 	pages map[string]*template.Template
+
+	setupDone atomic.Bool // true once the first account exists; gates the /setup first-run page
 }
 
 // Selection picks the subset of nuclei templates a scan runs,
@@ -211,6 +214,13 @@ func NewServer(cfg Config) (*Server, error) {
 	if as, ok := cfg.Store.(store.AIStore); ok {
 		s.aistore = as
 	}
+	// First-run setup gate: with auth on and no account yet, the app funnels to
+	// /setup to create the first admin. handleSetupSubmit flips this on creation.
+	if cfg.AuthDisabled {
+		s.setupDone.Store(true) // no login, no setup
+	} else if n, err := cfg.Users.CountUsers(context.Background()); err == nil && n > 0 {
+		s.setupDone.Store(true)
+	}
 	s.routes()
 	return s, nil
 }
@@ -248,6 +258,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and provide it to the handler through the context to render into the form/hx-headers.
 	token := s.ensureCSRFCookie(w, r)
 	r = r.WithContext(context.WithValue(r.Context(), csrfCtxKey{}, token))
+
+	// First-run: with auth on and no account yet, everything funnels to /setup so
+	// the first admin is created interactively (not from a console password).
+	if !s.authDisabled && !s.setupDone.Load() {
+		switch {
+		case r.URL.Path == "/setup" || strings.HasPrefix(r.URL.Path, "/static/"):
+			// allowed without a session; falls through to the CSRF check + mux
+		case r.Method == http.MethodGet:
+			http.Redirect(w, r, "/setup", http.StatusFound)
+			return
+		default:
+			http.Error(w, "setup required: create the first account at /setup", http.StatusForbidden)
+			return
+		}
+	}
 
 	// Auth: login is REQUIRED (unless AuthDisabled). People use a login session;
 	// automation/CLI may use HTTP Basic. The user's role rides on the context.
@@ -297,7 +322,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // authExempt: the login page & static assets may be reached without a session.
 func authExempt(r *http.Request) bool {
-	return r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/static/")
+	return r.URL.Path == "/login" || r.URL.Path == "/setup" || strings.HasPrefix(r.URL.Path, "/static/")
 }
 
 // authUser authenticates the request through a login session OR HTTP Basic
@@ -458,6 +483,70 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	s.destroySession(w, r)
 	s.auditAppend(r.Context(), audit.Event{Kind: "auth.logout", Allowed: true, Message: user})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// handleSetupForm renders the first-run page that creates the first admin. It
+// is reachable only while no account exists; once one does, setup is closed and
+// this redirects to the normal login.
+func (s *Server) handleSetupForm(w http.ResponseWriter, r *http.Request) {
+	if s.authDisabled || s.setupDone.Load() {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+	s.render(w, r, "setup", "setup", loginPage{CSRF: s.csrfToken(r), Version: s.version})
+}
+
+// handleSetupSubmit creates the first admin from the first-run form. The first
+// account is always the admin; the role is never chosen here. It is a one-shot,
+// race-safe gate: the store's unique-username constraint means only one account
+// can ever be the first, and any later attempt is closed out to the login page.
+func (s *Server) handleSetupSubmit(w http.ResponseWriter, r *http.Request) {
+	if s.authDisabled || s.setupDone.Load() {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+	confirm := r.FormValue("confirm")
+	reshow := func(msg string) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = s.pages["setup"].ExecuteTemplate(w, "setup", loginPage{CSRF: s.csrfToken(r), Error: msg, Version: s.version})
+	}
+	switch {
+	case username == "" || password == "":
+		reshow("Username and password are required.")
+		return
+	case password != confirm:
+		reshow("The passwords do not match.")
+		return
+	case len(password) < 8:
+		reshow("Use a password of at least 8 characters.")
+		return
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		reshow("Could not hash the password.")
+		return
+	}
+	if err := s.users.CreateUser(r.Context(), store.User{Username: username, Role: string(auth.RoleAdmin), PassHash: hash}); err != nil {
+		if errors.Is(err, store.ErrUserExists) {
+			// Someone already created the first account (race, or a stale page): setup is over.
+			s.setupDone.Store(true)
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		reshow("Could not create the account: " + err.Error())
+		return
+	}
+	s.setupDone.Store(true)
+	s.newSession(w, r, username, auth.RoleAdmin)
+	s.auditAppend(r.Context(), audit.Event{Kind: "auth.setup", Allowed: true, Message: username + " (first admin)"})
+	http.Redirect(w, r, "/dashboard", http.StatusSeeOther)
 }
 
 // ---- Users (RBAC admin) ----
@@ -717,6 +806,8 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /login", s.handleLoginForm)
 	s.mux.HandleFunc("POST /login", s.handleLoginSubmit)
+	s.mux.HandleFunc("GET /setup", s.handleSetupForm)
+	s.mux.HandleFunc("POST /setup", s.handleSetupSubmit)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
 	s.mux.HandleFunc("GET /users", s.handleUsers)
 	s.mux.HandleFunc("POST /users", s.handleUserCreate)
@@ -3156,6 +3247,7 @@ func parseTemplates(version, engineLbl, reconLbl string) (map[string]*template.T
 	sets := map[string][]string{
 		"dashboard":    {"templates/base.html", "templates/dashboard.html", "templates/scans_live.html"},
 		"login":        {"templates/login.html"},
+		"setup":        {"templates/setup.html"},
 		"users":        {"templates/base.html", "templates/users.html"},
 		"sast":         {"templates/base.html", "templates/sast.html"},
 		"grpc":         {"templates/base.html", "templates/grpc.html"},

@@ -1,0 +1,29 @@
+{{define "setup"}}<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BugHound · First-run setup</title>
+  <link rel="icon" type="image/png" href="/static/bughound-logo.png">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <img class="login-logo" src="/static/bughound-logo.png" alt="BugHound" width="96" height="96">
+    <h1>BugHound</h1>
+    <p class="muted small">First-run setup &middot; create the administrator account</p>
+    {{if .Error}}<div class="errors"><p>{{.Error}}</p></div>{{end}}
+    <form method="post" action="/setup">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <label>Username</label>
+      <input type="text" name="username" autocomplete="username" autofocus required>
+      <label>Password</label>
+      <input type="password" name="password" autocomplete="new-password" minlength="8" required>
+      <label>Confirm password</label>
+      <input type="password" name="confirm" autocomplete="new-password" minlength="8" required>
+      <button type="submit" class="btn primary login-submit">Create admin</button>
+    </form>
+    <p class="muted small login-foot">This account is the administrator. More accounts are added later from the Users page. BugHound {{.Version}}</p>
+  </main>
+</body>
+</html>{{end}}

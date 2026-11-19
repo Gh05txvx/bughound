@@ -6,8 +6,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -57,7 +55,7 @@ func main() {
 	engineMode := flag.String("engine", "mock", "engine set: mock (mock nuclei+ffuf, no network) | real (real nuclei + subfinder/httpx/katana through the egress proxy)")
 	keyPath := flag.String("key", "bughound.key", "path to the master key file used to encrypt secrets (or set env BUGHOUND_MASTER_KEY)")
 	adminUser := flag.String("admin-user", "", "initial admin username at bootstrap (or env BUGHOUND_ADMIN_USER; default \"admin\")")
-	adminPass := flag.String("admin-password", "", "initial admin password (or env BUGHOUND_ADMIN_PASSWORD); empty = generated at random and printed to the console once")
+	adminPass := flag.String("admin-password", "", "initial admin password (or env BUGHOUND_ADMIN_PASSWORD); empty = create the first admin interactively at /setup on first run")
 	noAuth := flag.Bool("no-auth", false, "DISABLE login and RBAC (open access); only for a trusted localhost or tests")
 	rotateKey := flag.Bool("rotate-key", false, "rotate the master key: re-encrypt every secret with a new key, then exit")
 	sastRoot := flag.String("sast-root", "", "code root for SAST (empty = off); static analysis is confined to this dir")
@@ -312,18 +310,19 @@ func main() {
 	} else {
 		au := firstNonEmpty(*adminUser, os.Getenv("BUGHOUND_ADMIN_USER"), "admin")
 		ap := firstNonEmpty(*adminPass, os.Getenv("BUGHOUND_ADMIN_PASSWORD"))
-		created, generated, pw, berr := bootstrapAdmin(context.Background(), webUsers, au, ap)
+		created, berr := bootstrapAdmin(context.Background(), webUsers, au, ap)
 		if berr != nil {
 			log.Fatalf("bughound: bootstrap admin: %v", berr)
 		}
 		switch {
-		case created && generated:
-			log.Printf("auth: admin %q created, password: %s", au, pw)
-			log.Printf("auth: SAVE the password above; it will not be shown again. Change it on the Users page.")
 		case created:
 			log.Printf("auth: admin %q created from -admin-password/env", au)
 		default:
-			log.Printf("auth: login REQUIRED (an account already exists; manage accounts on the Users page)")
+			if n, _ := webUsers.CountUsers(context.Background()); n == 0 {
+				log.Printf("auth: login REQUIRED; no account yet, create the first admin at /setup on first visit")
+			} else {
+				log.Printf("auth: login REQUIRED (an account already exists; manage accounts on the Users page)")
+			}
 		}
 	}
 
@@ -367,45 +366,30 @@ func main() {
 	}
 }
 
-// bootstrapAdmin creates the first admin account when the store has no users.
-// It returns whether a user was created, whether the password was generated at
-// random, and that password (set only when it was generated, so it can be
-// printed to the console once).
-func bootstrapAdmin(ctx context.Context, users store.UserStore, user, pass string) (created, generated bool, pw string, err error) {
+// bootstrapAdmin creates the first admin account ONLY when a password is
+// configured (-admin-password / BUGHOUND_ADMIN_PASSWORD), for headless or
+// automated deploys. With no password and an empty store it creates nothing:
+// the first admin is then created interactively through the /setup page on the
+// first visit. It reports whether an account was created.
+func bootstrapAdmin(ctx context.Context, users store.UserStore, user, pass string) (created bool, err error) {
 	n, err := users.CountUsers(ctx)
 	if err != nil {
-		return false, false, "", err
+		return false, err
 	}
-	if n > 0 {
-		return false, false, "", nil // an account already exists; do not bootstrap again
+	if n > 0 || pass == "" {
+		return false, nil // an account already exists, or defer to first-run /setup
 	}
 	if user == "" {
 		user = "admin"
 	}
-	pw = pass
-	if pw == "" {
-		if pw, err = randomPassword(); err != nil {
-			return false, false, "", err
-		}
-		generated = true
-	}
-	hash, err := auth.HashPassword(pw)
+	hash, err := auth.HashPassword(pass)
 	if err != nil {
-		return false, false, "", err
+		return false, err
 	}
 	if err := users.CreateUser(ctx, store.User{Username: user, Role: string(auth.RoleAdmin), PassHash: hash}); err != nil {
-		return false, false, "", err
+		return false, err
 	}
-	return true, generated, pw, nil
-}
-
-// randomPassword returns a random url-safe password (~16 characters).
-func randomPassword() (string, error) {
-	b := make([]byte, 12)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return true, nil
 }
 
 // firstNonEmpty returns the first non-empty (trimmed) argument.
