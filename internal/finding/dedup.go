@@ -30,11 +30,21 @@ import (
 // the rest as duplicates (hidden from counts and reports, still stored in full
 // for audit).
 func ComputeDedupKey(typ, target, locationURL, method, parameter string) string {
+	typ = canonType(typ)
 	path := pathOf(locationURL)
 	meth := normMethod(method)
 	if siteWide(typ) {
 		path = "" // identity = origin, not path
 		meth = "" // an origin-level issue is not specific to a method
+	}
+	if typ == typeOpenRedirect {
+		// One open redirect per path. Engines name it differently and disagree on
+		// the parameter/method (ZAP reports the redirect param, nuclei omits it),
+		// so the same redirect shows up several times. Key by path only.
+		// shortcut: two distinct redirect params on one path collapse into one;
+		// fine until a target actually has multiple redirect sinks on one path.
+		parameter = ""
+		meth = ""
 	}
 	raw := strings.ToLower(strings.TrimSpace(typ)) + "|" +
 		hostOf(target) + "|" +
@@ -50,6 +60,31 @@ func ComputeDedupKey(typ, target, locationURL, method, parameter string) string 
 // consistent when engines report different casing.
 func normMethod(m string) string {
 	return strings.ToUpper(strings.TrimSpace(m))
+}
+
+const typeOpenRedirect = "open-redirect"
+
+// redirectSynonyms are the engine-specific slugs for one issue: ZAP emits
+// "external-redirect"/"off-site-redirect", nuclei emits
+// "open-redirect"/"open-redirect-bypass". canonType folds them together so a
+// single open redirect is not reported several times.
+var redirectSynonyms = map[string]bool{
+	"open-redirect":        true,
+	"open-redirect-bypass": true,
+	"external-redirect":    true,
+	"off-site-redirect":    true,
+}
+
+// canonType folds known cross-engine synonyms to one canonical type for dedup.
+// Only the open-redirect family is folded today; any other type is returned
+// normalized (lower, trimmed) but otherwise unchanged, so its key is identical
+// to before.
+func canonType(typ string) string {
+	t := strings.ToLower(strings.TrimSpace(typ))
+	if redirectSynonyms[t] {
+		return typeOpenRedirect
+	}
+	return t
 }
 
 // siteWideTypes: issue types whose identity is the ORIGIN (host), not a
