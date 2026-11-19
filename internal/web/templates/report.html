@@ -19,6 +19,21 @@
   {{range .BySeverity}}<span class="badge {{sevClass .Severity}}">{{.Severity}}: {{.Count}}</span>{{end}}
 </div>
 
+{{if .Caveats}}
+<div class="card caveats">
+  <div class="detail-head"><h3>Caveats &amp; coverage</h3></div>
+  <p class="muted small">Heuristic triage hints (verify manually). Computed locally; nothing is sent anywhere.</p>
+  <ul class="caveat-list">
+    {{range .Caveats}}
+    <li>
+      <span class="badge {{if eq .Kind "fp"}}sev-high{{else}}sev-info{{end}}">{{if eq .Kind "fp"}}FP?{{else}}COV{{end}}</span>
+      <div class="caveat-body"><b>{{.Title}}</b><div class="muted small">{{.Detail}}</div></div>
+    </li>
+    {{end}}
+  </ul>
+</div>
+{{end}}
+
 {{range $i, $f := .Items}}
 <div class="card report-item">
   <div class="detail-head">

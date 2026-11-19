@@ -640,3 +640,9 @@ pre.ev, .ai-mut { background: rgba(6, 9, 15, .55); border-color: var(--glass-bor
   .bodywrap { animation: none !important; }
   .sidebar nav a:hover { transform: none !important; }
 }
+
+/* Caveats & coverage panel (report): local FP / coverage triage hints */
+.caveat-list { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.caveat-list li { display: flex; gap: 8px; align-items: flex-start; }
+.caveat-list .badge { flex: none; margin-top: 2px; }
+.caveat-body b { font-weight: 600; }
