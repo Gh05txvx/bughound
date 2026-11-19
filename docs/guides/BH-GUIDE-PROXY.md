@@ -1,8 +1,10 @@
 # BH-GUIDE-PROXY: proxy chains, the IP echo endpoint & upstream proxy
 
-> An operational guide to the **Proxy** menu (`/proxy`, under the *Testing* nav group): testing an upstream proxy chain before a scan, and verifying that the IP the target sees actually changed. Written to match the implementation (`internal/egress`, `internal/web`, `internal/geoip`). Last updated: 2026-11-12.
+> An operational guide to the **Proxy** menu (`/proxy`, under the *Testing* nav group): testing an upstream proxy chain before a scan, and verifying that the IP the target sees actually changed. Written to match the implementation (`internal/egress`, `internal/web`, `internal/geoip`). Last updated: 2026-11-19.
 
 This menu is **diagnostic**, not a scan path. The chain you enter here is not used by a scan automatically: the scan takes its chain from the **Upstream proxy / chain** field in the **Scan** form. Use the Proxy menu to *prove the chain works & the IP changes*, then copy the proven chain into the Scan form.
+
+> **The built-in egress is a safety boundary, not an anonymizer.** BugHound forces all scan traffic through one egress gateway that enforces the **scope guard + IP-pinning + rate limit** — it does **not** change or hide your IP. A target sees the BugHound **host's own public IP** unless *you* add an upstream proxy/VPN chain. To change the IP a target sees, configure a chain (below); to just read the public IP you currently scan from, use **My egress IP** (§1.1).
 
 ---
 
@@ -13,6 +15,7 @@ This menu is **diagnostic**, not a scan path. The chain you enter here is not us
 | Chain validation | yes | no | Checks the scheme & format of each hop. |
 | Hop connectivity test | yes | **no** | Each hop is reached in order (`hop_i` through `hop_1..hop_{i-1}`); it only touches **your own proxy infrastructure**, not the scan target. Reports reachable + latency + the resolved IP. |
 | Egress IP check | optional | yes (to the **echo**) | Two GETs to the echo endpoint, **direct** vs **through the chain**, then it compares the IP the echo server saw → the **"IP changed"** badge. |
+| **My egress IP** (control-plane) | optional, **admin** | yes (to a fixed **echo**, e.g. ipify) | A quick *"what public IP do I scan from"*; no in-scope echo needed. See §1.1. |
 
 **Security limits (cannot be turned off from this menu):**
 
@@ -20,6 +23,17 @@ This menu is **diagnostic**, not a scan path. The chain you enter here is not us
 - **Proxy credentials** (`user:pass@`) are **redacted** from the UI, error messages, and the audit (`egress.check`). They never leak.
 - **IP-pinning / anti-SSRF**: the target is resolved & *pinned* on the BugHound host before the chain; a private/internal IP is rejected unless it is explicitly in-scope.
 - **Bounded**: this diagnostic runs once (an 8s timeout per hop, 10s per echo), it is not a flood. The mandatory rate limiter applies to the **scan**, set in the Scan form.
+
+### 1.1 "My egress IP" — a quick check (admin, control-plane)
+
+The **My egress IP** card at the top of the page (**admin only**) answers *"what public IP do my scans leave from?"* — the IP you give a program's team on request — **without** needing an in-scope echo:
+
+- **Direct** call → your **Device IP**: the BugHound host's public IP, i.e. what a target sees with no proxy.
+- With a **Proxy chain** filled in → also the **Exit IP** through that chain (and an **"IP changed"** badge).
+
+It queries a **fixed echo host** (default `https://api.ipify.org`, editable inline). This is a **control-plane** call: the echo host becomes a throwaway **single-host scope guard**, so egress still passes the guard, but it runs **outside any program scope** (hence admin-only). It is an **explicit button**, never auto-called, and each run is audited as `egress.check` (host + ip-changed only, no credentials).
+
+**When to use which:** use **My egress IP** for the general *"what is my IP"* (reporting it to a program). Use the **in-scope echo** check (§4) when you must prove the exit IP *against a specific in-scope target/echo* as part of a program's requirements.
 
 ---
 
@@ -71,6 +85,8 @@ socks5://127.0.0.1:9050
 | **Commercial proxy (residential/datacenter)** | `socks5://user:pass@host:port` or `http://...` | a **static exit IP** that a bug bounty program allowlists. |
 
 > **Note:** BugHound only forwards HTTP/HTTPS egress through a proxy (CONNECT/SOCKS). Non-HTTP egress (e.g. an engine's raw DNS) does not go through here: that is the OS layer's job (defense in depth).
+
+> **Running in Docker?** The chain is dialed from **inside the BugHound container**, so `127.0.0.1` means the *container*, not your PC. A proxy on your host is reached at `host.docker.internal:<port>` (Docker Desktop) or the host's LAN IP — **not** `127.0.0.1` — and it must be reachable from the container's network. A `connection refused` on a `127.0.0.1` hop usually means "nothing is listening inside the container", not that the feature is broken.
 
 ---
 
