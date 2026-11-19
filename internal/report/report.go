@@ -27,6 +27,7 @@ type Report struct {
 	GeneratedAt time.Time
 	Items       []*finding.Finding // confirmed findings, sorted by severity
 	BySeverity  []SevCount
+	Caveats     []Caveat // local triage hints (likely FPs, coverage gaps)
 	Markdown    string
 }
 
@@ -54,6 +55,7 @@ func Build(program string, findings []*finding.Finding, now time.Time) Report {
 		GeneratedAt: now.UTC(),
 		Items:       items,
 		BySeverity:  breakdown(items),
+		Caveats:     Caveats(items),
 	}
 	r.Markdown = renderMarkdown(r)
 	return r
@@ -106,6 +108,18 @@ func renderMarkdown(r Report) string {
 	}
 	for _, sc := range r.BySeverity {
 		fmt.Fprintf(&b, "- %s: %d\n", strings.ToUpper(string(sc.Severity)), sc.Count)
+	}
+
+	if len(r.Caveats) > 0 {
+		b.WriteString("\n## Caveats & coverage\n\n")
+		b.WriteString("_Heuristic triage hints (verify manually). Computed locally; nothing is sent anywhere._\n\n")
+		for _, c := range r.Caveats {
+			tag := "FP?"
+			if c.Kind == "coverage" {
+				tag = "COVERAGE"
+			}
+			fmt.Fprintf(&b, "- **[%s]** %s\n  %s\n", tag, c.Title, c.Detail)
+		}
 	}
 
 	b.WriteString("\n## Findings\n\n")
