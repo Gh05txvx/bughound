@@ -1,4 +1,21 @@
 {{define "content"}}
+{{if .CanAdmin}}
+<form class="card" hx-post="/proxy/myip" hx-target="#myip-result" hx-swap="innerHTML">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <h2>My egress IP</h2>
+  <p class="muted small">The public IP BugHound leaves from, to give a program's team when they ask. A <b>control-plane</b> check to a fixed echo host, <b>outside any program scope</b> (admin only). Direct = your device/host IP; add a proxy chain to also see the exit IP. Nothing is sent to a scan target.</p>
+  <label>Echo endpoint <span class="muted small">(replies with the caller IP as text)</span></label>
+  <input type="text" name="endpoint" value="{{.MyIPEndpoint}}" autocomplete="off" spellcheck="false" placeholder="https://api.ipify.org">
+  <label>Proxy chain <span class="muted small">(optional · one hop per line; fill to also measure the exit IP)</span></label>
+  <textarea name="upstream_proxy" rows="2" spellcheck="false" placeholder="http://127.0.0.1:8080&#10;socks5://127.0.0.1:9050"></textarea>
+  <div class="actions">
+    <button type="submit" class="btn primary">Check my IP</button>
+    <span class="muted small">one call to the echo host · logged to audit · proxy creds not shown</span>
+  </div>
+  <div id="myip-result"></div>
+</form>
+{{end}}
+
 <div class="grid-2">
   <form class="card" hx-post="/proxy/check" hx-target="#result" hx-swap="innerHTML">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
@@ -75,6 +92,22 @@
 {{if and .GeoLoaded .ExitIP .ExitGeo.Empty}}<p class="muted small">The exit IP's country was not found in the GeoIP DB (a private/unlisted IP).</p>{{end}}
 {{if not .GeoLoaded}}<p class="muted small">ℹ️ Country/ASN labeling is off — the GeoIP DB (GeoLite2) is not loaded. Set <span class="mono">BUGHOUND_GEOIP_COUNTRY_DB</span> (optionally <span class="mono">BUGHOUND_GEOIP_ASN_DB</span>) to enable it — offline, with no call to an external service.</p>{{end}}
 {{end}}
+{{end}}
+{{end}}
+{{end}}
+
+{{define "egressip_result"}}
+{{if .}}
+{{if .Reason}}<div class="errors">{{.Reason}}</div>{{end}}
+{{if or .SourceIP .ExitIP .SourceErr .ExitErr}}
+<div class="result-summary" style="margin-top:.75rem">
+  <span class="chip">Device IP: <b class="mono">{{if .SourceIP}}{{.SourceIP}}{{else}}—{{end}}</b>{{if not .SourceGeo.Empty}} <span class="geo">{{.SourceGeo.Display}}</span>{{end}}</span>
+  {{if .ExitIP}}<span class="chip">Exit IP (via chain): <b class="mono">{{.ExitIP}}</b>{{if not .ExitGeo.Empty}} <span class="geo">{{.ExitGeo.Display}}</span>{{end}}</span>{{end}}
+  {{if .Changed}}<span class="chip ok">IP changed ✓</span>{{end}}
+</div>
+{{if .SourceErr}}<p class="muted small mono">device: {{.SourceErr}}</p>{{end}}
+{{if .ExitErr}}<p class="muted small mono">exit: {{.ExitErr}}</p>{{end}}
+{{if not .GeoLoaded}}<p class="muted small">ℹ️ Country/ASN labeling is off (GeoIP DB not loaded).</p>{{end}}
 {{end}}
 {{end}}
 {{end}}

@@ -354,6 +354,10 @@ func authorize(role auth.Role, r *http.Request) bool {
 	// (/ai/finding/...) is not here: it follows the default rule (GET=read, regen POST=write).
 	case r.URL.Path == "/ai/settings" || strings.HasPrefix(r.URL.Path, "/ai/key/"):
 		return auth.CanAdmin(role)
+	// The "My egress IP" check makes a control-plane call to a fixed echo host,
+	// outside any program scope → admin only (the one place this egress happens).
+	case r.URL.Path == "/proxy/myip":
+		return auth.CanAdmin(role)
 	case r.URL.Path == "/logout":
 		return role.Valid()
 	case isStateChanging(r.Method):
@@ -829,6 +833,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /capture/promote", s.handleCapturePromote)
 	s.mux.HandleFunc("GET /proxy", s.handleProxyForm)
 	s.mux.HandleFunc("POST /proxy/check", s.handleProxyCheck)
+	s.mux.HandleFunc("POST /proxy/myip", s.handleEgressIPCheck)
 	s.mux.HandleFunc("GET /programs", s.handlePrograms)
 	s.mux.HandleFunc("GET /programs/edit", s.handleProgramEdit)
 	s.mux.HandleFunc("POST /programs", s.handleProgramSave)
@@ -2611,7 +2616,14 @@ type proxyPage struct {
 	Programs                  []string
 	Chain, Echo               string
 	Result                    *proxyCheckResult
+	CanAdmin                  bool   // gate the control-plane "My egress IP" card
+	MyIPEndpoint              string // default echo for the egress-IP check
 }
+
+// defaultIPEcho is the control-plane echo used by the "My egress IP" check when
+// the admin leaves the field blank. Editable in the form. Returns the client's
+// public IP as plain text.
+const defaultIPEcho = "https://api.ipify.org"
 
 type proxyCheckResult struct {
 	Hops     []egress.HopStatus
@@ -2638,7 +2650,9 @@ func (s *Server) handleProxyForm(w http.ResponseWriter, r *http.Request) {
 	program := strings.TrimSpace(r.URL.Query().Get("program"))
 	s.render(w, r, "proxy", "base", proxyPage{
 		Nav: "proxy", Title: "Proxy", Program: program, CSRF: s.csrfToken(r),
-		Programs: s.programNames(r.Context()),
+		Programs:     s.programNames(r.Context()),
+		CanAdmin:     s.authDisabled || auth.CanAdmin(s.roleOf(r)),
+		MyIPEndpoint: defaultIPEcho,
 	})
 }
 
@@ -2765,6 +2779,90 @@ func (s *Server) proxyEchoCheck(r *http.Request, program string, chain []string,
 		return out, ""
 	}
 	exit := chained.Fetch(r.Context(), echo, timeout)
+	out.ExitIP, out.ExitStatus, out.ExitErr = egress.ExtractClientIP(exit.Body), exit.Status, exit.Err
+	out.ExitGeo = s.geo.Resolve(out.ExitIP)
+	out.Changed = out.SourceIP != "" && out.ExitIP != "" && out.SourceIP != out.ExitIP
+	return out, ""
+}
+
+// hostOf returns the host of a URL (no port), or "" when it cannot be parsed.
+func hostOf(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
+}
+
+// handleEgressIPCheck runs the control-plane "My egress IP" check: the public IP
+// the BugHound host leaves from directly, and the exit IP through the configured
+// proxy chain, using a fixed echo host (default ipify, editable). Admin-only
+// (authorize) — the one place egress goes outside a program scope. The echo host
+// becomes a throwaway single-host scope guard, so egress still passes the guard.
+func (s *Server) handleEgressIPCheck(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	endpoint := strings.TrimSpace(r.FormValue("endpoint"))
+	if endpoint == "" {
+		endpoint = defaultIPEcho
+	}
+	chain := splitLines(r.FormValue("upstream_proxy"))
+	res, note := s.egressIPCheck(r, endpoint, chain)
+	me, _ := s.currentUser(r)
+	changed := res != nil && res.Changed
+	s.auditAppend(r.Context(), audit.Event{
+		Kind: "egress.check", Allowed: true, Layer: "egress",
+		Message: fmt.Sprintf("%s checked egress IP via %s: ip-changed=%t", me, hostOf(endpoint), changed),
+	})
+	if res == nil {
+		res = &proxyEchoResult{Reason: note} // surface a setup error in the same partial shape
+	}
+	s.renderPartial(w, r, "proxy", "egressip_result", res)
+}
+
+// egressIPCheck fetches the echo endpoint directly (device IP) and, when a chain
+// is given, through it (exit IP). The echo host is the only in-scope entry, so
+// egress still passes the guard. Returns (result, setup-note); note is set only
+// when the endpoint itself is unusable (result nil).
+func (s *Server) egressIPCheck(r *http.Request, endpoint string, chain []string) (*proxyEchoResult, string) {
+	host := hostOf(endpoint)
+	if host == "" {
+		return nil, "Invalid echo endpoint URL."
+	}
+	guard, errs := scope.New([]string{host}, nil)
+	if len(errs) > 0 {
+		return nil, "Could not build the echo guard: " + errs[0].Error()
+	}
+	auditSink := func(d egress.Decision) {
+		if d.Allowed {
+			return
+		}
+		s.auditAppend(context.Background(), audit.Event{
+			Kind: "egress.check", Target: d.Target, Allowed: false, Reason: string(d.Reason), Layer: "egress",
+		})
+	}
+	timeout := 10 * time.Second
+	direct := egress.New(guard, auditSink).Fetch(r.Context(), endpoint, timeout)
+	out := &proxyEchoResult{
+		Allowed:      direct.Allowed,
+		Reason:       direct.Reason,
+		SourceIP:     egress.ExtractClientIP(direct.Body),
+		SourceStatus: direct.Status,
+		SourceErr:    direct.Err,
+		GeoLoaded:    s.geo.Loaded(),
+	}
+	out.SourceGeo = s.geo.Resolve(out.SourceIP)
+	if !direct.Allowed || len(chain) == 0 {
+		return out, ""
+	}
+	chained := egress.New(guard, auditSink)
+	if err := chained.SetUpstream(chain...); err != nil {
+		out.ExitErr = "the chain could not be built: " + err.Error()
+		return out, ""
+	}
+	exit := chained.Fetch(r.Context(), endpoint, timeout)
 	out.ExitIP, out.ExitStatus, out.ExitErr = egress.ExtractClientIP(exit.Body), exit.Status, exit.Err
 	out.ExitGeo = s.geo.Resolve(out.ExitIP)
 	out.Changed = out.SourceIP != "" && out.ExitIP != "" && out.SourceIP != out.ExitIP
