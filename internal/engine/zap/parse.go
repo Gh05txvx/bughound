@@ -89,8 +89,15 @@ func alertToFinding(site zapSite, a zapAlert, program, runID string) *finding.Fi
 		SourceEngine:   "zap",
 		SourceTemplate: a.PluginID,
 	}
-	if cwe := normalizeCWE(a.CWEID); cwe != "" {
+	cwe := normalizeCWE(a.CWEID)
+	if cwe != "" {
 		f.CWE = []string{cwe}
+	}
+	// ZAP rates an off-site/open redirect (CWE-601) as High; in our triage
+	// baseline (and typical CVSS) an open redirect is a Medium-impact issue, so
+	// cap it to Medium. Other High findings are untouched.
+	if cwe == "CWE-601" && f.Severity == finding.SeverityHigh {
+		f.Severity = finding.SeverityMedium
 	}
 	if ref := strings.TrimSpace(a.Reference); ref != "" {
 		f.References = []string{ref}

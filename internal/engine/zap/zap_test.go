@@ -58,6 +58,19 @@ func TestParseSample(t *testing.T) {
 	}
 }
 
+// An off-site/open redirect (CWE-601) that ZAP rates High is capped to Medium;
+// a different High alert (e.g. SQLi CWE-89) is left untouched.
+func TestOpenRedirectSeverityCappedToMedium(t *testing.T) {
+	redirect := alertToFinding(zapSite{Name: "http://t"}, zapAlert{Alert: "Off-site Redirect", RiskCode: "3", CWEID: "601"}, "p", "r")
+	if redirect.Severity != finding.SeverityMedium {
+		t.Errorf("CWE-601 High must cap to Medium; got %s", redirect.Severity)
+	}
+	sqli := alertToFinding(zapSite{Name: "http://t"}, zapAlert{Alert: "SQL Injection", RiskCode: "3", CWEID: "89"}, "p", "r")
+	if sqli.Severity != finding.SeverityHigh {
+		t.Errorf("a non-601 High must stay High; got %s", sqli.Severity)
+	}
+}
+
 func TestRunnerArgs(t *testing.T) {
 	r := &Runner{}
 	plain := strings.Join(r.buildPlanArgs("/tmp/plan.yaml", "/tmp/zaprun"), " ")
