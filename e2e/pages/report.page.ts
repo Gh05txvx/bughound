@@ -25,9 +25,12 @@ export class ReportPage {
    * Controls that actually SEND/submit, which must be ZERO. The
    * "Export HackerOne/Bugcrowd" buttons only DOWNLOAD a format for manual
    * submission, so a platform name on its own does not count here.
+   * Scoped to <main>: the sidebar "Reports" nav link is chrome, not a report
+   * action, and would otherwise match /report/ now that the UI is English.
    */
   submitLikeControls(): Locator {
     const re = /submit|send|report/i;
-    return this.page.getByRole('button', { name: re }).or(this.page.getByRole('link', { name: re }));
+    const main = this.page.getByRole('main');
+    return main.getByRole('button', { name: re }).or(main.getByRole('link', { name: re }));
   }
 }
